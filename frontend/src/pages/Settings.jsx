@@ -251,7 +251,7 @@ export default function Settings() {
             <input
               type="text"
               readOnly
-              value={cfg.kite_redirect_url}
+              value="https://quantflux-production.up.railway.app/api/auth/callback"
               className="input-field flex-1 text-gray-400 cursor-default"
             />
             <button
