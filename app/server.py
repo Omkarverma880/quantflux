@@ -141,6 +141,13 @@ async def _strategy_background_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Trading server starting up …")
+
+    # Ensure all DB tables exist (safe on fresh Railway Postgres)
+    from core.database import engine, Base
+    from core import models  # noqa: F401 — registers all models
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables verified / created.")
+
     task = asyncio.create_task(_strategy_background_loop())
     yield
     task.cancel()
