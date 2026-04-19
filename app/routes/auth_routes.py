@@ -22,7 +22,6 @@ from core.auth import (
     authenticate_user, create_user, create_access_token, get_user_by_id,
     Token, login_required, UserZerodhaAuth,
     create_reset_token, verify_reset_token, reset_user_password,
-    create_reset_token, verify_reset_token, reset_user_password,
 )
 from core.logger import get_logger
 
@@ -45,14 +44,6 @@ class AppLoginRequest(BaseModel):
 
 class OnboardRequest(BaseModel):
     kite_api_key: str
-
-class ForgotPasswordRequest(BaseModel):
-    username: str
-    email: str
-
-class ResetPasswordRequest(BaseModel):
-    token: str
-    new_password: str
     kite_api_secret: str
 
 class ForgotPasswordRequest(BaseModel):
@@ -255,40 +246,7 @@ def auth_status(user_id: int = Depends(login_required), db: Session = Depends(ge
         except Exception:
             pass
 
-    return {"authenticated": is_val
-
-
-# ── Password Reset ─────────────────────────────────
-
-@router.post("/forgot-password")
-@limiter.limit("5/minute")
-def forgot_password(request: Request, body: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    """Verify username + email match, return a short-lived reset token."""
-    from core.models import User
-    user = db.query(User).filter(
-        User.username == body.username,
-        User.email == body.email,
-        User.is_active == True,
-    ).first()
-    if not user:
-        raise HTTPException(400, "No account found with that username and email combination")
-    token = create_reset_token(user.id, user.username)
-    logger.info(f"Password reset token issued for user: {user.username}")
-    return {"reset_token": token}
-
-
-@router.post("/reset-password")
-@limiter.limit("5/minute")
-def reset_password(request: Request, body: ResetPasswordRequest, db: Session = Depends(get_db)):
-    """Validate reset token and set new password."""
-    if len(body.new_password) < 6:
-        raise HTTPException(400, "Password must be at least 6 characters")
-    user_id = verify_reset_token(body.token)
-    success = reset_user_password(db, user_id, body.new_password)
-    if not success:
-        raise HTTPException(400, "Could not reset password. Account may be inactive.")
-    logger.info(f"Password reset completed for user_id={user_id}")
-    return {"status": "ok", "message": "Password has been reset. You can now sign in."}id, "profile": profile}
+    return {"authenticated": is_valid, "profile": profile}
 
 
 # ── Zerodha Logout (per-user) ─────────────────────
