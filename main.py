@@ -19,6 +19,18 @@ from core.logger import get_logger
 
 logger = get_logger("main")
 
+# Global crash handler — ensures Railway deploy logs show the error
+import threading
+def _global_excepthook(exc_type, exc_value, exc_tb):
+    import traceback
+    print(f"[FATAL] Unhandled exception: {exc_type.__name__}: {exc_value}", flush=True)
+    traceback.print_exception(exc_type, exc_value, exc_tb)
+sys.excepthook = _global_excepthook
+
+def _thread_excepthook(args):
+    print(f"[FATAL] Thread {args.thread} crashed: {args.exc_type.__name__}: {args.exc_value}", flush=True)
+threading.excepthook = _thread_excepthook
+
 
 def cmd_server():
     """Start the FastAPI web server (dashboard + API)."""

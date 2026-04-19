@@ -8,7 +8,7 @@ from config import settings
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Create a logger with console + file handlers."""
+    """Create a logger with console + optional file handler."""
     logger = logging.getLogger(f"trading.{name}")
     if logger.handlers:
         return logger  # already configured
@@ -25,10 +25,13 @@ def get_logger(name: str) -> logging.Logger:
     ch.setFormatter(fmt)
     logger.addHandler(ch)
 
-    # Daily log file
-    log_file = settings.LOG_DIR / f"{date.today()}.log"
-    fh = logging.FileHandler(log_file, encoding="utf-8")
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
+    # Daily log file (optional — skip if filesystem is read-only)
+    try:
+        log_file = settings.LOG_DIR / f"{date.today()}.log"
+        fh = logging.FileHandler(log_file, encoding="utf-8")
+        fh.setFormatter(fmt)
+        logger.addHandler(fh)
+    except Exception:
+        pass  # file logging unavailable — console only
 
     return logger

@@ -33,7 +33,7 @@ from core.logger import get_logger
 logger = get_logger("server")
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-STRATEGY_CHECK_INTERVAL = 2  # seconds — fast enough for momentum entries
+STRATEGY_CHECK_INTERVAL = 30  # seconds between strategy checks
 
 
 async def _strategy_background_loop():
@@ -41,108 +41,123 @@ async def _strategy_background_loop():
     Background task: runs strategy check every STRATEGY_CHECK_INTERVAL seconds
     for ALL users with active Zerodha sessions.
     """
-    from core.database import get_db_session
-    from core.models import ZerodhaSession
-    from core.broker import get_user_broker
-    from core.auth import UserZerodhaAuth
-    from app.routes.strategy1_routes import _get_strategy as _get_s1, _get_cv_data
-    from app.routes.strategy2_routes import _get_strategy as _get_s2
-    from app.routes.strategy3_routes import _get_strategy as _get_s3
-    from datetime import date
+    # Wait 30s after startup before first check — let the app stabilise
+    print("[BG] Strategy loop: waiting 30s before first run …", flush=True)
+    await asyncio.sleep(30)
+    print("[BG] Strategy loop: starting checks.", flush=True)
 
-    logger.info("Strategy background monitor started")
     while True:
         try:
             await asyncio.sleep(STRATEGY_CHECK_INTERVAL)
 
-            now = datetime.now().time()
-            # Only run during market hours (9:15 - 15:30)
-            if now < dtime(9, 15) or now > dtime(15, 30):
+            now = datetime.now()
+            # Only run during market hours on weekdays (Mon-Fri 9:15 - 15:30)
+            if now.weekday() >= 5:  # Saturday / Sunday
+                continue
+            if now.time() < dtime(9, 15) or now.time() > dtime(15, 30):
                 continue
 
-            # Find all users with active Zerodha sessions today
-            db = get_db_session()
-            try:
-                active_sessions = db.query(ZerodhaSession).filter(
-                    ZerodhaSession.login_date == date.today()
-                ).all()
-                active_user_ids = [s.user_id for s in active_sessions]
-            finally:
-                db.close()
+            # Run DB query in a thread to avoid blocking the event loop
+            loop = asyncio.get_running_loop()
+            active_user_ids = await loop.run_in_executor(None, _get_active_user_ids)
 
             if not active_user_ids:
                 continue
 
             for uid in active_user_ids:
                 try:
-                    db = get_db_session()
-                    try:
-                        broker = get_user_broker(db, uid)
-                        if not broker.is_kite_connected:
-                            continue
-
-                        authenticated = UserZerodhaAuth.is_authenticated(db, uid)
-                        cv_data = None
-                        spot_price = 0
-
-                        # ── Strategy 1 ──
-                        strategy = _get_s1(broker, uid)
-                        if strategy.is_active:
-                            if cv_data is None:
-                                cv_data = _get_cv_data(broker, authenticated)
-                                spot_price = cv_data.get("spot_price", 0)
-                            strategy.check(cv_data, spot_price)
-                            logger.debug(f"BG S1 user={uid}: state={strategy.state.value}")
-
-                        # ── Strategy 2 ──
-                        s2 = _get_s2(broker, uid)
-                        if s2.is_active and s2.state.value in ("POSITION_OPEN", "ORDER_PLACED"):
-                            if cv_data is None:
-                                cv_data = _get_cv_data(broker, authenticated)
-                                spot_price = cv_data.get("spot_price", 0)
-                            s2.check(cv_data, spot_price)
-                            logger.debug(f"BG S2 user={uid}: state={s2.state.value}")
-
-                        # ── Strategy 3 ──
-                        s3 = _get_s3(broker, uid)
-                        if s3.is_active:
-                            if cv_data is None:
-                                cv_data = _get_cv_data(broker, authenticated)
-                                spot_price = cv_data.get("spot_price", 0)
-                            s3.check(cv_data, spot_price)
-                            logger.debug(f"BG S3 user={uid}: state={s3.state.value}")
-                    finally:
-                        db.close()
+                    await loop.run_in_executor(None, _run_strategies_for_user, uid)
                 except Exception as e:
-                    logger.error(f"BG strategy check error for user {uid}: {e}")
+                    print(f"[BG] Strategy check error user {uid}: {e}", flush=True)
 
             # ── Broadcast strategy state via WebSocket ──
             try:
-                # Broadcast aggregate state (first active user's state for now)
+                from app.routes.strategy1_routes import _get_strategy as _get_s1
+                from app.routes.strategy2_routes import _get_strategy as _get_s2
+                from app.routes.strategy3_routes import _get_strategy as _get_s3
                 payload = {}
                 for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3)]:
-                    if active_user_ids:
-                        strat = getter(user_id=active_user_ids[0])
-                        payload[label] = {
-                            "state": strat.state.value if hasattr(strat.state, "value") else str(strat.state),
-                            "is_active": strat.is_active,
-                            "ltp": getattr(strat, "current_ltp", 0),
-                        }
+                    strat = getter(user_id=active_user_ids[0])
+                    payload[label] = {
+                        "state": strat.state.value if hasattr(strat.state, "value") else str(strat.state),
+                        "is_active": strat.is_active,
+                        "ltp": getattr(strat, "current_ltp", 0),
+                    }
                 await ws_manager.broadcast("strategy_update", payload)
             except Exception:
                 pass  # non-critical
         except asyncio.CancelledError:
-            logger.info("Strategy background monitor stopped")
+            print("[BG] Strategy loop cancelled.", flush=True)
             break
         except Exception as e:
-            logger.error(f"Background strategy check error: {e}")
+            print(f"[BG] Strategy loop error: {e}", flush=True)
+            await asyncio.sleep(10)  # back off on error
+
+
+def _get_active_user_ids() -> list[int]:
+    """Synchronous helper — queries DB for active sessions today. Runs in executor."""
+    from core.database import get_db_session
+    from core.models import ZerodhaSession
+    from datetime import date
+    db = get_db_session()
+    try:
+        sessions = db.query(ZerodhaSession).filter(
+            ZerodhaSession.login_date == date.today()
+        ).all()
+        return [s.user_id for s in sessions]
+    except Exception as e:
+        print(f"[BG] DB query error: {e}", flush=True)
+        return []
+    finally:
+        db.close()
+
+
+def _run_strategies_for_user(uid: int):
+    """Synchronous helper — runs strategy checks for one user. Runs in executor."""
+    from core.database import get_db_session
+    from core.broker import get_user_broker
+    from core.auth import UserZerodhaAuth
+    from app.routes.strategy1_routes import _get_strategy as _get_s1, _get_cv_data
+    from app.routes.strategy2_routes import _get_strategy as _get_s2
+    from app.routes.strategy3_routes import _get_strategy as _get_s3
+
+    db = get_db_session()
+    try:
+        broker = get_user_broker(db, uid)
+        if not broker.is_kite_connected:
+            return
+
+        authenticated = UserZerodhaAuth.is_authenticated(db, uid)
+        cv_data = None
+        spot_price = 0
+
+        strategy = _get_s1(broker, uid)
+        if strategy.is_active:
+            if cv_data is None:
+                cv_data = _get_cv_data(broker, authenticated)
+                spot_price = cv_data.get("spot_price", 0)
+            strategy.check(cv_data, spot_price)
+
+        s2 = _get_s2(broker, uid)
+        if s2.is_active and s2.state.value in ("POSITION_OPEN", "ORDER_PLACED"):
+            if cv_data is None:
+                cv_data = _get_cv_data(broker, authenticated)
+                spot_price = cv_data.get("spot_price", 0)
+            s2.check(cv_data, spot_price)
+
+        s3 = _get_s3(broker, uid)
+        if s3.is_active:
+            if cv_data is None:
+                cv_data = _get_cv_data(broker, authenticated)
+                spot_price = cv_data.get("spot_price", 0)
+            s3.check(cv_data, spot_price)
+    finally:
+        db.close()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import traceback as _tb
     print("[LIFESPAN] Trading server starting up …", flush=True)
-    logger.info("Trading server starting up …")
 
     # Ensure all DB tables exist (safe on fresh Railway Postgres)
     try:
@@ -150,20 +165,19 @@ async def lifespan(app: FastAPI):
         from core import models  # noqa: F401 — registers all models
         Base.metadata.create_all(bind=engine)
         print("[LIFESPAN] Database tables verified / created.", flush=True)
-        logger.info("Database tables verified / created.")
     except Exception as e:
-        print(f"[LIFESPAN] DB init error: {e}", flush=True)
-        _tb.print_exc()
+        print(f"[LIFESPAN] DB init error (non-fatal): {e}", flush=True)
 
+    # Start background loop (it self-delays 30s before first run)
     task = asyncio.create_task(_strategy_background_loop())
-    print("[LIFESPAN] Server ready — yielding to FastAPI.", flush=True)
+    print("[LIFESPAN] Server ready.", flush=True)
     yield
     task.cancel()
     try:
         await task
     except asyncio.CancelledError:
         pass
-    logger.info("Trading server shutting down …")
+    print("[LIFESPAN] Server shut down.", flush=True)
 
 
 app = FastAPI(
