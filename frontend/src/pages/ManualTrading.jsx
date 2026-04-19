@@ -31,9 +31,12 @@ function isMarketHours() {
 }
 
 async function requestManual(path, options = {}) {
+  const token = localStorage.getItem('app_token');
+  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
   const response = await fetch(`/api/manual${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders,
       ...options.headers,
     },
     ...options,
@@ -188,10 +191,9 @@ function ManualOrderForm({ onOrderAction }) {
     target_type: 'PERCENT',
     target: '30',
     trailing_type: 'POINTS',
-    trailing: '5',
-    enable_trailing_sl: true,
+    trailing: '',
+    enable_trailing_sl: false,
     move_sl_to_cost: false,
-    re_entry: false,
     iceberg_legs: 1,
     tag: 'manual',
   });
@@ -203,8 +205,19 @@ function ManualOrderForm({ onOrderAction }) {
   const [nearestExpiry, setNearestExpiry] = useState('');
   const [lotSize, setLotSize] = useState(1);
 
+  // Cache both CE+PE option chains so toggling is instant
+  const optionChainCache = useRef({});
+  // Track whether user manually edited quantity (suppress auto-calc)
+  const userEditedQty = useRef(false);
+
   const handleChange = (event) => {
     const { name, value, type, checked } = event.target;
+    if (name === 'quantity') userEditedQty.current = true;
+    // When disabling trailing SL, clear trailing value
+    if (name === 'enable_trailing_sl' && !checked) {
+      setForm((current) => ({ ...current, enable_trailing_sl: false, trailing: '' }));
+      return;
+    }
     setForm((current) => ({
       ...current,
       [name]: type === 'checkbox' ? checked : value,
@@ -228,6 +241,7 @@ function ManualOrderForm({ onOrderAction }) {
       if (!form.index_name) {
         setStrikeOptions([]);
         setSpotPrice(null);
+        optionChainCache.current = {};
         return;
       }
 
@@ -236,19 +250,51 @@ function ManualOrderForm({ onOrderAction }) {
         setStrikeOptions([]);
         setSpotPrice(null);
         setNearestExpiry('');
+        optionChainCache.current = {};
+        return;
+      }
+
+      const optType = form.option_type || 'CE';
+
+      // If we already have this index cached, use it instantly
+      const cached = optionChainCache.current[form.index_name];
+      if (cached && cached[optType]) {
+        const data = cached[optType];
+        const nextOptions = (data.strike_options || []).map((strike) => String(strike));
+        const atmStrike = String(data.atm_strike || '');
+
+        setSpotPrice(Number(data.spot_price || 0));
+        setNearestExpiry(data.nearest_expiry || '');
+        setStrikeOptions(nextOptions);
+        setLotSize(Number(data.lot_size || 1) || 1);
+        setForm((current) => {
+          const nextExchange = data.exchange || config.exchange || current.exchange;
+          if (current.auto_atm || !nextOptions.includes(String(current.strike_price || ''))) {
+            return { ...current, strike_price: atmStrike, exchange: nextExchange };
+          }
+          if (current.exchange !== nextExchange) {
+            return { ...current, exchange: nextExchange };
+          }
+          return current;
+        });
         return;
       }
 
       setStrikesLoading(true);
 
       try {
-        const data = await requestManual(`/option_setup?index_name=${encodeURIComponent(form.index_name)}&option_type=${encodeURIComponent(form.option_type || 'CE')}`);
+        // Fetch both CE+PE in one call — the backend caches instruments
+        const allData = await requestManual(`/option_setup_all?index_name=${encodeURIComponent(form.index_name)}`);
+        if (!active) return;
+
+        // Store both chains in cache
+        optionChainCache.current[form.index_name] = allData;
+
+        const data = allData[optType];
+        if (!data) throw new Error(`No ${optType} data returned`);
+
         const nextOptions = (data.strike_options || []).map((strike) => String(strike));
         const atmStrike = String(data.atm_strike || '');
-
-        if (!active) {
-          return;
-        }
 
         setSpotPrice(Number(data.spot_price || 0));
         setNearestExpiry(data.nearest_expiry || '');
@@ -265,18 +311,14 @@ function ManualOrderForm({ onOrderAction }) {
           return current;
         });
       } catch {
-        if (!active) {
-          return;
-        }
+        if (!active) return;
 
         const fallbackCenter = form.strike_price ? Number(form.strike_price) : 0;
         setStrikeOptions(fallbackCenter > 0 ? [String(fallbackCenter)] : []);
         setSpotPrice(null);
         setNearestExpiry('');
       } finally {
-        if (active) {
-          setStrikesLoading(false);
-        }
+        if (active) setStrikesLoading(false);
       }
     };
 
@@ -289,6 +331,7 @@ function ManualOrderForm({ onOrderAction }) {
 
   // Auto-calculate quantity from trade_amount and entry price (or spot-based LTP)
   useEffect(() => {
+    if (userEditedQty.current) return; // user manually set quantity — don't override
     const amount = parseFloat(form.trade_amount) || 0;
     const entryPrice = parseFloat(form.price) || spotPrice || 0;
     if (amount <= 0 || entryPrice <= 0 || lotSize <= 0) return;
@@ -319,7 +362,7 @@ function ManualOrderForm({ onOrderAction }) {
       const payload = {
         ...form,
         tradingsymbol: form.tradingsymbol.trim(),
-        trailing: form.enable_trailing_sl ? form.trailing : 0,
+        trailing: form.enable_trailing_sl ? (form.trailing ? parseFloat(form.trailing) : 0) : 0,
         strike_price: form.strike_price ? parseFloat(form.strike_price) : 0,
         price: form.price ? parseFloat(form.price) : 0,
         trigger_price: form.trigger_price ? parseFloat(form.trigger_price) : 0,
@@ -328,6 +371,9 @@ function ManualOrderForm({ onOrderAction }) {
         quantity: form.quantity ? parseInt(form.quantity, 10) : 1,
         iceberg_legs: form.iceberg_legs ? parseInt(form.iceberg_legs, 10) : 1,
       };
+      // Remove frontend-only keys that backend doesn't need
+      delete payload.enable_trailing_sl;
+      delete payload.trade_amount;
 
       if (!payload.tradingsymbol && (!payload.index_name || !payload.strike_price || !payload.option_type)) {
         throw new Error('Select an index, option type and strike, or enter a trading symbol');
@@ -417,7 +463,6 @@ function ManualOrderForm({ onOrderAction }) {
         <InlineToggle name="auto_atm" checked={form.auto_atm} onChange={handleChange}>Auto ATM</InlineToggle>
         <InlineToggle name="enable_trailing_sl" checked={form.enable_trailing_sl} onChange={handleChange}>Trailing SL</InlineToggle>
         <InlineToggle name="move_sl_to_cost" checked={form.move_sl_to_cost} onChange={handleChange}>Move SL to Cost</InlineToggle>
-        <InlineToggle name="re_entry" checked={form.re_entry} onChange={handleChange}>Re-Entry</InlineToggle>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
@@ -446,7 +491,7 @@ function ManualOrderForm({ onOrderAction }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className={`grid grid-cols-1 ${form.enable_trailing_sl ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-3`}>
         <LabeledField label="Stop Loss">
           <SegmentedNumberField
             numberName="stop_loss"
@@ -477,20 +522,22 @@ function ManualOrderForm({ onOrderAction }) {
           />
         </LabeledField>
 
-        <LabeledField label="Trailing">
-          <SegmentedNumberField
-            numberName="trailing"
-            numberValue={form.trailing}
-            unitName="trailing_type"
-            unitValue={form.trailing_type}
-            onChange={handleChange}
-            placeholder="5"
-            units={[
-              { value: 'POINTS', label: 'Pts' },
-              { value: 'PERCENT', label: '%' },
-            ]}
-          />
-        </LabeledField>
+        {form.enable_trailing_sl ? (
+          <LabeledField label="Trailing SL">
+            <SegmentedNumberField
+              numberName="trailing"
+              numberValue={form.trailing}
+              unitName="trailing_type"
+              unitValue={form.trailing_type}
+              onChange={handleChange}
+              placeholder="e.g. 5"
+              units={[
+                { value: 'POINTS', label: 'Pts' },
+                { value: 'PERCENT', label: '%' },
+              ]}
+            />
+          </LabeledField>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -624,12 +671,15 @@ function ManualActivePositions({ onAction }) {
                 <th className="px-4 py-3 text-right font-medium">P&amp;L</th>
                 <th className="px-4 py-3 text-right font-medium">SL</th>
                 <th className="px-4 py-3 text-right font-medium">TGT</th>
+                <th className="px-4 py-3 text-center font-medium">Monitor</th>
                 <th className="px-4 py-3 text-center font-medium">Action</th>
               </tr>
             </thead>
             <tbody>
               {positions.map((position) => {
                 const mon = monitorInfo[position.tradingsymbol];
+                const monStatus = mon?.status || '';
+                const isFailed = monStatus.startsWith('FAILED_EXIT');
                 return (
                   <tr key={position.tradingsymbol} className="border-t border-surface-3 bg-surface-1/60">
                     <td className="px-4 py-3 text-gray-200 mono">{position.tradingsymbol}</td>
@@ -641,6 +691,19 @@ function ManualActivePositions({ onAction }) {
                     </td>
                     <td className="px-4 py-3 text-right text-yellow-400 mono text-xs">{mon?.sl_price ? Number(mon.sl_price).toFixed(2) : '—'}</td>
                     <td className="px-4 py-3 text-right text-blue-400 mono text-xs">{mon?.tgt_price ? Number(mon.tgt_price).toFixed(2) : '—'}</td>
+                    <td className="px-4 py-3 text-center">
+                      {isFailed ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-red-400" title={`Exit failed after retries — position unprotected! (${mon.exit_attempts || 0} attempts)`}>
+                          <AlertCircle className="w-3.5 h-3.5" /> FAILED
+                        </span>
+                      ) : monStatus === 'WATCHING' ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400" title={mon.last_ltp ? `Last LTP: ${Number(mon.last_ltp).toFixed(2)}` : 'Monitoring active'}>
+                          <Shield className="w-3.5 h-3.5" /> Active
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-500">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-center">
                       <button
                         onClick={() => handleSquareoff(position.tradingsymbol)}
@@ -927,6 +990,9 @@ export default function ManualTrading() {
     };
 
     checkAuth();
+
+    // Warm the instrument cache in the background on mount
+    requestManual('/preload_instruments', { method: 'POST' }).catch(() => {});
 
     // Fetch available margin
     const fetchMargins = async () => {

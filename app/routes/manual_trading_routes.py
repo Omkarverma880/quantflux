@@ -41,6 +41,40 @@ INDEX_SPOT_MAP = {
 }
 
 
+# ── Instrument Cache (daily TTL) ───────────────────────────────────
+# kite.instruments() returns ~100K rows for NFO.  Instruments don't change
+# intraday, so we cache per-exchange with a date-based TTL.
+import threading
+
+_instrument_lock = threading.Lock()
+_instrument_cache: dict[str, tuple[date, list[dict]]] = {}
+
+MONITOR_STATE_FILE = Path("data") / "manual_monitor_state.json"
+
+
+def _get_cached_instruments(exchange: str, broker) -> list[dict]:
+    """Return instruments for *exchange*, fetching at most once per day."""
+    today = date.today()
+    with _instrument_lock:
+        cached = _instrument_cache.get(exchange)
+        if cached and cached[0] == today:
+            return cached[1]
+    # Fetch outside the lock to avoid blocking other threads
+    instruments = broker.get_instruments(exchange)
+    with _instrument_lock:
+        _instrument_cache[exchange] = (today, instruments)
+    return instruments
+
+
+def _invalidate_instrument_cache(exchange: str | None = None):
+    """Force refresh on next access.  Pass None to clear all."""
+    with _instrument_lock:
+        if exchange:
+            _instrument_cache.pop(exchange, None)
+        else:
+            _instrument_cache.clear()
+
+
 # -- Auth dependency - per-user Zerodha session -------------------------
 
 def require_zerodha_auth(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
@@ -185,7 +219,7 @@ def _split_quantities(quantity: int, legs: int) -> list[int]:
 
 def _get_option_candidates(index_name: str, option_type: str, broker):
     exchange = INDEX_EXCHANGE_MAP.get(index_name, "NFO")
-    instruments = broker.get_instruments(exchange)
+    instruments = _get_cached_instruments(exchange, broker)
     today = date.today()
     candidates = []
 
@@ -319,6 +353,40 @@ async def get_option_setup(
     return _build_option_setup(index_name, option_type, broker)
 
 
+@router.get("/option_setup_all")
+async def get_option_setup_all(
+    index_name: str,
+    _auth=Depends(require_zerodha_auth),
+):
+    """Return both CE and PE option chains in one call (shares instrument cache)."""
+    broker = get_user_broker(_auth["db"], _auth["user_id"])
+    ce_data = _build_option_setup(index_name, "CE", broker)
+    pe_data = _build_option_setup(index_name, "PE", broker)
+    return {
+        "CE": ce_data.model_dump(),
+        "PE": pe_data.model_dump(),
+    }
+
+
+@router.post("/preload_instruments")
+async def preload_instruments(_auth=Depends(require_zerodha_auth)):
+    """Warm the instrument cache for all option exchanges."""
+    broker = get_user_broker(_auth["db"], _auth["user_id"])
+    exchanges = sorted(set(INDEX_EXCHANGE_MAP.values()))
+    loaded = []
+    for exchange in exchanges:
+        _get_cached_instruments(exchange, broker)
+        loaded.append(exchange)
+    return {"status": "ok", "cached_exchanges": loaded}
+
+
+@router.post("/invalidate_cache")
+async def invalidate_instrument_cache():
+    """Force re-download of instruments on next request."""
+    _invalidate_instrument_cache()
+    return {"status": "ok"}
+
+
 @router.post("/order")
 async def place_manual_order(order: ManualOrder, _auth=Depends(require_zerodha_auth)):
     broker = get_user_broker(_auth["db"], _auth["user_id"])
@@ -377,35 +445,26 @@ async def place_manual_order(order: ManualOrder, _auth=Depends(require_zerodha_a
     _append_manual_log(log_entry)
     logger.info("Manual order placed: %s -> %s", tradingsymbol, order_ids)
 
-    # Register with SL/target monitor if SL or target is set
+    # Register with SL/target monitor if SL or target is set.
+    # Use async fill verification to get the actual fill price/quantity.
     if order.stop_loss > 0 or order.target > 0:
-        # Determine entry price: use user-supplied price, or fetch LTP
-        entry_price = order.entry_price or order.price
-        if not entry_price or entry_price <= 0:
-            try:
-                instrument_key = f"{resolved_exchange}:{tradingsymbol}"
-                ltp_data = broker.kite.ltp([instrument_key])
-                entry_price = ltp_data[instrument_key]["last_price"]
-            except Exception:
-                entry_price = 0
-        if entry_price > 0:
-            _monitor.register(
-                tradingsymbol=tradingsymbol,
-                exchange=resolved_exchange,
-                side=order.side,
-                quantity=order.quantity,
-                entry_price=entry_price,
-                product=order.product,
-                sl_type=order.sl_type,
-                stop_loss=order.stop_loss,
-                target_type=order.target_type,
-                target=order.target,
-                trailing_type=order.trailing_type,
-                trailing=order.trailing,
-                move_sl_to_cost=order.move_sl_to_cost,
-                re_entry=order.re_entry,
-                user_id=_auth["user_id"],
-            )
+        asyncio.create_task(_verify_fill_and_register(
+            order_ids=order_ids,
+            tradingsymbol=tradingsymbol,
+            exchange=resolved_exchange,
+            side=order.side,
+            requested_quantity=order.quantity,
+            fallback_entry_price=order.entry_price or order.price,
+            product=order.product,
+            sl_type=order.sl_type,
+            stop_loss=order.stop_loss,
+            target_type=order.target_type,
+            target=order.target,
+            trailing_type=order.trailing_type,
+            trailing=order.trailing,
+            move_sl_to_cost=order.move_sl_to_cost,
+            user_id=_auth["user_id"],
+        ))
 
     return {
         "status": "success",
@@ -414,6 +473,117 @@ async def place_manual_order(order: ManualOrder, _auth=Depends(require_zerodha_a
         "resolved_expiry": resolved_expiry.isoformat() if resolved_expiry else None,
         "resolved_exchange": resolved_exchange,
     }
+
+
+async def _verify_fill_and_register(
+    order_ids: list[str],
+    tradingsymbol: str,
+    exchange: str,
+    side: str,
+    requested_quantity: int,
+    fallback_entry_price: float,
+    product: str,
+    sl_type: str,
+    stop_loss: float,
+    target_type: str,
+    target: float,
+    trailing_type: str,
+    trailing: float,
+    move_sl_to_cost: bool,
+    user_id: int,
+):
+    """Poll order status to get actual fill price, then register with monitor."""
+    from core.database import get_db_session
+
+    filled_price = 0.0
+    filled_qty = 0
+    max_polls = 15  # 15 x 1s = 15 seconds max wait
+
+    for attempt in range(max_polls):
+        await asyncio.sleep(1)
+        db = get_db_session()
+        try:
+            broker = get_user_broker(db, user_id)
+            all_orders = broker.get_orders()
+            total_filled_value = 0.0
+            total_filled_qty = 0
+            all_done = True
+
+            for oid in order_ids:
+                for o in all_orders:
+                    if str(o.get("order_id")) == str(oid):
+                        status = o.get("status", "")
+                        avg = float(o.get("average_price", 0) or 0)
+                        fq = int(o.get("filled_quantity", 0) or 0)
+                        if status == "COMPLETE" and avg > 0 and fq > 0:
+                            total_filled_value += avg * fq
+                            total_filled_qty += fq
+                        elif status in ("REJECTED", "CANCELLED"):
+                            logger.warning(
+                                "Order %s was %s — skipping SL/TGT registration",
+                                oid, status,
+                            )
+                            return
+                        else:
+                            all_done = False
+                        break
+
+            if all_done and total_filled_qty > 0:
+                filled_price = round(total_filled_value / total_filled_qty, 2)
+                filled_qty = total_filled_qty
+                break
+        except Exception as exc:
+            logger.warning("Fill verification poll %d failed: %s", attempt + 1, exc)
+        finally:
+            db.close()
+
+    # Fallback: if we couldn't confirm fill, use LTP or user-supplied price
+    entry_price = filled_price
+    quantity = filled_qty or requested_quantity
+
+    if entry_price <= 0:
+        entry_price = fallback_entry_price
+
+    if entry_price <= 0:
+        db = get_db_session()
+        try:
+            broker = get_user_broker(db, user_id)
+            instrument_key = f"{exchange}:{tradingsymbol}"
+            ltp_data = broker.kite.ltp([instrument_key])
+            entry_price = ltp_data[instrument_key]["last_price"]
+        except Exception:
+            pass
+        finally:
+            db.close()
+
+    if entry_price <= 0:
+        logger.error(
+            "Cannot determine entry price for %s — SL/TGT monitor NOT registered",
+            tradingsymbol,
+        )
+        return
+
+    logger.info(
+        "Fill verified for %s: entry=%.2f qty=%d (requested=%d)",
+        tradingsymbol, entry_price, quantity, requested_quantity,
+    )
+
+    _monitor.register(
+        tradingsymbol=tradingsymbol,
+        exchange=exchange,
+        side=side,
+        quantity=quantity,
+        entry_price=entry_price,
+        product=product,
+        sl_type=sl_type,
+        stop_loss=stop_loss,
+        target_type=target_type,
+        target=target,
+        trailing_type=trailing_type,
+        trailing=trailing,
+        move_sl_to_cost=move_sl_to_cost,
+        user_id=user_id,
+    )
 
 
 @router.get("/positions")
@@ -599,11 +769,34 @@ async def get_manual_margins(_auth=Depends(require_zerodha_auth)):
 # ── SL / Target Background Monitor ─────────────────────────────────
 
 TICK = 0.05
+MAX_EXIT_RETRIES = 3
 
 
 def _round_tick(price: float) -> float:
     """Round price to nearest tick size (0.05)."""
     return round(round(price / TICK) * TICK, 2)
+
+
+def _save_monitor_state(trades: dict):
+    """Persist monitor state to disk so it survives restarts."""
+    try:
+        MONITOR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        MONITOR_STATE_FILE.write_text(json.dumps(trades, indent=2, default=str))
+    except OSError as exc:
+        logger.error("Failed to save monitor state: %s", exc)
+
+
+def _load_monitor_state() -> dict:
+    """Load persisted monitor state from disk."""
+    if not MONITOR_STATE_FILE.exists():
+        return {}
+    try:
+        data = json.loads(MONITOR_STATE_FILE.read_text())
+        if isinstance(data, dict):
+            return data
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not load monitor state: %s", exc)
+    return {}
 
 
 class _ManualTradeMonitor:
@@ -614,6 +807,11 @@ class _ManualTradeMonitor:
         self._trades: dict[str, dict] = {}
         self._task: asyncio.Task | None = None
         self._running = False
+        self._last_check_time: str | None = None
+        # Load persisted state
+        self._trades = _load_monitor_state()
+        if self._trades:
+            logger.info("Restored %d monitored trades from disk", len(self._trades))
 
     # ── public API ──────────────────────────────
 
@@ -622,7 +820,7 @@ class _ManualTradeMonitor:
                  sl_type: str, stop_loss: float,
                  target_type: str, target: float,
                  trailing_type: str, trailing: float,
-                 move_sl_to_cost: bool, re_entry: bool,
+                 move_sl_to_cost: bool,
                  user_id: int = None):
         """Register an active trade for SL/target monitoring."""
         if stop_loss <= 0 and target <= 0:
@@ -659,7 +857,10 @@ class _ManualTradeMonitor:
             "best_price": entry_price,
             "registered_at": datetime.now().isoformat(),
             "status": "WATCHING",
+            "exit_attempts": 0,
+            "last_ltp": 0,
         }
+        _save_monitor_state(self._trades)
         logger.info(
             "SL/Target monitor registered: %s | side=%s entry=%.2f SL=%.2f TGT=%.2f trailing=%.2f",
             tradingsymbol, side, entry_price,
@@ -671,10 +872,12 @@ class _ManualTradeMonitor:
 
     def unregister(self, tradingsymbol: str):
         self._trades.pop(tradingsymbol, None)
+        _save_monitor_state(self._trades)
 
     def get_status(self) -> dict:
         return {
             "running": self._running,
+            "last_check_time": self._last_check_time,
             "active_trades": {k: {**v} for k, v in self._trades.items()},
         }
 
@@ -708,10 +911,11 @@ class _ManualTradeMonitor:
 
                 try:
                     await self._check_once()
+                    self._last_check_time = datetime.now().isoformat()
                 except Exception as exc:
                     logger.error("Monitor check error: %s", exc)
 
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)  # 1s polling for faster SL/TGT response
         finally:
             self._running = False
             logger.info("Manual SL/target monitor loop stopped (no active trades)")
@@ -740,17 +944,18 @@ class _ManualTradeMonitor:
                 except Exception as exc:
                     logger.warning("Monitor LTP fetch failed for user %s: %s", uid, exc)
                     continue
-                self._process_ltp(trades, ltp_data, broker)
+                await self._process_ltp(trades, ltp_data, broker)
             finally:
                 db.close()
 
-    def _process_ltp(self, trades: dict, ltp_data: dict, broker):
+    async def _process_ltp(self, trades: dict, ltp_data: dict, broker):
         to_remove = []
         for sym, trade in list(trades.items()):
             key = f"{trade['exchange']}:{sym}"
             if key not in ltp_data:
                 continue
             ltp = ltp_data[key]["last_price"]
+            trade["last_ltp"] = ltp
             is_buy = trade["side"] == "BUY"
 
             # Update best price for trailing SL
@@ -802,42 +1007,62 @@ class _ManualTradeMonitor:
                 reason = "SL" if sl_hit else "TARGET"
                 logger.info("Manual %s hit for %s at LTP=%.2f | SL=%.2f TGT=%.2f",
                             reason, sym, ltp, trade["sl_price"], trade["tgt_price"])
-                try:
-                    exit_side = OrderSide.SELL if is_buy else OrderSide.BUY
-                    req = OrderRequest(
-                        tradingsymbol=sym,
-                        exchange=Exchange(trade["exchange"]),
-                        side=exit_side,
-                        quantity=trade["quantity"],
-                        order_type=OrderType.MARKET,
-                        product=ProductType(trade["product"]),
-                        tag=f"manual-{reason.lower()}",
+                exit_placed = False
+                for retry in range(MAX_EXIT_RETRIES):
+                    try:
+                        exit_side = OrderSide.SELL if is_buy else OrderSide.BUY
+                        req = OrderRequest(
+                            tradingsymbol=sym,
+                            exchange=Exchange(trade["exchange"]),
+                            side=exit_side,
+                            quantity=trade["quantity"],
+                            order_type=OrderType.MARKET,
+                            product=ProductType(trade["product"]),
+                            tag=f"manual-{reason.lower()}",
+                        )
+                        resp = broker.place_order(req)
+                        oid = resp.order_id if hasattr(resp, "order_id") else resp
+                        _append_manual_log({
+                            "timestamp": datetime.now().isoformat(),
+                            "date": date.today().isoformat(),
+                            "tradingsymbol": sym,
+                            "exchange": trade["exchange"],
+                            "side": exit_side.value,
+                            "quantity": trade["quantity"],
+                            "order_type": "MARKET",
+                            "order_ids": [oid],
+                            "tag": f"manual-{reason.lower()}",
+                            "status": reason,
+                            "exit_ltp": ltp,
+                            "entry_price": trade["entry_price"],
+                            "pnl": round((ltp - trade["entry_price"]) * trade["quantity"] * (1 if is_buy else -1), 2),
+                        })
+                        trade["status"] = reason
+                        to_remove.append(sym)
+                        exit_placed = True
+                        logger.info("Manual %s exit placed: %s → %s", reason, sym, oid)
+                        break
+                    except Exception as exc:
+                        trade["exit_attempts"] = trade.get("exit_attempts", 0) + 1
+                        logger.error(
+                            "Exit attempt %d/%d failed for %s: %s",
+                            retry + 1, MAX_EXIT_RETRIES, sym, exc,
+                        )
+                        if retry < MAX_EXIT_RETRIES - 1:
+                            await asyncio.sleep(0.5)
+
+                if not exit_placed:
+                    trade["status"] = f"FAILED_EXIT_{reason}"
+                    logger.critical(
+                        "CRITICAL: All %d exit attempts failed for %s — position UNPROTECTED",
+                        MAX_EXIT_RETRIES, sym,
                     )
-                    resp = broker.place_order(req)
-                    oid = resp.order_id if hasattr(resp, "order_id") else resp
-                    _append_manual_log({
-                        "timestamp": datetime.now().isoformat(),
-                        "date": date.today().isoformat(),
-                        "tradingsymbol": sym,
-                        "exchange": trade["exchange"],
-                        "side": exit_side.value,
-                        "quantity": trade["quantity"],
-                        "order_type": "MARKET",
-                        "order_ids": [oid],
-                        "tag": f"manual-{reason.lower()}",
-                        "status": reason,
-                        "exit_ltp": ltp,
-                        "entry_price": trade["entry_price"],
-                        "pnl": round((ltp - trade["entry_price"]) * trade["quantity"] * (1 if is_buy else -1), 2),
-                    })
-                    trade["status"] = reason
-                    to_remove.append(sym)
-                    logger.info("Manual %s exit placed: %s → %s", reason, sym, oid)
-                except Exception as exc:
-                    logger.error("Failed to place %s exit for %s: %s", reason, sym, exc)
 
         for sym in to_remove:
             self._trades.pop(sym, None)
+
+        # Persist state after every check cycle
+        _save_monitor_state(self._trades)
 
 
 # Singleton monitor
@@ -846,6 +1071,9 @@ _monitor = _ManualTradeMonitor()
 
 @router.get("/monitor/status")
 async def get_monitor_status():
+    # Resume monitoring if there are persisted trades but loop isn't running
+    if _monitor._trades and not _monitor._running:
+        _monitor._ensure_running()
     return _monitor.get_status()
 
 
