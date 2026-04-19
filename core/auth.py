@@ -122,6 +122,78 @@ def get_user_by_id(db: Session, user_id: int):
     from core.models import User
     return db.query(User).filter(User.id == user_id).first()
 
+# ──────────────── Password Reset ────────────────
+
+RESET_TOKEN_EXPIRE_MINUTES = 15
+
+def create_reset_token(user_id: int, username: str) -> str:
+    """Create a short-lived JWT specifically for password reset."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES)
+    return jwt.encode(
+        {"user_id": user_id, "sub": username, "purpose": "password_reset", "exp": expire},
+        _cfg.SECRET_KEY,
+        algorithm=ALGORITHM,
+    )
+
+def verify_reset_token(token: str) -> int:
+    """Validate a password-reset JWT. Returns user_id or raises."""
+    try:
+        payload = jwt.decode(token, _cfg.SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("purpose") != "password_reset":
+            raise HTTPException(status_code=400, detail="Invalid reset token")
+        user_id = payload.get("user_id")
+        if user_id is None:
+            raise HTTPException(status_code=400, detail="Invalid reset token")
+        return user_id
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Reset link has expired or is invalid")
+
+def reset_user_password(db: Session, user_id: int, new_password: str) -> bool:
+    """Update the user's password hash. Returns True on success."""
+    from core.models import User
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    if not user:
+        return False
+    user.password_hash = hash_password(new_password)
+    db.commit()
+    return True
+
+# ──────────────── Password Reset ────────────────
+
+RESET_TOKEN_EXPIRE_MINUTES = 15
+
+def create_reset_token(user_id: int, username: str) -> str:
+    """Create a short-lived JWT specifically for password reset."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES)
+    return jwt.encode(
+        {"user_id": user_id, "sub": username, "purpose": "password_reset", "exp": expire},
+        _cfg.SECRET_KEY,
+        algorithm=ALGORITHM,
+    )
+
+def verify_reset_token(token: str) -> int:
+    """Validate a password-reset JWT. Returns user_id or raises."""
+    try:
+        payload = jwt.decode(token, _cfg.SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("purpose") != "password_reset":
+            raise HTTPException(status_code=400, detail="Invalid reset token")
+        user_id = payload.get("user_id")
+        if user_id is None:
+            raise HTTPException(status_code=400, detail="Invalid reset token")
+        return user_id
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Reset link has expired or is invalid")
+
+def reset_user_password(db: Session, user_id: int, new_password: str) -> bool:
+    """Update the user's password hash. Returns True on success."""
+    from core.models import User
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    if not user:
+        return False
+    user.password_hash = hash_password(new_password)
+    db.commit()
+    return True
+
 # ──────────────── Zerodha Auth (per-user) ────────────────
 
 from kiteconnect import KiteConnect
