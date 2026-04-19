@@ -33,7 +33,7 @@ from core.logger import get_logger
 logger = get_logger("server")
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-STRATEGY_CHECK_INTERVAL = 30  # seconds between strategy checks
+STRATEGY_CHECK_INTERVAL = 2  # seconds — fast enough for momentum entries
 
 
 async def _strategy_background_loop():
@@ -41,9 +41,8 @@ async def _strategy_background_loop():
     Background task: runs strategy check every STRATEGY_CHECK_INTERVAL seconds
     for ALL users with active Zerodha sessions.
     """
-    # Wait 30s after startup before first check — let the app stabilise
-    print("[BG] Strategy loop: waiting 30s before first run …", flush=True)
-    await asyncio.sleep(30)
+    # Brief delay to let server finish startup
+    await asyncio.sleep(5)
     print("[BG] Strategy loop: starting checks.", flush=True)
 
     while True:
