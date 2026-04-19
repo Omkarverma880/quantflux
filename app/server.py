@@ -140,15 +140,23 @@ async def _strategy_background_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import traceback as _tb
+    print("[LIFESPAN] Trading server starting up …", flush=True)
     logger.info("Trading server starting up …")
 
     # Ensure all DB tables exist (safe on fresh Railway Postgres)
-    from core.database import engine, Base
-    from core import models  # noqa: F401 — registers all models
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables verified / created.")
+    try:
+        from core.database import engine, Base
+        from core import models  # noqa: F401 — registers all models
+        Base.metadata.create_all(bind=engine)
+        print("[LIFESPAN] Database tables verified / created.", flush=True)
+        logger.info("Database tables verified / created.")
+    except Exception as e:
+        print(f"[LIFESPAN] DB init error: {e}", flush=True)
+        _tb.print_exc()
 
     task = asyncio.create_task(_strategy_background_loop())
+    print("[LIFESPAN] Server ready — yielding to FastAPI.", flush=True)
     yield
     task.cancel()
     try:
@@ -168,6 +176,8 @@ app = FastAPI(
 # Rate-limiting error handler
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from app.routes.auth_routes import limiter
+app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS — allow React dev server + production domain
@@ -199,6 +209,17 @@ _BOOT_ID = uuid.uuid4().hex
 @app.get("/api/boot_id")
 def get_boot_id():
     return {"boot_id": _BOOT_ID}
+
+
+@app.get("/api/health")
+def healthcheck():
+    """Lightweight health check — no DB, no imports."""
+    import os
+    return {
+        "status": "ok",
+        "port": os.getenv("PORT", "8000"),
+        "boot_id": _BOOT_ID,
+    }
 
 
 # ── WebSocket ──────────────────────────────────────

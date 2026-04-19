@@ -44,7 +44,10 @@ SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
 # ──────────────── Server ────────────────
 PORT = int(os.getenv("PORT", "8000"))
 APP_URL = os.getenv("APP_URL", "http://localhost:8000")  # public URL (Railway sets this)
-CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", r"http://(localhost|127\.0\.0\.1)(:\d+)?")
+CORS_ORIGIN_REGEX = os.getenv(
+    "CORS_ORIGIN_REGEX",
+    r"https?://(localhost|127\.0\.0\.1)(:\d+)?|https://.*\.up\.railway\.app"
+)
 
 # ──────────────── Data ────────────────
 DATA_DIR = BASE_DIR / "data"

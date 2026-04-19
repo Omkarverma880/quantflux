@@ -7,7 +7,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # ── Stage 2: Python backend ──
-FROM python:3.13-slim
+FROM python:3.11-slim
 WORKDIR /app
 
 # Install system deps for psycopg2
@@ -29,4 +29,4 @@ RUN rm -f .env
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "alembic upgrade head || echo 'Migration warning — continuing...'; python main.py server"]
+CMD ["sh", "-c", "echo '[CMD] Running alembic...'; alembic upgrade head 2>&1 || echo '[CMD] Migration warning — continuing...'; echo '[CMD] Starting server...'; python main.py server"]

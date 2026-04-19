@@ -11,7 +11,7 @@ Authentication API routes — multi-user.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, HTMLResponse
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import timedelta
 from slowapi import Limiter

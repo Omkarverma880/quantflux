@@ -24,18 +24,18 @@ def cmd_server():
     """Start the FastAPI web server (dashboard + API)."""
     import uvicorn
 
-    print("\n" + "=" * 60)
-    print("  QUANTFLUX — WEB DASHBOARD")
-    print(f"  Mode    : {'PAPER TRADE' if settings.PAPER_TRADE else 'LIVE TRADE'}")
-    print(f"  Reload  : {'ON' if os.getenv('DEV_MODE', 'false').lower() == 'true' else 'OFF'}")
-    print(f"  API     : http://localhost:{settings.PORT}/api")
-    print(f"  Frontend: http://localhost:5173  (run 'npm run dev' in frontend/)")
-    print("=" * 60 + "\n")
+    port = settings.PORT
+    print("\n" + "=" * 60, flush=True)
+    print("  QUANTFLUX — WEB DASHBOARD", flush=True)
+    print(f"  Mode    : {'PAPER TRADE' if settings.PAPER_TRADE else 'LIVE TRADE'}", flush=True)
+    print(f"  Port    : {port}  (PORT env = {os.getenv('PORT', 'NOT SET')})", flush=True)
+    print(f"  DB URL  : {settings.DATABASE_URL[:30]}…", flush=True)
+    print("=" * 60 + "\n", flush=True)
 
     uvicorn.run(
         "app.server:app",
         host="0.0.0.0",
-        port=settings.PORT,
+        port=port,
         reload=os.getenv("DEV_MODE", "false").lower() == "true",
         log_level="info",
     )
