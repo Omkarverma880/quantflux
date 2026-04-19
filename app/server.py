@@ -2,6 +2,7 @@
 FastAPI application — main server setup.
 Mounts API routes, WebSocket, serves React frontend.
 """
+import os
 import sys
 import uuid
 import asyncio
@@ -206,5 +207,25 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 # ── Serve React frontend (production build) ───────
+from fastapi.responses import FileResponse
+
+@app.get("/api/debug/frontend")
+def debug_frontend():
+    """Diagnostic: check if frontend/dist exists."""
+    exists = FRONTEND_DIR.exists()
+    files = sorted(str(f.relative_to(FRONTEND_DIR)) for f in FRONTEND_DIR.rglob("*") if f.is_file()) if exists else []
+    return {"frontend_dir": str(FRONTEND_DIR), "exists": exists, "files": files[:50]}
+
 if FRONTEND_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+    # Serve static assets (JS, CSS, images) from dist/assets/
+    assets_dir = FRONTEND_DIR / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        """SPA catch-all: serve file if exists, otherwise index.html."""
+        file_path = FRONTEND_DIR / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(FRONTEND_DIR / "index.html")
