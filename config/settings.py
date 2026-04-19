@@ -11,7 +11,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 # ──────────────── Database ────────────────
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:1605@localhost:5432/quantflux_db")
+_raw_db_url = os.getenv("DATABASE_URL", "postgresql://postgres:1605@localhost:5432/quantflux_db")
+# Railway provides postgres:// but SQLAlchemy 2.0 requires postgresql://
+DATABASE_URL = _raw_db_url.replace("postgres://", "postgresql://", 1) if _raw_db_url.startswith("postgres://") else _raw_db_url
 
 # ──────────────── Token Storage ────────────────
 TOKEN_DIR = BASE_DIR / "data" / "tokens"

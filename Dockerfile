@@ -27,6 +27,4 @@ COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
 # Remove .env so Railway env vars take precedence
 RUN rm -f .env
 
-EXPOSE 8000
-
-CMD ["sh", "-c", "alembic upgrade head && python main.py server"]
+CMD ["sh", "-c", "alembic upgrade head || echo 'Migration warning — continuing...'; python main.py server"]
