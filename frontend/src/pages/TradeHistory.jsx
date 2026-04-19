@@ -83,12 +83,12 @@ export default function TradeHistory() {
   const totalOrders = history.reduce((s, d) => s + (d.orders?.length || 0), 0);
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 max-w-[1400px] mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Trade History</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
+          <h1 className="text-xl sm:text-2xl font-bold text-white">Trade History</h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
             Past orders across all trading days
             {totalOrders > 0 && <span className="ml-1">— {totalOrders} total orders across {history.length} day{history.length > 1 ? 's' : ''}</span>}
           </p>

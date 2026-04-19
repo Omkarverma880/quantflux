@@ -97,7 +97,7 @@ function StrategyCard({ label, shortName, data, onClick }) {
 
         {/* Body */}
         {trade.option_symbol ? (
-          <div className="grid grid-cols-4 gap-3 pt-3 border-t border-surface-3/60">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-surface-3/60">
             <Stat label="Option" value={trade.option_symbol} mono truncate />
             <Stat label="Entry" value={`₹${(trade.fill_price || trade.gann_entry_price || trade.entry_price || 0).toFixed(1)}`} mono />
             <Stat label="LTP" value={trade.current_ltp > 0 ? `₹${trade.current_ltp.toFixed(1)}` : '—'} mono />
@@ -332,11 +332,11 @@ export default function Dashboard() {
   const riskBlocked = summary?.risk && !summary.risk.trading_allowed;
 
   return (
-    <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
+    <div className="p-3 sm:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* ── Header ──────────────────────────────── */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Dashboard</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Dashboard</h1>
           <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-2">
             <Clock className="w-3.5 h-3.5" />
             <span className="mono">{time.toLocaleTimeString('en-IN', { hour12: false })}</span>
@@ -344,7 +344,7 @@ export default function Dashboard() {
             {new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
           </p>
         </div>
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
           <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium ${
             marketOpen
               ? 'border-green-500/30 bg-green-500/10 text-green-400'
@@ -490,7 +490,7 @@ export default function Dashboard() {
           <BarChart3 className="w-4 h-4 text-brand-400" />
           <h3 className="text-sm font-semibold text-white">Strategy Comparison</h3>
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {[
             { label: 'Gann CV', short: 'S1', data: s1, pnl: s1Pnl, color: 'brand' },
             { label: 'Option Sell', short: 'S2', data: s2, pnl: s2Pnl, color: 'blue' },

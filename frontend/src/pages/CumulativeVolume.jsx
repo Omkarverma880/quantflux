@@ -121,12 +121,12 @@ export default function CumulativeVolume() {
       : Minus;
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 max-w-[1400px] mx-auto">
       {/* ── Header ──────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <BarChart3 className="w-6 h-6 text-brand-400" />
+          <h1 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+            <BarChart3 className="w-5 sm:w-6 h-5 sm:h-6 text-brand-400" />
             Cumulative Volume Data
           </h1>
           <p className="text-sm text-gray-500 mt-1">

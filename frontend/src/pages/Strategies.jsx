@@ -50,12 +50,10 @@ export default function Strategies() {
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Strategies</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Manage your trading strategies</p>
-        </div>
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-[1400px] mx-auto">
+      <div>
+        <h1 className="text-xl sm:text-2xl font-bold text-white">Strategies</h1>
+        <p className="text-xs sm:text-sm text-gray-500 mt-0.5">Manage your trading strategies</p>
       </div>
 
       {data.strategies.length === 0 ? (
@@ -85,17 +83,17 @@ STRATEGY_MAP["my_strategy"] = MyStrategy
           {data.strategies.map((s) => (
             <div key={s.name} className="card-hover">
               <div
-                className="flex items-center justify-between cursor-pointer"
+                className="flex flex-col sm:flex-row sm:items-center gap-3 cursor-pointer"
                 onClick={() => setExpanded(expanded === s.name ? null : s.name)}
               >
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
                     s.active ? 'bg-green-500/15' : 'bg-surface-3'
                   }`}>
                     <Zap className={`w-5 h-5 ${s.active ? 'text-green-400' : 'text-gray-500'}`} />
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-white">{s.name}</h3>
+                  <div className="min-w-0">
+                    <h3 className="font-semibold text-white text-sm sm:text-base truncate">{s.name}</h3>
                     <p className="text-xs text-gray-500">
                       {s.config?.instruments?.length || 0} instruments &bull;{' '}
                       ₹{(s.config?.capital || 100000).toLocaleString('en-IN')} capital
@@ -103,7 +101,7 @@ STRATEGY_MAP["my_strategy"] = MyStrategy
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 sm:gap-3 ml-[52px] sm:ml-0 flex-wrap">
                   {STRATEGY_PAGES[s.name] && (
                     <button
                       onClick={(e) => { e.stopPropagation(); navigate(STRATEGY_PAGES[s.name]); }}

@@ -111,11 +111,11 @@ export default function Orders() {
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
-      <div className="flex items-center justify-between">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 max-w-[1400px] mx-auto">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Orders & Positions</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Track your trades in real time</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-white">Orders & Positions</h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">Track your trades in real time</p>
         </div>
         <button onClick={fetchData} className="btn-ghost flex items-center gap-2" disabled={loading}>
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -124,7 +124,7 @@ export default function Orders() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <Tab active={tab === 'positions'} onClick={() => setTab('positions')}>
           <span className="flex items-center gap-1.5"><Package className="w-4 h-4" /> Positions ({positions.filter(p => p.quantity !== 0).length})</span>
         </Tab>
@@ -138,7 +138,7 @@ export default function Orders() {
 
       {/* Positions Table */}
       {tab === 'positions' && (
-        <div className="card overflow-hidden p-0">
+        <div className="card overflow-x-auto p-0">
           {positions.filter(p => p.quantity !== 0).length === 0 ? (
             <div className="text-center py-12">
               <Package className="w-10 h-10 mx-auto text-gray-600 mb-3" />
@@ -189,7 +189,7 @@ export default function Orders() {
 
       {/* Holdings Table */}
       {tab === 'holdings' && (
-        <div className="card overflow-hidden p-0">
+        <div className="card overflow-x-auto p-0">
           {holdings.length === 0 ? (
             <div className="text-center py-12">
               <Briefcase className="w-10 h-10 mx-auto text-gray-600 mb-3" />
@@ -229,7 +229,7 @@ export default function Orders() {
 
       {/* Orders Table */}
       {tab === 'orders' && (
-        <div className="card overflow-hidden p-0">
+        <div className="card overflow-x-auto p-0">
           {loading ? <TableSkeleton /> : orders.length === 0 ? (
             <div className="text-center py-12">
               <ClipboardList className="w-10 h-10 mx-auto text-gray-600 mb-3" />

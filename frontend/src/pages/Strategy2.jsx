@@ -205,16 +205,16 @@ export default function Strategy2() {
   /* ── Render ────────────────────────────────── */
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-6xl mx-auto">
       {/* ── Header ─────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="space-y-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Strategy 2 — Option Selling</h1>
-          <p className="text-sm text-gray-400 mt-1">
+          <h1 className="text-lg sm:text-2xl font-bold text-white">Strategy 2 — Option Selling</h1>
+          <p className="text-xs sm:text-sm text-gray-400 mt-1">
             ATM option selling at ceiling Gann level when cumulative volume breaches threshold
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           <Badge className={stateStyle.bg + ' ' + stateStyle.text}>{stateStyle.label}</Badge>
 
           <button
@@ -227,14 +227,14 @@ export default function Strategy2() {
           {isActive ? (
             <button
               onClick={handleStop}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition text-sm font-medium"
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition text-sm font-medium"
             >
               <Square className="w-4 h-4" /> Stop
             </button>
           ) : (
             <button
               onClick={handleStart}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600/20 text-green-400 border border-green-500/30 hover:bg-green-600/30 transition text-sm font-medium"
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-green-600/20 text-green-400 border border-green-500/30 hover:bg-green-600/30 transition text-sm font-medium"
             >
               <Play className="w-4 h-4" /> Start
             </button>

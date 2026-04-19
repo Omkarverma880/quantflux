@@ -124,12 +124,12 @@ export default function Settings() {
   const hasDirty = Object.keys(dirty).length > 0;
 
   return (
-    <div className="p-6 space-y-6 max-w-[1000px] mx-auto">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 max-w-[1000px] mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Settings</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
+          <h1 className="text-xl sm:text-2xl font-bold text-white">Settings</h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
             System configuration &mdash; changes are saved to .env and applied instantly
           </p>
         </div>
@@ -158,7 +158,7 @@ export default function Settings() {
               <CheckCircle className="w-5 h-5 text-green-400" />
               <span className="font-medium text-green-400">Connected</span>
             </div>
-            <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <div>
                 <span className="text-gray-500">Name:</span>
                 <span className="text-white ml-2">{auth.profile?.name}</span>

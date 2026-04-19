@@ -453,18 +453,12 @@ export default function Strategy3() {
 
   if (loading && !status) {
     return (
-      <div className="p-6 space-y-6 max-w-6xl mx-auto">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="h-8 w-80 bg-surface-3 rounded animate-pulse" />
-            <div className="h-4 w-60 bg-surface-3 rounded animate-pulse mt-2" />
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-20 bg-surface-3 rounded animate-pulse" />
-            <div className="h-8 w-20 bg-surface-3 rounded animate-pulse" />
-          </div>
+      <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-6xl mx-auto">
+        <div>
+          <div className="h-8 w-64 sm:w-80 bg-surface-3 rounded animate-pulse" />
+          <div className="h-4 w-48 sm:w-60 bg-surface-3 rounded animate-pulse mt-2" />
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
           {Array.from({ length: 7 }).map((_, i) => (
             <div key={i} className="bg-surface-2 border border-surface-3 rounded-xl p-4">
               <div className="h-3 w-16 bg-surface-3 rounded animate-pulse mb-3" />
@@ -485,16 +479,16 @@ export default function Strategy3() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-6xl mx-auto">
       {/* ── Header ─────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="space-y-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Strategy 3 — CV + VWAP + EMA + ADX</h1>
-          <p className="text-sm text-gray-400 mt-1">
+          <h1 className="text-lg sm:text-2xl font-bold text-white">Strategy 3 — CV + VWAP + EMA + ADX</h1>
+          <p className="text-xs sm:text-sm text-gray-400 mt-1">
             Momentum entry using EMA 200/20, VWAP, ADX strength, and cumulative volume confirmation
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           <Badge className={stateStyle.bg + ' ' + stateStyle.text}>{stateStyle.label}</Badge>
 
           {/* Info icon → PIN → Documentation */}
@@ -516,14 +510,14 @@ export default function Strategy3() {
           {isActive ? (
             <button
               onClick={handleStop}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition text-sm font-medium"
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition text-sm font-medium"
             >
               <Square className="w-4 h-4" /> Stop
             </button>
           ) : (
             <button
               onClick={handleStart}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600/20 text-green-400 border border-green-500/30 hover:bg-green-600/30 transition text-sm font-medium"
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-green-600/20 text-green-400 border border-green-500/30 hover:bg-green-600/30 transition text-sm font-medium"
             >
               <Play className="w-4 h-4" /> Start
             </button>
