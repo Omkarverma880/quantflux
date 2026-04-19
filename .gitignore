@@ -1,0 +1,12 @@
+.env
+data/tokens/
+logs/
+__pycache__/
+*.pyc
+.venv/
+venv/
+frontend/node_modules/
+frontend/dist/
+data/trade_history/
+data/strategy_configs/
+*.bak

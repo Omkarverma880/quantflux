@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoTrader Application Documentation</title>
+  <style>
+    :root {
+      --bg: #08111f;
+      --bg-soft: #0f1b2d;
+      --panel: rgba(13, 26, 43, 0.88);
+      --panel-strong: #12233b;
+      --line: rgba(125, 162, 214, 0.22);
+      --text: #e7eef9;
+      --muted: #97a9c3;
+      --brand: #34d399;
+      --brand-soft: rgba(52, 211, 153, 0.14);
+      --accent: #60a5fa;
+      --warn: #fbbf24;
+      --danger: #f87171;
+      --shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+      --radius: 18px;
+      --mono: "Consolas", "SFMono-Regular", "Courier New", monospace;
+      --sans: "Segoe UI", "Inter", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(52, 211, 153, 0.12), transparent 24%),
+        radial-gradient(circle at top right, rgba(96, 165, 250, 0.12), transparent 26%),
+        linear-gradient(180deg, #07101c 0%, #0b1422 48%, #09101a 100%);
+      line-height: 1.6;
+    }
+
+    a {
+      color: #9dd6ff;
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .shell {
+      width: min(1280px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 48px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 36px;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background:
+        linear-gradient(135deg, rgba(19, 35, 58, 0.96), rgba(8, 18, 31, 0.92)),
+        linear-gradient(135deg, rgba(52, 211, 153, 0.08), rgba(96, 165, 250, 0.08));
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -10% -30% auto;
+      width: 360px;
+      height: 360px;
+      background: radial-gradient(circle, rgba(52, 211, 153, 0.2), transparent 65%);
+      filter: blur(20px);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border: 1px solid rgba(157, 214, 255, 0.18);
+      border-radius: 999px;
+      background: rgba(11, 23, 38, 0.62);
+      color: #b8c8de;
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3 {
+      margin: 0 0 12px;
+      line-height: 1.2;
+    }
+
+    h1 {
+      margin-top: 18px;
+      font-size: clamp(32px, 5vw, 56px);
+      letter-spacing: -0.04em;
+    }
+
+    h2 {
+      font-size: 28px;
+      letter-spacing: -0.03em;
+    }
+
+    h3 {
+      font-size: 18px;
+      color: #f5f9ff;
+    }
+
+    p {
+      margin: 0 0 14px;
+      color: var(--muted);
+    }
+
+    .hero-grid,
+    .grid,
+    .cards,
+    .two-col,
+    .three-col {
+      display: grid;
+      gap: 18px;
+    }
+
+    .hero-grid {
+      grid-template-columns: 1.35fr 0.9fr;
+      align-items: start;
+      margin-top: 26px;
+    }
+
+    .grid {
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      margin-top: 22px;
+    }
+
+    .cards {
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    .two-col {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .three-col {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .panel,
+    .metric,
+    .toc,
+    .callout {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .panel {
+      padding: 24px;
+    }
+
+    .metric {
+      padding: 18px;
+    }
+
+    .metric .label {
+      color: #a9bdd8;
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .metric .value {
+      margin-top: 8px;
+      font-size: 28px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .metric .sub {
+      margin-top: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .toc {
+      padding: 22px;
+    }
+
+    .toc ul,
+    .plain-list,
+    .check-list,
+    .api-list,
+    .mini-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+    }
+
+    .toc li,
+    .plain-list li,
+    .check-list li,
+    .api-list li,
+    .mini-list li {
+      margin: 6px 0;
+    }
+
+    .section {
+      margin-top: 22px;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: linear-gradient(180deg, rgba(12, 22, 38, 0.9), rgba(9, 18, 30, 0.84));
+      box-shadow: var(--shadow);
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+
+    .kicker {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #89a5c9;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(17, 30, 48, 0.76);
+      color: #dce7f6;
+      font-size: 13px;
+    }
+
+    .callout {
+      padding: 18px 20px;
+      background: linear-gradient(180deg, rgba(15, 29, 48, 0.94), rgba(12, 24, 39, 0.92));
+    }
+
+    .callout strong {
+      color: #ffffff;
+    }
+
+    .callout.warning {
+      border-color: rgba(251, 191, 36, 0.26);
+      background: linear-gradient(180deg, rgba(55, 42, 10, 0.78), rgba(34, 25, 8, 0.78));
+    }
+
+    .callout.danger {
+      border-color: rgba(248, 113, 113, 0.26);
+      background: linear-gradient(180deg, rgba(61, 23, 23, 0.78), rgba(38, 16, 16, 0.78));
+    }
+
+    .code,
+    pre {
+      overflow-x: auto;
+      margin: 0;
+      padding: 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: #08111d;
+      color: #d8e6f9;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.65;
+    }
+
+    code {
+      font-family: var(--mono);
+      color: #d8e6f9;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(8, 16, 28, 0.72);
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      vertical-align: top;
+      text-align: left;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    th {
+      color: #f3f7ff;
+      background: rgba(17, 30, 48, 0.92);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    td strong {
+      color: #ffffff;
+    }
+
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-7 { grid-column: span 7; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+
+    .footer {
+      margin-top: 24px;
+      padding: 18px 24px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      color: var(--muted);
+      background: rgba(9, 18, 30, 0.8);
+      font-size: 13px;
+    }
+
+    @media (max-width: 980px) {
+      .hero-grid,
+      .two-col,
+      .three-col {
+        grid-template-columns: 1fr;
+      }
+
+      .span-4,
+      .span-5,
+      .span-6,
+      .span-7,
+      .span-8,
+      .span-12 {
+        grid-column: span 12;
+      }
+
+      .section-header {
+        flex-direction: column;
+        align-items: start;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .shell {
+        width: min(100% - 18px, 1280px);
+        padding-top: 14px;
+      }
+
+      .hero,
+      .section,
+      .panel,
+      .toc {
+        padding: 20px;
+      }
+
+      h2 {
+        font-size: 24px;
+      }
+
+      th,
+      td {
+        font-size: 13px;
+        padding: 10px 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div class="eyebrow">AutoTrader Documentation • April 14, 2026</div>
+      <h1>Comprehensive Application Documentation</h1>
+      <p>
+        AutoTrader is a full-stack trading platform that combines a FastAPI backend, a React/Vite frontend,
+        Zerodha Kite Connect integration, automated strategy execution, and a manual options trading console.
+        This document covers the complete application structure, runtime model, core modules, API surface,
+        data flow, and current operational caveats.
+      </p>
+
+      <div class="hero-grid">
+        <div class="cards">
+          <div class="metric">
+            <div class="label">Backend</div>
+            <div class="value">FastAPI</div>
+            <div class="sub">REST APIs, WebSocket endpoint, strategy background loop, production static frontend mount</div>
+          </div>
+          <div class="metric">
+            <div class="label">Frontend</div>
+            <div class="value">React + Vite</div>
+            <div class="sub">Trading dashboard, strategy pages, orders, settings, trade history, manual trading UI</div>
+          </div>
+          <div class="metric">
+            <div class="label">Broker Layer</div>
+            <div class="value">Zerodha Kite</div>
+            <div class="sub">Authentication, instruments, LTP, orders, positions, holdings, historical candles</div>
+          </div>
+          <div class="metric">
+            <div class="label">Operation Modes</div>
+            <div class="value">Paper + Live</div>
+            <div class="sub">Paper trading is the safer default; live mode requires explicit environment settings</div>
+          </div>
+        </div>
+
+        <nav class="toc" aria-label="Table of contents">
+          <h3>Contents</h3>
+          <ul>
+            <li><a href="#overview">1. System Overview</a></li>
+            <li><a href="#architecture">2. Architecture and Runtime</a></li>
+            <li><a href="#setup">3. Setup and Startup</a></li>
+            <li><a href="#backend">4. Backend Modules</a></li>
+            <li><a href="#frontend">5. Frontend Modules</a></li>
+            <li><a href="#strategies">6. Strategies and Trading Logic</a></li>
+            <li><a href="#manual">7. Manual Trading Module</a></li>
+            <li><a href="#api">8. API Inventory</a></li>
+            <li><a href="#data">9. Data and File Layout</a></li>
+            <li><a href="#security">10. Authentication and Safety Controls</a></li>
+            <li><a href="#operations">11. Operations, Logging, and Caveats</a></li>
+          </ul>
+        </nav>
+      </div>
+    </header>
+
+    <section class="section" id="overview">
+      <div class="section-header">
+        <div>
+          <div class="kicker">Overview</div>
+          <h2>What This Application Does</h2>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <h3>Primary Capabilities</h3>
+          <ul class="check-list">
+            <li>Authenticates with Zerodha and persists the access token for daily reuse.</li>
+            <li>Runs algorithmic strategies from a CLI engine or from web-triggered strategy control routes.</li>
+            <li>Shows dashboard summaries, quotes, positions, holdings, and order history.</li>
+            <li>Exposes a dedicated cumulative-volume analysis workflow for index futures.</li>
+            <li>Provides two strategy-specific trading modules based on Gann levels plus cumulative volume.</li>
+            <li>Provides a manual options trading section with option chain style strike selection for NIFTY and SENSEX.</li>
+            <li>Supports both paper trading and live trading depending on environment flags.</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h3>High-Level User Journeys</h3>
+          <ul class="plain-list">
+            <li>Login to Zerodha, open the dashboard, inspect account and market state, then run strategies.</li>
+            <li>Use the cumulative-volume page to monitor trend bias and configure futures instruments.</li>
+            <li>Start Strategy 1 or Strategy 2, monitor their status, and inspect history snapshots.</li>
+            <li>Open the Manual Trading page, select NIFTY or SENSEX, pick a live-valid strike, and place a manual order.</li>
+            <li>Review positions, orders, logs, and stored trade-history files for analysis and traceability.</li>
+          </ul>
+
+          <div class="badge-row">
+            <div class="badge">FastAPI API Server</div>
+            <div class="badge">React SPA</div>
+            <div class="badge">Zerodha Broker Adapter</div>
+            <div class="badge">Strategy Engine</div>
+            <div class="badge">Manual Options Console</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="architecture">
+      <div class="section-header">
+        <div>
+          <div class="kicker">Architecture</div>
+          <h2>Runtime Architecture and Request Flow</h2>
+        </div>
+      </div>
+
+      <div class="panel">
+        <pre>Browser / React UI
+        |
+        |  HTTP / WebSocket
+        v
+FastAPI Server (app/server.py)
+        |
+        +-- /api/auth/*           Zerodha web login and status
+        +-- /api/dashboard/*      Summary and live quote data
+        +-- /api/trading/*        Engine controls, positions, holdings, orders
+        +-- /api/strategies/*     Registry metadata and config management
+        +-- /api/strategy1/*      Cumulative volume analysis
+        +-- /api/strategy1-trade/* Strategy 1 control, config, history, backtest
+        +-- /api/strategy2-trade/* Strategy 2 control, config, history
+        +-- /api/manual/*         Manual JWT auth, option setup, order actions
+        +-- /ws                   WebSocket channel
+        |
+        v
+Broker Abstraction (core/broker.py)
+        |
+        +-- Zerodha KiteConnect (live mode)
+        +-- Paper order simulation (paper mode)
+        |
+        v
+Data / Logs / Strategy State Files</pre>
+      </div>
+
+      <div class="grid">
+        <div class="panel span-7">
+          <h3>Backend Lifecycle</h3>
+          <p>
+            The FastAPI application is defined in <code>app/server.py</code>. On startup it creates a background
+            task that periodically checks Strategy 1 and Strategy 2 during market hours. This is important because
+            their monitoring logic does not depend on the frontend remaining open.
+          </p>
+          <ul class="plain-list">
+            <li>Background monitor interval: 10 seconds.</li>
+            <li>Monitor window: 09:15 to 15:30.</li>
+            <li>Monitors active strategy states such as <code>ORDER_PLACED</code> and <code>POSITION_OPEN</code>.</li>
+            <li>Serves the production frontend from <code>frontend/dist</code> when that directory exists.</li>
+          </ul>
+        </div>
+
+        <div class="panel span-5">
+          <h3>Current Development Runtime</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Port</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Frontend dev server</strong></td>
+                <td>5173</td>
+                <td>Configured in <code>frontend/vite.config.js</code>.</td>
+              </tr>
+              <tr>
+                <td><strong>Frontend proxy target</strong></td>
+                <td>8010</td>
+                <td>Both <code>/api</code> and <code>/ws</code> are proxied here.</td>
+              </tr>
+              <tr>
+                <td><strong>Backend default CLI server</strong></td>
+                <td>8000</td>
+                <td><code>python main.py server</code> still starts here by default.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="setup">
+      <div class="section-header">
+        <div>
+          <div class="kicker">Setup</div>
+          <h2>Environment, Installation, and Startup</h2>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <h3>Prerequisites</h3>
+          <ul class="plain-list">
+            <li>Python 3.10+</li>
+            <li>Node.js 18+ and npm</li>
+            <li>Zerodha Kite Connect API key and secret</li>
+          </ul>
+
+          <h3>Python Installation</h3>
+          <pre>pip install -r requirements.txt</pre>
+
+          <h3>Frontend Installation</h3>
+          <pre>cd frontend
+npm install</pre>
+        </div>
+
+        <div class="panel">
+          <h3>Important Environment Variables</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Variable</th>
+                <th>Default</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>KITE_API_KEY</strong></td>
+                <td>empty</td>
+                <td>Zerodha API key.</td>
+              </tr>
+              <tr>
+                <td><strong>KITE_API_SECRET</strong></td>
+                <td>empty</td>
+                <td>Zerodha API secret.</td>
+              </tr>
+              <tr>
+                <td><strong>KITE_REDIRECT_URL</strong></td>
+                <td>http://localhost:8000/api/auth/callback</td>
+                <td>Redirect URL used in web login flow.</td>
+              </tr>
+              <tr>
+                <td><strong>PAPER_TRADE</strong></td>
+                <td>true</td>
+                <td>Enables simulated order execution.</td>
+              </tr>
+              <tr>
+                <td><strong>TRADING_ENABLED</strong></td>
+                <td>false</td>
+                <td>Must be true to allow live order placement.</td>
+              </tr>
+              <tr>
+                <td><strong>MAX_LOSS_PER_DAY</strong></td>
+                <td>5000</td>
+                <td>Daily risk cut-off.</td>
+              </tr>
+              <tr>
+                <td><strong>MAX_TRADES_PER_DAY</strong></td>
+                <td>20</td>
+                <td>Maximum trades allowed for the day.</td>
+              </tr>
+              <tr>
+                <td><strong>ACTIVE_STRATEGIES</strong></td>
+                <td>empty</td>
+                <td>Comma-separated strategy names for CLI engine mode.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="panel span-6">
+          <h3>CLI Commands</h3>
+          <pre>python main.py server
+python main.py login
+python main.py run
+python main.py status
+python main.py strategies</pre>
+        </div>
+
+        <div class="panel span-6">
+          <h3>Recommended Dev Startup</h3>
+          <pre>Terminal 1
+python -m uvicorn app.server:app --host 127.0.0.1 --port 8010
+
+Terminal 2
+cd frontend
+npm run dev</pre>
+          <p>
+            This aligns with the current Vite proxy, which forwards API and WebSocket traffic to port 8010.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="backend">
+      <div class="section-header">
+        <div>
+          <div class="kicker">Backend</div>
+          <h2>Backend Modules and Responsibilities</h2>
+        </div>
+      </div>
+
+      <div class="three-col">
+        <div class="panel">
+          <h3>app/server.py</h3>
+          <p>Creates the FastAPI application, mounts all route groups, handles CORS, exposes a WebSocket endpoint, and optionally serves the built frontend.</p>
+        </div>
+        <div class="panel">
+          <h3>config/settings.py</h3>
+          <p>Loads environment variables, creates token/data/log directories, and defines runtime flags such as paper mode, live trading enablement, and risk defaults.</p>
+        </div>
+        <div class="panel">
+          <h3>core/auth.py</h3>
+          <p>Handles Zerodha authentication, JWT token generation for manual trading, and token persistence in <code>data/tokens/access_token.json</code>.</p>
+        </div>
+        <div class="panel">
+          <h3>core/broker.py</h3>
+          <p>Abstracts order placement, market data, positions, holdings, and order modification/cancellation. Supports exchanges NSE, BSE, NFO, BFO, and MCX.</p>
+        </div>
+        <div class="panel">
+          <h3>core/risk_manager.py</h3>
+          <p>Enforces daily loss, trade count, and position sizing constraints before strategies are allowed to continue trading.</p>
+        </div>
+        <div class="panel">
+          <h3>engine/trading_engine.py</h3>
+          <p>Loads configured strategies, resolves instrument tokens, subscribes to Zerodha ticks, distributes market data, and handles end-of-day square-off.</p>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top: 18px;">
+        <h3>Route Groups</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Prefix</th>
+              <th>Purpose</th>
+              <th>Representative Capabilities</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>/api/auth</strong></td>
+              <td>Zerodha web auth</td>
+              <td>Login redirect, callback processing, auth status, logout</td>
+            </tr>
+            <tr>
+              <td><strong>/api/trading</strong></td>
+              <td>General trading operations</td>
+              <td>Engine start/stop/status, order placement, positions, holdings, margins</td>
+            </tr>
+            <tr>
+              <td><strong>/api/strategies</strong></td>
+              <td>Strategy registry access</td>
+              <td>List strategies, read strategy details, update config, activate/deactivate</td>
+            </tr>
+            <tr>
+              <td><strong>/api/dashboard</strong></td>
+              <td>Dashboard data</td>
+              <td>Account summary, LTP lookup</td>
+            </tr>
+            <tr>
+              <td><strong>/api/strategy1</strong></td>
+              <td>Cumulative volume analysis</td>
+              <td>Fetch analysis data, read/update config</td>
+            </tr>
+            <tr>
+              <td><strong>/api/strategy1-trade</strong></td>
+              <td>Strategy 1 execution</td>
+              <td>Status, start, stop, check, config, backtest, history</td>
+            </tr>
+            <tr>
+              <td><strong>/api/strategy2-trade</strong></td>
+              <td>Strategy 2 execution</td>
+              <td>Status, start, stop, check, config, history</td>
+            </tr>
+            <tr>
+              <td><strong>/api/manual</strong></td>
+              <td>Manual trading</td>
+              <td>JWT login, option setup, place/modify/cancel orders, positions, open orders, logs, P&amp;L</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="frontend">
+      <div class="section-header">
+        <div>
+          <div class="kicker">Frontend</div>
+          <h2>Frontend Pages and User Interface Structure</h2>
+        </div>
+      </div>
+
+      <div class="panel">
+        <p>
+          The React application uses <code>react-router-dom</code> to render a nested layout with pages for dashboard,
+          strategies, orders, settings, trade history, and manual trading. The primary route shell is defined in
+          <code>frontend/src/App.jsx</code> and wrapped by <code>frontend/src/components/Layout.jsx</code>.
+        </p>
+      </div>
+
+      <div class="panel" style="margin-top: 18px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Page</th>
+              <th>Route</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Dashboard</strong></td>
+              <td>/</td>
+              <td>Account overview, engine state, and core landing page.</td>
+            </tr>
+            <tr>
+              <td><strong>CumulativeVolume</strong></td>
+              <td>/strategy1</td>
+              <td>Displays cumulative volume analysis and related configuration.</td>
+            </tr>
+            <tr>
+              <td><strong>Strategy1</strong></td>
+              <td>/strategy1-trade</td>
+              <td>Controls and monitors Strategy 1 trading workflow.</td>
+            </tr>
+            <tr>
+              <td><strong>Strategy2</strong></td>
+              <td>/strategy2-trade</td>
+              <td>Controls and monitors Strategy 2 option-selling workflow.</td>
+            </tr>
+            <tr>
+              <td><strong>Strategies</strong></td>
+              <td>/strategies</td>
+              <td>Shows available strategies and registry-backed data.</td>
+            </tr>
+            <tr>
+              <td><strong>Orders</strong></td>
+              <td>/orders</td>
+              <td>Shows positions, holdings, margins, and order information.</td>
+            </tr>
+            <tr>
+              <td><strong>Settings</strong></td>
+              <td>/settings</td>
+              <td>Exposes configuration-oriented information for the app.</td>
+            </tr>
+            <tr>
+              <td><strong>TradeHistory</strong></td>
+              <td>/history</td>
+              <td>Displays persisted trade and order history information.</td>
+            </tr>
+            <tr>
+              <td><strong>ManualTrading</strong></td>
+              <td>/manual-trading</td>
+              <td>Manual options order entry, manual auth bootstrap, live-valid strike selection, positions, open orders, logs, and debug output.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout warning" style="margin-top: 18px;">
+        <strong>Runtime note:</strong> the frontend dev server is configured for port 5173 and currently proxies to backend port 8010,
+        which differs from the older README examples that assume backend port 8000.
+      </div>
+    </section>
+
+    <section class="section" id="strategies">
+      <div class="section-header">
+        <div>
+          <div class="kicker">Strategies</div>
+          <h2>Automated Strategies and Trading Logic</h2>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <h3>CumulativeVolumeStrategy</h3>
+          <p>
+            This module is the analytical foundation for the system. It fetches 1-minute OHLCV futures data,
+            computes signed volume, then accumulates that signed volume from market open to derive a directional bias.
+          </p>
+          <ul class="plain-list">
+            <li>Uses live data when Zerodha is authenticated.</li>
+            <li>Falls back to realistic demo data when broker auth is unavailable.</li>
+            <li>Exposes a threshold-based trend classification: Bullish, Bearish, or Neutral.</li>
+            <li>Can auto-resolve the current month futures token from the instrument symbol.</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h3>Trading Engine</h3>
+          <p>
+            The engine runs configured strategies from <code>ACTIVE_STRATEGIES</code>, subscribes to Zerodha ticks through
+            <code>KiteTicker</code>, and routes ticks to each running strategy during market hours.
+          </p>
+          <ul class="plain-list">
+            <li>Market hours: 09:15 to 15:30.</li>
+            <li>Auto square-off trigger: 15:15.</li>
+            <li>Stops feeding ticks if the risk manager disallows trading.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top: 18px;">
+        <h3>Implemented Strategy Modules</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Type</th>
+              <th>Core Idea</th>
+              <th>Status in Registry</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>strategy1_gann_cv</strong></td>
+              <td>Option buying</td>
+              <td>Uses cumulative volume direction to buy ATM CE or PE near Gann floor levels with SL and target management.</td>
+              <td>Registered in <code>strategies/registry.py</code>.</td>
+            </tr>
+            <tr>
+              <td><strong>strategy2_option_sell</strong></td>
+              <td>Option selling</td>
+              <td>Uses cumulative volume direction to sell ATM options near Gann ceiling levels with inverted premium-decay logic.</td>
+              <td>Implemented as a module and route-backed feature, but not currently present in the central registry map.</td>
+            </tr>
+            <tr>
+              <td><strong>cumulative_volume</strong></td>
+              <td>Analysis</td>
+              <td>Non-execution signal generation and chart-oriented market bias analysis.</td>
+              <td>Used by dashboard and strategy pages.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="manual">
+      <div class="section-header">
+        <div>
+          <div class="kicker">Manual Trading</div>
+          <h2>Manual Trading Module</h2>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <h3>Manual Auth Model</h3>
+          <p>
+            Manual trading uses JWT-based authentication that is separate from Zerodha login. The frontend currently
+            auto-authenticates using the built-in manual user account:
+          </p>
+          <pre>username: admin
+password: adminpass</pre>
+          <p>
+            The generated bearer token is stored in browser local storage and reused for calls under <code>/api/manual</code>.
+            If a request returns 401, the frontend clears the stored token and retries login once.
+          </p>
+        </div>
+
+        <div class="panel">
+          <h3>Supported Indices</h3>
+          <ul class="plain-list">
+            <li><strong>NIFTY</strong> on exchange <code>NFO</code></li>
+            <li><strong>SENSEX</strong> on exchange <code>BFO</code></li>
+          </ul>
+          <p>
+            The backend does not rely on fabricated symbols. Instead, it resolves actual live-valid option contracts from
+            the broker instrument dump using index name, option type, strike, and the nearest valid non-expired expiry.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="panel span-7">
+          <h3>Order Entry Workflow</h3>
+          <ol class="plain-list">
+            <li>User opens the Manual Trading page.</li>
+            <li>Frontend ensures a manual JWT exists, logging in automatically if needed.</li>
+            <li>Frontend calls <code>GET /api/manual/option_setup</code> for the selected index and option type.</li>
+            <li>Backend returns the nearest expiry, current spot price, ATM strike, and a strike ladder centered around ATM.</li>
+            <li>User selects CE or PE, strike, quantity, order type, product, and risk-field values.</li>
+            <li>Frontend posts the order request to <code>POST /api/manual/order</code>.</li>
+            <li>Backend resolves the actual tradingsymbol, splits quantity for iceberg legs when needed, and places broker or paper orders.</li>
+          </ol>
+        </div>
+
+        <div class="panel span-5">
+          <h3>Current Scope</h3>
+          <ul class="plain-list">
+            <li>Open positions view</li>
+            <li>Open orders and order history view</li>
+            <li>Trade log and P&amp;L endpoints</li>
+            <li>Order modify and cancel endpoints</li>
+            <li>Square-off action</li>
+            <li>Debug console section in the frontend</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout warning" style="margin-top: 18px;">
+        <strong>Important limitation:</strong> the manual order form captures stop loss, target, trailing stop, move-to-cost,
+        and re-entry fields, but the current backend does not yet implement a full live automated monitoring engine for
+        manual trades equivalent to the dedicated strategy modules. Those fields are presently input parameters rather than
+        a complete manual-trade lifecycle automation system.
+      </div>
+    </section>
+
+    <section class="section" id="api">
+      <div class="section-header">
+        <div>
+          <div class="kicker">APIs</div>
+          <h2>API Inventory</h2>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Auth and Dashboard</h3>
+        <ul class="api-list">
+          <li><code>GET /api/auth/login</code> — Start Zerodha login flow.</li>
+          <li><code>GET /api/auth/callback</code> — Receive Zerodha redirect and create session.</li>
+          <li><code>GET /api/auth/status</code> — Check authentication state and user profile.</li>
+          <li><code>POST /api/auth/logout</code> — Log out web-authenticated Zerodha session.</li>
+          <li><code>GET /api/dashboard/summary</code> — Dashboard summary data.</li>
+          <li><code>GET /api/dashboard/ltp</code> — Live LTP for requested instruments.</li>
+        </ul>
+      </div>
+
+      <div class="panel" style="margin-top: 18px;">
+        <h3>General Trading</h3>
+        <ul class="api-list">
+          <li><code>POST /api/trading/engine/start</code> — Start the trading engine.</li>
+          <li><code>POST /api/trading/engine/stop</code> — Stop the trading engine.</li>
+          <li><code>GET /api/trading/engine/status</code> — Engine and risk status.</li>
+          <li><code>POST /api/trading/order</code> — Place a general order.</li>
+          <li><code>GET /api/trading/positions</code> — Day positions.</li>
+          <li><code>GET /api/trading/holdings</code> — Holdings snapshot.</li>
+          <li><code>GET /api/trading/orders</code> — Order history.</li>
+          <li><code>GET /api/trading/margins</code> — Available and used margins.</li>
+        </ul>
+      </div>
+
+      <div class="two-col" style="margin-top: 18px;">
+        <div class="panel">
+          <h3>Strategy APIs</h3>
+          <ul class="api-list">
+            <li><code>GET /api/strategies/</code> — List strategies.</li>
+            <li><code>GET /api/strategies/{name}</code> — Strategy details.</li>
+            <li><code>PUT /api/strategies/{name}/config</code> — Update strategy config.</li>
+            <li><code>POST /api/strategies/{name}/activate</code> — Activate a strategy.</li>
+            <li><code>POST /api/strategies/{name}/deactivate</code> — Deactivate a strategy.</li>
+            <li><code>GET /api/strategy1/data</code> — Cumulative-volume data feed.</li>
+            <li><code>GET /api/strategy1/config</code> — Read cumulative-volume config.</li>
+            <li><code>PUT /api/strategy1/config</code> — Update cumulative-volume config.</li>
+            <li><code>GET /api/strategy1-trade/status</code>, <code>POST /start</code>, <code>POST /stop</code>, <code>POST /check</code></li>
+            <li><code>PUT /api/strategy1-trade/config</code>, <code>POST /backtest</code>, <code>GET /backtest/latest</code></li>
+            <li><code>GET /api/strategy1-trade/history</code>, <code>POST /history/snapshot</code></li>
+            <li><code>GET /api/strategy2-trade/status</code>, <code>POST /start</code>, <code>POST /stop</code>, <code>POST /check</code></li>
+            <li><code>PUT /api/strategy2-trade/config</code>, <code>GET /history</code>, <code>POST /history/snapshot</code></li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h3>Manual Trading APIs</h3>
+          <ul class="api-list">
+            <li><code>POST /api/manual/login</code> — Manual JWT login.</li>
+            <li><code>POST /api/manual/logout</code> — Manual logout.</li>
+            <li><code>GET /api/manual/me</code> — Return current manual user.</li>
+            <li><code>GET /api/manual/option_setup</code> — Return spot, nearest expiry, ATM strike, and strike options.</li>
+            <li><code>POST /api/manual/order</code> — Place manual order after contract resolution.</li>
+            <li><code>GET /api/manual/positions</code> — Active manual positions view.</li>
+            <li><code>POST /api/manual/squareoff</code> — Square off a symbol.</li>
+            <li><code>GET /api/manual/open_orders</code> and <code>GET /api/manual/orders</code> — Order listings.</li>
+            <li><code>POST /api/manual/order/modify</code> — Modify an order.</li>
+            <li><code>POST /api/manual/order/cancel</code> — Cancel an order.</li>
+            <li><code>GET /api/manual/trade_logs</code> — Manual trade log feed.</li>
+            <li><code>GET /api/manual/pnl</code> — Manual P&amp;L summary.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="data">
+      <div class="section-header">
+        <div>
+          <div class="kicker">Data Layout</div>
+          <h2>Project Structure, Data Files, and Persistence</h2>
+        </div>
+      </div>
+
+      <div class="panel">
+        <pre>broker_integration/
+├── main.py
+├── README.md
+├── requirements.txt
+├── app/
+│   ├── server.py
+│   ├── websocket_manager.py
+│   └── routes/
+├── config/
+│   └── settings.py
+├── core/
+│   ├── auth.py
+│   ├── broker.py
+│   ├── logger.py
+│   └── risk_manager.py
+├── engine/
+│   └── trading_engine.py
+├── strategies/
+│   ├── base_strategy.py
+│   ├── cumulative_volume.py
+│   ├── strategy1_gann_cv.py
+│   ├── strategy2_option_sell.py
+│   └── registry.py
+├── frontend/
+│   ├── package.json
+│   ├── vite.config.js
+│   └── src/
+├── data/
+│   ├── strategy_configs/
+│   ├── tokens/
+│   └── trade_history/
+└── logs/</pre>
+      </div>
+
+      <div class="two-col" style="margin-top: 18px;">
+        <div class="panel">
+          <h3>Persistent Files</h3>
+          <ul class="plain-list">
+            <li><code>data/tokens/access_token.json</code> — persisted Zerodha access token.</li>
+            <li><code>data/strategy_configs/*.json</code> — strategy runtime configuration and state files.</li>
+            <li><code>data/trade_history/order_history.json</code> — order history snapshots.</li>
+            <li><code>data/trade_history/strategy1_trades.json</code> — Strategy 1 trade history.</li>
+            <li><code>logs/manual_trades.csv</code> — manual trade log file when generated.</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h3>Reference Data</h3>
+          <ul class="plain-list">
+            <li><code>gann_levels.csv</code> stores Gann levels used by the strategy modules.</li>
+            <li>Instrument dumps come from Zerodha through the broker integration.</li>
+            <li>Nearest-expiry resolution depends on broker-provided instrument metadata such as expiry and strike.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="security">
+      <div class="section-header">
+        <div>
+          <div class="kicker">Security and Controls</div>
+          <h2>Authentication, Risk, and Safety Features</h2>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <h3>Authentication Layers</h3>
+          <ul class="plain-list">
+            <li>Zerodha session authentication for market data and real broker connectivity.</li>
+            <li>Manual JWT authentication for <code>/api/manual</code> endpoints.</li>
+            <li>Manual auth user store is currently hard-coded in <code>core/auth.py</code>.</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h3>Safety Features</h3>
+          <ul class="plain-list">
+            <li>Paper trade mode is on by default.</li>
+            <li>Live mode requires both broker auth and explicit enablement via <code>TRADING_ENABLED=true</code>.</li>
+            <li>Daily loss limit and max trades per day are configurable.</li>
+            <li>End-of-day square-off is implemented in the engine and strategy monitoring paths.</li>
+            <li>Position and order sizing are governed by risk defaults in configuration.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout danger" style="margin-top: 18px;">
+        <strong>Security note:</strong> the manual JWT secret and default manual user credentials are currently embedded in application code.
+        For production use, these should be externalized to environment variables or a secure secrets store and the default credential pair should be replaced.
+      </div>
+    </section>
+
+    <section class="section" id="operations">
+      <div class="section-header">
+        <div>
+          <div class="kicker">Operations</div>
+          <h2>Operational Notes, Known Constraints, and Recommendations</h2>
+        </div>
+      </div>
+
+      <div class="three-col">
+        <div class="panel">
+          <h3>Logging</h3>
+          <p>Application logs are written under <code>logs/</code>. Strategy trade history and manual trade records are also stored in data and CSV files for later review.</p>
+        </div>
+        <div class="panel">
+          <h3>Port Consistency</h3>
+          <p>Current code uses a dev-proxy split: frontend on 5173 and backend target on 8010, while legacy docs and CLI startup still refer to 8000.</p>
+        </div>
+        <div class="panel">
+          <h3>Manual SL/Target</h3>
+          <p>Manual order risk fields exist in the UI and request model, but full automated manual-trade lifecycle enforcement is not yet implemented.</p>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top: 18px;">
+        <h3>Recommended Next Improvements</h3>
+        <ul class="plain-list">
+          <li>Unify documentation, CLI defaults, and Vite proxy so backend port usage is consistent.</li>
+          <li>Move manual auth secrets and credentials out of source code.</li>
+          <li>Implement a dedicated monitoring engine for manual SL, target, trailing stop, and re-entry logic.</li>
+          <li>Expand the central strategy registry if Strategy 2 should be runnable through the generic CLI engine.</li>
+          <li>Add deployment-specific documentation once a production environment layout is finalized.</li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="footer">
+      Documentation file generated for this workspace as a standalone HTML reference. It is intended to be opened directly in a browser,
+      shared internally, or used as a basis for a future formal product manual.
+    </div>
+  </div>
+</body>
+</html>

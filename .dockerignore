@@ -1,0 +1,16 @@
+.env
+.git
+.gitignore
+__pycache__
+*.pyc
+.venv
+venv
+frontend/node_modules
+frontend/dist
+logs/
+data/tokens/
+data/trade_history/
+*.bak
+README.md
+steps.md
+application_documentation.html
