@@ -35,6 +35,7 @@ class Strategy3Config(BaseModel):
     target_proximity: float = 5
     max_trades_per_day: int = 5
     max_loss_per_day: float = 5000
+    use_cv_filter: bool = False
 
 
 def _get_strategy(broker: Broker = None, user_id: int = 0) -> Strategy3CvVwapEmaAdx:

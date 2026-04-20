@@ -177,6 +177,9 @@ class Strategy3CvVwapEmaAdx:
         self.sl_proximity = float(config.get("sl_proximity", 5))
         self.target_proximity = float(config.get("target_proximity", 5))
 
+        # CV filter toggle (default OFF — decoupled from entry)
+        self.use_cv_filter = bool(config.get("use_cv_filter", False))
+
         # Risk limits (from settings)
         self.max_trades_per_day = int(config.get(
             "max_trades_per_day",
@@ -524,6 +527,7 @@ class Strategy3CvVwapEmaAdx:
         self.target_proximity = float(config.get("target_proximity", self.target_proximity))
         self.max_trades_per_day = int(config.get("max_trades_per_day", self.max_trades_per_day))
         self.max_loss_per_day = float(config.get("max_loss_per_day", self.max_loss_per_day))
+        self.use_cv_filter = bool(config.get("use_cv_filter", self.use_cv_filter))
         self.is_active = True
         self._check_day_reset()
         self._save_state()
@@ -670,6 +674,7 @@ class Strategy3CvVwapEmaAdx:
             "cv_trend": cv_trend,
             "cv_slope": cv_slope,
             "cv_aligned": cv_aligned,
+            "use_cv_filter": self.use_cv_filter,
             "setup_phase": self._setup_phase,
             "setup_direction": self._setup_direction,
             "pullback_touched": self._pullback_touched,
@@ -699,6 +704,10 @@ class Strategy3CvVwapEmaAdx:
         price_bearish = spot_price < ema200 and ema200 > 0 and spot_price < vwap_val
         trend_strong = adx_val >= self.adx_threshold
         cv_magnitude_ok = abs(cv) >= self.cv_threshold
+
+        # If CV filter is disabled, bypass the CV magnitude check
+        if not self.use_cv_filter:
+            cv_magnitude_ok = True
 
         bullish_trend = price_bullish and trend_strong and cv_magnitude_ok
         bearish_trend = price_bearish and trend_strong and cv_magnitude_ok
@@ -1314,6 +1323,7 @@ class Strategy3CvVwapEmaAdx:
                 "target_proximity": self.target_proximity,
                 "max_trades_per_day": self.max_trades_per_day,
                 "max_loss_per_day": self.max_loss_per_day,
+                "use_cv_filter": self.use_cv_filter,
             },
             "saved_at": datetime.now().isoformat(),
         }
@@ -1466,6 +1476,7 @@ class Strategy3CvVwapEmaAdx:
             self.target_proximity = float(cfg.get("target_proximity", self.target_proximity))
             self.max_trades_per_day = int(cfg.get("max_trades_per_day", self.max_trades_per_day))
             self.max_loss_per_day = float(cfg.get("max_loss_per_day", self.max_loss_per_day))
+            self.use_cv_filter = bool(cfg.get("use_cv_filter", self.use_cv_filter))
 
         logger.info(
             f"State restored: {self.state.value} | signal={self.signal_type} "
@@ -1525,6 +1536,7 @@ class Strategy3CvVwapEmaAdx:
                 "strike_interval": self.strike_interval,
                 "max_trades_per_day": self.max_trades_per_day,
                 "max_loss_per_day": self.max_loss_per_day,
+                "use_cv_filter": self.use_cv_filter,
             },
             "trade": {
                 "atm_strike": self.atm_strike,

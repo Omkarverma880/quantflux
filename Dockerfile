@@ -12,11 +12,11 @@ WORKDIR /app
 
 # Set timezone to IST (all datetime.now() calls must return Indian time)
 ENV TZ=Asia/Kolkata
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# Install system deps for psycopg2
+# Install system deps for psycopg2 + timezone data
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc && \
+    libpq-dev gcc tzdata && \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

@@ -301,6 +301,7 @@ export default function Strategy3() {
     target_proximity: 5,
     max_trades_per_day: 5,
     max_loss_per_day: 5000,
+    use_cv_filter: false,
   });
   const [countdown, setCountdown] = useState(10);
   const [pinOpen, setPinOpen] = useState(false);
@@ -547,6 +548,23 @@ export default function Strategy3() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mt-4">
             {configField('Max Loss/Day (₹)', 'max_loss_per_day', 500)}
+          </div>
+          {/* CV Filter toggle */}
+          <div className="flex items-center gap-3 mt-4 p-3 rounded-lg bg-surface-1 border border-surface-3">
+            <input
+              type="checkbox"
+              id="use_cv_filter"
+              checked={config.use_cv_filter ?? false}
+              onChange={(e) => setConfig((c) => ({ ...c, use_cv_filter: e.target.checked }))}
+              disabled={isActive}
+              className="w-4 h-4 rounded border-surface-3 bg-surface-2 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
+            />
+            <label htmlFor="use_cv_filter" className="text-sm text-gray-300 select-none">
+              Require CV Participation for entry
+            </label>
+            <span className="text-xs text-gray-500 ml-auto">
+              {config.use_cv_filter ? 'ON — |CV| must ≥ threshold' : 'OFF — CV decoupled from entry'}
+            </span>
           </div>
           <p className="text-xs text-gray-500 mt-3">
             Shadow orders: SL/Target stay hidden until LTP is within proximity. Trailing SL activates once profit exceeds the trailing amount.
@@ -852,12 +870,19 @@ export default function Strategy3() {
                   {/* Strength confirmation */}
                   <CheckItem ok={checklist.adx_strong}
                     label={`ADX Strength: ${checklist.adx_value} (need ≥${config.adx_threshold})`} />
-                  <CheckItem ok={checklist.cv_active}
-                    label={`CV Participation: ${checklist.cv_value?.toLocaleString()} (|${Math.abs(checklist.cv_value ?? 0)?.toLocaleString()}| ≥ ${config.cv_threshold?.toLocaleString()})`} />
+                  {checklist.use_cv_filter ? (
+                    <CheckItem ok={checklist.cv_active}
+                      label={`CV Participation: ${checklist.cv_value?.toLocaleString()} (|${Math.abs(checklist.cv_value ?? 0)?.toLocaleString()}| ≥ ${config.cv_threshold?.toLocaleString()})`} />
+                  ) : (
+                    <div className="flex items-center gap-2 text-xs text-gray-500">
+                      <Info className="w-3.5 h-3.5 shrink-0" />
+                      <span>CV Participation: Disabled (decoupled)</span>
+                    </div>
+                  )}
                   {/* CV trend & slope (informational) */}
-                  <div className={`flex items-center gap-2 text-xs ${checklist.cv_aligned ? 'text-green-400' : 'text-yellow-400'}`}>
+                  <div className={`flex items-center gap-2 text-xs ${checklist.use_cv_filter ? (checklist.cv_aligned ? 'text-green-400' : 'text-yellow-400') : 'text-gray-500'}`}>
                     <Info className="w-3.5 h-3.5 shrink-0" />
-                    <span>CV: {checklist.cv_trend} ({checklist.cv_slope || '—'}) {checklist.cv_aligned ? '— aligned with trend ✓' : `— diverging from ${checklist.ema200_trend} trend`}</span>
+                    <span>CV: {checklist.cv_trend} ({checklist.cv_slope || '—'}) {checklist.use_cv_filter ? (checklist.cv_aligned ? '— aligned with trend ✓' : `— diverging from ${checklist.ema200_trend} trend`) : '— informational only'}</span>
                   </div>
                   <div className="border-t border-surface-3 my-1.5" />
                   <CheckItem ok={checklist.pullback_touched}
