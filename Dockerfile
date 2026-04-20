@@ -10,6 +10,10 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
+# Set timezone to IST (all datetime.now() calls must return Indian time)
+ENV TZ=Asia/Kolkata
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
 # Install system deps for psycopg2
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev gcc && \
