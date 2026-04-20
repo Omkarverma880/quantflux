@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { useToast } from '../ToastContext';
 import { TableSkeleton } from '../components/ErrorBoundary';
@@ -40,9 +40,10 @@ export default function Orders() {
   const [modifyForm, setModifyForm] = useState({ price: '', quantity: '' });
   const [actionLoading, setActionLoading] = useState(null);
   const toast = useToast();
+  const initialLoadDone = useRef(false);
 
   const fetchData = async () => {
-    setLoading(true);
+    if (!initialLoadDone.current) setLoading(true);
     try {
       const [p, h, o] = await Promise.all([
         api.getPositions().catch(() => ({ positions: [] })),
@@ -54,6 +55,7 @@ export default function Orders() {
       setOrders(o.orders || []);
     } finally {
       setLoading(false);
+      initialLoadDone.current = true;
     }
   };
 
@@ -262,7 +264,7 @@ export default function Orders() {
                     </td>
                     <td className="px-5 py-3 text-right mono text-gray-300">{o.quantity}</td>
                     <td className="px-5 py-3 text-right mono text-gray-300">
-                      ₹{o.average_price?.toFixed(2) || o.price?.toFixed(2) || '—'}
+                      ₹{(o.average_price || o.price) ? (o.average_price || o.price).toFixed(2) : '—'}
                     </td>
                     <td className="px-5 py-3 text-center">
                       <span className={

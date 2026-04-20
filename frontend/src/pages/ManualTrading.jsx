@@ -593,9 +593,10 @@ function ManualActivePositions({ onAction }) {
   const [squareoffId, setSquareoffId] = useState(null);
   const [updatedAt, setUpdatedAt] = useState(null);
   const [monitorInfo, setMonitorInfo] = useState({});
+  const initialLoadDone = useRef(false);
 
   const fetchPositions = async () => {
-    setLoading(true);
+    if (!initialLoadDone.current) setLoading(true);
     setError('');
     try {
       const [posData, monData] = await Promise.all([
@@ -609,6 +610,7 @@ function ManualActivePositions({ onAction }) {
       setError(fetchError.message);
     } finally {
       setLoading(false);
+      initialLoadDone.current = true;
     }
   };
 
@@ -729,9 +731,10 @@ function ManualOpenOrders({ onAction }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [cancelId, setCancelId] = useState(null);
+  const initialLoadDone = useRef(false);
 
   const fetchOrders = async () => {
-    setLoading(true);
+    if (!initialLoadDone.current) setLoading(true);
     setError('');
     try {
       const data = await requestManual('/open_orders');
@@ -740,6 +743,7 @@ function ManualOpenOrders({ onAction }) {
       setError(fetchError.message);
     } finally {
       setLoading(false);
+      initialLoadDone.current = true;
     }
   };
 
@@ -832,9 +836,10 @@ function ManualTradeLogs({ onSummaryChange }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const initialLoadDone = useRef(false);
 
   const fetchLogs = async () => {
-    setLoading(true);
+    if (!initialLoadDone.current) setLoading(true);
     setError('');
     try {
       const data = await requestManual('/trade_logs');
@@ -854,6 +859,7 @@ function ManualTradeLogs({ onSummaryChange }) {
       onSummaryChange({ tradeCount: 0, pnl: 0, investment: 0 });
     } finally {
       setLoading(false);
+      initialLoadDone.current = true;
     }
   };
 
