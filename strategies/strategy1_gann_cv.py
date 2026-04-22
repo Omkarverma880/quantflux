@@ -203,6 +203,54 @@ class Strategy1GannCV:
         self._save_state()
         logger.info("Strategy 1 stopped")
 
+    def apply_config(self, config: dict) -> None:
+        """
+        Update tunables on a live strategy instance and, if a position is
+        already open, recompute SL / target prices so toggles like
+        'Gann Target' take effect immediately after Save.
+        """
+        self.sl_points = float(config.get("sl_points", self.sl_points))
+        self.target_points = float(config.get("target_points", self.target_points))
+        self.lot_size = int(config.get("lot_size", self.lot_size))
+        self.cv_threshold = int(config.get("cv_threshold", self.cv_threshold))
+        self.strike_interval = int(config.get("strike_interval", self.strike_interval))
+        self.sl_proximity = float(config.get("sl_proximity", self.sl_proximity))
+        self.target_proximity = float(config.get("target_proximity", self.target_proximity))
+        self.gann_target = bool(config.get("gann_target", self.gann_target))
+        self.re_entry = bool(config.get("re_entry", self.re_entry))
+
+        # If we already have an open position, recompute SL / target from the
+        # NEW config against the actual fill price. Only safe while the SL /
+        # target orders are still shadow (not yet placed on the exchange).
+        if self.state == State.POSITION_OPEN and self.fill_price > 0:
+            if self.gann_target:
+                new_target = float(self._ceil_gann(self.fill_price))
+            else:
+                new_target = self.fill_price + self.target_points
+
+            if self.fill_price >= self.sl_points:
+                new_sl = self.fill_price - self.sl_points
+            else:
+                new_sl = float(self._prev_gann(self.fill_price))
+
+            # Only update shadow legs — if a leg is already live on the
+            # exchange, leave it alone to avoid racing with the broker.
+            if self.target_shadow:
+                self.target_price = new_target
+                if self.target_order:
+                    self.target_order["price"] = new_target
+            if self.sl_shadow:
+                self.sl_price = new_sl
+                if self.sl_order:
+                    self.sl_order["price"] = new_sl
+
+            logger.info(
+                f"Config applied to open position: gann_target={self.gann_target} "
+                f"SL={self.sl_price} TGT={self.target_price}"
+            )
+
+        self._save_state()
+
     # ── Day reset ──────────────────────────────────
 
     def _check_day_reset(self):
@@ -741,7 +789,8 @@ class Strategy1GannCV:
 
         logger.info(f"Trade done: {exit_type} | Entry={self.fill_price} Exit={exit_price} PnL={pnl:.2f}")
 
-        # Re-entry: if target was hit and re_entry is enabled, place same entry again
+        # Re-entry: if target was hit and re_entry is enabled, place same entry again.
+        # On SL_HIT we always stop the strategy — user must manually start again.
         if exit_type == "TARGET_HIT" and self.re_entry:
             logger.info("Re-entry enabled — placing same entry order again")
             self._append_trade_history(trade)
@@ -750,6 +799,10 @@ class Strategy1GannCV:
             return
 
         self.state = State.COMPLETED
+        if exit_type == "SL_HIT":
+            # SL hit — deactivate strategy so user must manually start again
+            self.is_active = False
+            logger.info("SL hit — strategy deactivated. Please start again manually to resume.")
         self._save_state()
         self._append_trade_history(trade)
         self._save_order_snapshot()

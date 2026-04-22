@@ -160,11 +160,17 @@ async def check_strategy(user_id: int = Depends(login_required), db: Session = D
 
 
 @router.put("/config")
-async def update_config(config: Strategy1Config, user_id: int = Depends(login_required)):
-    """Update saved config (takes effect on next start)."""
+async def update_config(config: Strategy1Config, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Update saved config. Applies live to an already-running strategy."""
     params = config.model_dump()
     _save_config(params)
-    _user_strategies.pop(user_id, None)  # force reload
+
+    # If a strategy instance is already loaded for this user, push the new
+    # config into it so toggles like `gann_target` take effect immediately
+    # (including recomputing SL/target on an already-open position).
+    strat = _user_strategies.get(user_id)
+    if strat is not None:
+        strat.apply_config(params)
     return {"status": "updated", "config": params}
 
 

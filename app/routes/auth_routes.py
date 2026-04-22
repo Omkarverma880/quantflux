@@ -190,12 +190,14 @@ def zerodha_callback(request_token: str = "", status: str = "", user_id: str = "
     try:
         uid = int(user_id) if user_id else None
         if not uid:
-            # Fallback: find user from cached kite instances
-            from core.auth import _user_kite_instances
-            if _user_kite_instances:
-                uid = list(_user_kite_instances.keys())[-1]
-            else:
-                raise RuntimeError("Cannot determine which user is logging in.")
+            # No user_id in redirect_params — cannot safely resolve the user.
+            # Falling back to "last cached user" is unsafe with multiple users,
+            # because exchanging a request_token with the wrong api_key/secret
+            # yields Zerodha's "Token is invalid or has expired" error.
+            raise RuntimeError(
+                "Cannot determine which user is logging in. "
+                "Please retry the login from the app."
+            )
 
         from core.database import get_db_session
         db = get_db_session()

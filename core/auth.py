@@ -224,12 +224,17 @@ class UserZerodhaAuth:
     @staticmethod
     def get_login_url(db: Session, user_id: int) -> str:
         from core.models import UserSettings
+        from urllib.parse import quote
         settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
         if not settings or not settings.kite_api_key:
             raise RuntimeError("Zerodha API credentials not configured. Add your API Key and Secret in Settings first.")
         kite = KiteConnect(api_key=settings.kite_api_key)
         _user_kite_instances[user_id] = kite
-        return kite.login_url()
+        # Embed user_id in redirect_params so the callback knows which user is logging in.
+        # Zerodha forwards the redirect_params value back as a query string on the redirect URL.
+        base_url = kite.login_url()
+        sep = "&" if "?" in base_url else "?"
+        return f"{base_url}{sep}redirect_params={quote(f'user_id={user_id}')}"
 
     @staticmethod
     def complete_login(db: Session, user_id: int, request_token: str):
