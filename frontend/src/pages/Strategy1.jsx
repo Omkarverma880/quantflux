@@ -98,6 +98,10 @@ export default function Strategy1() {
   const [backtesting, setBacktesting] = useState(false);
   const [pinOpen, setPinOpen] = useState(false);
   const [docOpen, setDocOpen] = useState(false);
+  // Debounce flags — prevent double-click firing /start or /stop twice
+  // while the first request is still in flight (~150-400 ms to Railway).
+  const [starting, setStarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const timerRef = useRef(null);
   const countdownRef = useRef(null);
 
@@ -146,20 +150,28 @@ export default function Strategy1() {
   /* ── Actions ───────────────────────────────── */
 
   const handleStart = async () => {
+    if (starting) return;     // debounce: ignore while request in flight
+    setStarting(true);
     try {
       const res = await api.strategy1TradeStart(config);
       setStatus(res);
     } catch (e) {
       console.error('start', e);
+    } finally {
+      setStarting(false);
     }
   };
 
   const handleStop = async () => {
+    if (stopping) return;     // debounce: ignore while request in flight
+    setStopping(true);
     try {
       const res = await api.strategy1TradeStop();
       setStatus(res);
     } catch (e) {
       console.error('stop', e);
+    } finally {
+      setStopping(false);
     }
   };
 
@@ -260,16 +272,18 @@ export default function Strategy1() {
           {isActive ? (
             <button
               onClick={handleStop}
-              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition text-sm font-medium"
+              disabled={stopping}
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 transition text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Square className="w-4 h-4" /> Stop
+              <Square className="w-4 h-4" /> {stopping ? 'Stopping…' : 'Stop'}
             </button>
           ) : (
             <button
               onClick={handleStart}
-              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-green-600/20 text-green-400 border border-green-500/30 hover:bg-green-600/30 transition text-sm font-medium"
+              disabled={starting}
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-green-600/20 text-green-400 border border-green-500/30 hover:bg-green-600/30 transition text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Play className="w-4 h-4" /> Start
+              <Play className="w-4 h-4" /> {starting ? 'Starting…' : 'Start'}
             </button>
           )}
 

@@ -35,6 +35,7 @@ Constraints:
 import bisect
 import json
 import math
+import threading
 from datetime import date, datetime, time as dtime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -197,6 +198,10 @@ class Strategy3CvVwapEmaAdx:
         self.is_active: bool = False
         self.state: State = State.IDLE
         self._trading_date: Optional[date] = None
+
+        # Concurrency guard — prevents duplicate orders when the background
+        # loop and the frontend /check + /status timers race each other.
+        self._check_lock = threading.Lock()
 
         # Indicator cache (updated each check)
         self.ema200: float = 0.0
@@ -597,40 +602,46 @@ class Strategy3CvVwapEmaAdx:
         if not self.is_active:
             return self.get_status()
 
-        self._check_day_reset()
+        # Non-blocking lock — skip tick if another thread is already in check().
+        if not self._check_lock.acquire(blocking=False):
+            return self.get_status()
+        try:
+            self._check_day_reset()
 
-        # Compute indicators every check
-        indicators = self._compute_indicators(cv_data)
-        self.ema200 = indicators["ema200"]
-        self.ema20 = indicators["ema20"]
-        self.vwap = indicators["vwap"]
-        self.adx = indicators["adx"]
-        self.cv_trend = indicators["cv_trend"]
-        # Use actual spot price (not futures close) for trend display
-        # so the UI matches the entry logic exactly
-        if spot_price > 0 and self.ema200 > 0:
-            self.spot_vs_ema200 = "Above" if spot_price > self.ema200 else "Below"
-        else:
-            self.spot_vs_ema200 = indicators["spot_vs_ema200"]
-        if spot_price > 0 and self.vwap > 0:
-            self.spot_vs_vwap = "Above" if spot_price > self.vwap else "Below"
-        else:
-            self.spot_vs_vwap = indicators["spot_vs_vwap"]
-
-        if self.state == State.IDLE:
-            self._check_entry_signal(cv_data, spot_price, indicators)
-        elif self.state == State.ORDER_PLACED:
-            self._check_entry_fill(spot_price, indicators)
-        elif self.state == State.POSITION_OPEN:
-            now_time = datetime.now().time()
-            if now_time >= PRE_CLOSE_EXIT:
-                logger.info(f"Auto square-off triggered at {now_time.strftime('%H:%M:%S')}")
-                self._auto_square_off()
+            # Compute indicators every check
+            indicators = self._compute_indicators(cv_data)
+            self.ema200 = indicators["ema200"]
+            self.ema20 = indicators["ema20"]
+            self.vwap = indicators["vwap"]
+            self.adx = indicators["adx"]
+            self.cv_trend = indicators["cv_trend"]
+            # Use actual spot price (not futures close) for trend display
+            # so the UI matches the entry logic exactly
+            if spot_price > 0 and self.ema200 > 0:
+                self.spot_vs_ema200 = "Above" if spot_price > self.ema200 else "Below"
             else:
-                self._check_exit()
+                self.spot_vs_ema200 = indicators["spot_vs_ema200"]
+            if spot_price > 0 and self.vwap > 0:
+                self.spot_vs_vwap = "Above" if spot_price > self.vwap else "Below"
+            else:
+                self.spot_vs_vwap = indicators["spot_vs_vwap"]
 
-        self._refresh_current_ltp()
-        return self.get_status()
+            if self.state == State.IDLE:
+                self._check_entry_signal(cv_data, spot_price, indicators)
+            elif self.state == State.ORDER_PLACED:
+                self._check_entry_fill(spot_price, indicators)
+            elif self.state == State.POSITION_OPEN:
+                now_time = datetime.now().time()
+                if now_time >= PRE_CLOSE_EXIT:
+                    logger.info(f"Auto square-off triggered at {now_time.strftime('%H:%M:%S')}")
+                    self._auto_square_off()
+                else:
+                    self._check_exit()
+
+            self._refresh_current_ltp()
+            return self.get_status()
+        finally:
+            self._check_lock.release()
 
     # ── Entry ─────────────────────────────────────
 
@@ -838,6 +849,10 @@ class Strategy3CvVwapEmaAdx:
         self._place_entry_order()
 
     def _place_entry_order(self):
+        # Pre-flip state BEFORE the broker call so concurrent ticks that
+        # slip past the lock still see us as busy. Reverted on failure.
+        prev_state = self.state
+        self.state = State.ORDER_PLACED
         try:
             req = OrderRequest(
                 tradingsymbol=self.option_symbol,
@@ -863,11 +878,15 @@ class Strategy3CvVwapEmaAdx:
                 logger.info(f"Paper entry filled at {self.fill_price}")
                 self._on_entry_filled()
             else:
-                self.state = State.ORDER_PLACED
+                # state already == ORDER_PLACED
                 self._save_state()
                 logger.info(f"Entry order placed: {resp.order_id}")
         except Exception as e:
             logger.error(f"Entry order failed: {e}")
+            # Revert so we can retry on next cycle
+            self.state = prev_state
+            self.entry_order = None
+            self._save_state()
 
     # ── Fill check ────────────────────────────────
 

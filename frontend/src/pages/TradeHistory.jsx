@@ -31,26 +31,105 @@ const strategyBadge = (label) => {
   }
 };
 
-/* Compute P&L stats for a day using only COMPLETE orders */
+/*
+ * Compute day P&L correctly — per symbol, FIFO-matched.
+ *
+ * Why this matters:
+ *   Naive `sellValue − buyValue` is wrong whenever total BUY qty != SELL qty.
+ *   Any unmatched BUY quantity is an OPEN position, not realized loss. Including
+ *   its full acquisition cost in P&L makes losses look huge (and hides true P&L
+ *   when duplicate entries or MTM-still-open legs are present).
+ *
+ * Algorithm:
+ *   1. Group COMPLETE orders by symbol.
+ *   2. Within each symbol, walk chronologically and FIFO-match opposing legs.
+ *      For options we can have either side opening (BUY to open, or SELL to open).
+ *      FIFO across both sides gives the correct realized P&L either way.
+ *   3. Realized P&L = sum over matched fills of (sell_px − buy_px) × qty.
+ *   4. Unmatched remaining qty = open position (reported separately, excluded).
+ */
 const computeDaySummary = (orders) => {
   const filled = orders.filter((o) => o.status === 'COMPLETE');
-  let totalBuyValue = 0, totalSellValue = 0, totalBuyQty = 0, totalSellQty = 0;
 
+  let totalBuyValue = 0, totalSellValue = 0, totalBuyQty = 0, totalSellQty = 0;
+  let realizedPnl = 0;
+  let openQty = 0;  // absolute remaining unmatched qty across all symbols
+
+  // Group by symbol
+  const bySymbol = {};
   filled.forEach((o) => {
-    const price = o.average_price || o.price || 0;
-    const value = price * o.quantity;
+    const sym = o.tradingsymbol || 'UNKNOWN';
+    if (!bySymbol[sym]) bySymbol[sym] = [];
+    bySymbol[sym].push(o);
+
+    const price = Number(o.average_price) || Number(o.price) || 0;
+    const qty = Number(o.quantity) || 0;
+    const value = price * qty;
     if (o.transaction_type === 'BUY') {
       totalBuyValue += value;
-      totalBuyQty += o.quantity;
+      totalBuyQty += qty;
     } else {
       totalSellValue += value;
-      totalSellQty += o.quantity;
+      totalSellQty += qty;
     }
   });
 
-  const pnl = totalSellValue - totalBuyValue;
+  // FIFO-match within each symbol
+  Object.values(bySymbol).forEach((arr) => {
+    // Chronological order (trade history already sorted; re-sort defensively)
+    const sorted = [...arr].sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+
+    // Two FIFO queues: entries still waiting to be closed.
+    // Each queue item: { qty, price }
+    const buyQueue = [];
+    const sellQueue = [];
+
+    sorted.forEach((o) => {
+      let qty = Number(o.quantity) || 0;
+      const price = Number(o.average_price) || Number(o.price) || 0;
+      if (qty <= 0) return;
+
+      if (o.transaction_type === 'BUY') {
+        // Close any open SELLs first (short covering)
+        while (qty > 0 && sellQueue.length > 0) {
+          const head = sellQueue[0];
+          const matched = Math.min(qty, head.qty);
+          realizedPnl += (head.price - price) * matched;  // sold high, bought to cover
+          head.qty -= matched;
+          qty -= matched;
+          if (head.qty === 0) sellQueue.shift();
+        }
+        if (qty > 0) buyQueue.push({ qty, price });
+      } else {
+        // SELL — close any open BUYs first (long exits)
+        while (qty > 0 && buyQueue.length > 0) {
+          const head = buyQueue[0];
+          const matched = Math.min(qty, head.qty);
+          realizedPnl += (price - head.price) * matched;
+          head.qty -= matched;
+          qty -= matched;
+          if (head.qty === 0) buyQueue.shift();
+        }
+        if (qty > 0) sellQueue.push({ qty, price });
+      }
+    });
+
+    // Whatever remains in either queue is an open position today
+    openQty += buyQueue.reduce((s, x) => s + x.qty, 0);
+    openQty += sellQueue.reduce((s, x) => s + x.qty, 0);
+  });
+
   const totalTraded = totalBuyValue + totalSellValue;
-  return { totalBuyValue, totalSellValue, totalBuyQty, totalSellQty, pnl, totalTraded, filledCount: filled.length };
+  return {
+    totalBuyValue,
+    totalSellValue,
+    totalBuyQty,
+    totalSellQty,
+    pnl: realizedPnl,
+    openQty,
+    totalTraded,
+    filledCount: filled.length,
+  };
 };
 
 export default function TradeHistory() {
@@ -161,7 +240,12 @@ export default function TradeHistory() {
                         {summary.pnl >= 0 ? '+' : ''}₹{summary.pnl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
-                    <p className="text-[10px] text-gray-600 mt-0.5">{summary.filledCount} filled orders</p>
+                    <p className="text-[10px] text-gray-600 mt-0.5">
+                      Realized · {summary.filledCount} filled
+                      {summary.openQty > 0 && (
+                        <span className="text-yellow-500/80"> · {summary.openQty} open</span>
+                      )}
+                    </p>
                   </div>
                   <div className="bg-surface-2 rounded-lg px-4 py-2.5">
                     <p className="text-[11px] text-gray-500 uppercase tracking-wide mb-0.5">Total Traded</p>

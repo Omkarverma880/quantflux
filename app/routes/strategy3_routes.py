@@ -96,20 +96,16 @@ def _get_cv_data(broker: Broker, authenticated: bool) -> dict:
 
 @router.get("/status")
 async def get_status(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
-    """Current strategy state — recomputes indicators if active."""
+    """
+    Return the current cached strategy state.
+
+    IMPORTANT: This is a pure read — it does NOT run strategy.check().
+    A GET endpoint must not mutate or place orders. Fresh state is produced
+    by the 2 s background loop in app/server.py and by POST /check from the
+    frontend timer; this handler simply returns whatever they last wrote.
+    """
     broker = get_user_broker(db, user_id)
-    authenticated = _is_broker_authenticated_for_user(db, user_id)
     strategy = _get_strategy(broker, user_id)
-    if strategy.is_active:
-        try:
-            cv_data = _get_cv_data(broker, authenticated)
-            spot_price = cv_data.get("spot_price", 0)
-            result = strategy.check(cv_data, spot_price)
-            result["cv_value"] = cv_data.get("last_cumulative_volume", 0)
-            result["spot_price"] = spot_price
-            return result
-        except Exception as e:
-            logger.error(f"Strategy 3 status recompute failed: {e}")
     return strategy.get_status()
 
 

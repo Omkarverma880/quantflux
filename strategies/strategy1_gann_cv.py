@@ -16,6 +16,7 @@ Constraints:
 """
 import bisect
 import json
+import threading
 from datetime import date, datetime, time as dtime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -77,6 +78,11 @@ class Strategy1GannCV:
         self.is_active: bool = False
         self.state: State = State.IDLE
         self._trading_date: Optional[date] = None
+
+        # Concurrency guard — prevents duplicate orders when the background
+        # loop and the frontend /check + /status timers invoke check() in
+        # parallel. Non-blocking: if already held, the second caller skips.
+        self._check_lock = threading.Lock()
 
         # Signal / trade details
         self.signal_type: Optional[str] = None   # "CE" or "PE"
@@ -305,25 +311,33 @@ class Strategy1GannCV:
         if not self.is_active:
             return self.get_status()
 
-        self._check_day_reset()
+        # Non-blocking lock — if another thread is already running check(),
+        # skip this tick. Prevents duplicate entry orders caused by concurrent
+        # callers (background loop + frontend /check + /status).
+        if not self._check_lock.acquire(blocking=False):
+            return self.get_status()
+        try:
+            self._check_day_reset()
 
-        if self.state == State.IDLE:
-            self._check_entry_signal(cv_data, spot_price)
-        elif self.state == State.ORDER_PLACED:
-            self._check_entry_fill()
-        elif self.state == State.POSITION_OPEN:
-            # Auto square-off at 3:15 PM
-            now_time = datetime.now().time()
-            if now_time >= PRE_CLOSE_EXIT:
-                logger.info(f"Auto square-off triggered at {now_time.strftime('%H:%M:%S')}")
-                self._auto_square_off()
-            else:
-                self._check_exit()
+            if self.state == State.IDLE:
+                self._check_entry_signal(cv_data, spot_price)
+            elif self.state == State.ORDER_PLACED:
+                self._check_entry_fill()
+            elif self.state == State.POSITION_OPEN:
+                # Auto square-off at 3:15 PM
+                now_time = datetime.now().time()
+                if now_time >= PRE_CLOSE_EXIT:
+                    logger.info(f"Auto square-off triggered at {now_time.strftime('%H:%M:%S')}")
+                    self._auto_square_off()
+                else:
+                    self._check_exit()
 
-        # Refresh current LTP for display
-        self._refresh_current_ltp()
+            # Refresh current LTP for display
+            self._refresh_current_ltp()
 
-        return self.get_status()
+            return self.get_status()
+        finally:
+            self._check_lock.release()
 
     # ── Entry ──────────────────────────────────────
 
@@ -405,6 +419,11 @@ class Strategy1GannCV:
         self._place_entry_order()
 
     def _place_entry_order(self):
+        # Flip state BEFORE the broker call so any concurrent check() that
+        # slips past the lock still sees us as busy. Reverted on failure so
+        # the strategy can retry on the next tick.
+        prev_state = self.state
+        self.state = State.ORDER_PLACED
         try:
             req = OrderRequest(
                 tradingsymbol=self.option_symbol,
@@ -433,12 +452,16 @@ class Strategy1GannCV:
                 logger.info(f"Paper entry filled at {self.fill_price}")
                 self._on_entry_filled()
             else:
-                self.state = State.ORDER_PLACED
+                # state already == ORDER_PLACED
                 self._save_state()
                 logger.info(f"Entry order placed: {resp.order_id}")
 
         except Exception as e:
             logger.error(f"Entry order failed: {e}")
+            # Revert so we can retry on next cycle
+            self.state = prev_state
+            self.entry_order = None
+            self._save_state()
 
     # ── Fill check ─────────────────────────────────
 
@@ -596,7 +619,10 @@ class Strategy1GannCV:
                 self.target_shadow = True
 
             if ltp <= self.sl_price:
-                # LTP already at/below SL — place aggressive LIMIT SELL
+                # LTP already at/below SL — place aggressive LIMIT SELL.
+                # Flip shadow flag BEFORE broker call so a concurrent tick
+                # can't place a second exit order if this one takes a while.
+                self.sl_shadow = False
                 exit_price = max(0.05, round(ltp * 0.90, 2))
                 logger.warning(
                     f"LTP {ltp} already at/below SL {self.sl_price} — placing LIMIT exit @ {exit_price}"
@@ -613,16 +639,18 @@ class Strategy1GannCV:
                         tag="S1SL",
                     )
                     self.broker.place_order(sl_req)
-                    self.sl_shadow = False
                     self._complete_trade("SL_HIT", ltp)
                     return
                 except Exception as e:
                     logger.error(f"SL MARKET exit failed: {e}")
+                    self.sl_shadow = True  # revert so next tick can retry
                     return
             else:
                 logger.info(
                     f"LTP {ltp} within {self.sl_proximity} pts of SL {self.sl_price} — placing SL order on exchange"
                 )
+                # Pre-flip: block concurrent ticks from re-entering this branch
+                self.sl_shadow = False
                 try:
                     sl_req = OrderRequest(
                         tradingsymbol=self.option_symbol,
@@ -641,11 +669,11 @@ class Strategy1GannCV:
                         "price": self.sl_price,
                         "timestamp": datetime.now().isoformat(),
                     }
-                    self.sl_shadow = False
                     self._save_state()
                     logger.info(f"SL order placed on exchange: {sl_resp.order_id}")
                 except Exception as e:
                     logger.error(f"SL order placement failed: {e}")
+                    self.sl_shadow = True  # revert so next tick can retry
 
         # ── Shadow Target: place real order when LTP approaches target ──
         if self.target_shadow and ltp >= (self.target_price - self.target_proximity):
@@ -660,7 +688,9 @@ class Strategy1GannCV:
                 self.sl_shadow = True
 
             if ltp >= self.target_price:
-                # LTP already at/above target — place aggressive LIMIT SELL
+                # LTP already at/above target — place aggressive LIMIT SELL.
+                # Pre-flip shadow flag to block concurrent re-entry.
+                self.target_shadow = False
                 exit_price = max(0.05, round(ltp * 0.90, 2))
                 logger.warning(
                     f"LTP {ltp} already at/above TGT {self.target_price} — placing LIMIT exit @ {exit_price}"
@@ -677,17 +707,19 @@ class Strategy1GannCV:
                         tag="S1TGT",
                     )
                     self.broker.place_order(tgt_req)
-                    self.target_shadow = False
                     self._cancel_order(self.sl_order)
                     self._complete_trade("TARGET_HIT", ltp)
                     return
                 except Exception as e:
                     logger.error(f"Target MARKET exit failed: {e}")
+                    self.target_shadow = True  # revert
                     return
             else:
                 logger.info(
                     f"LTP {ltp} within {self.target_proximity} pts of TGT {self.target_price} — placing target order on exchange"
                 )
+                # Pre-flip: block concurrent ticks from re-entering this branch
+                self.target_shadow = False
                 try:
                     tgt_req = OrderRequest(
                         tradingsymbol=self.option_symbol,
@@ -706,11 +738,11 @@ class Strategy1GannCV:
                         "price": self.target_price,
                         "timestamp": datetime.now().isoformat(),
                     }
-                    self.target_shadow = False
                     self._save_state()
                     logger.info(f"Target order placed on exchange: {tgt_resp.order_id}")
                 except Exception as e:
                     logger.error(f"Target order placement failed: {e}")
+                    self.target_shadow = True  # revert
 
     def _auto_square_off(self):
         """Square off open position at market price (3:15 PM auto exit)."""

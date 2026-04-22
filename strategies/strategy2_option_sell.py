@@ -16,6 +16,7 @@ Constraints:
 """
 import bisect
 import json
+import threading
 from datetime import date, datetime, time as dtime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -73,6 +74,10 @@ class Strategy2OptionSell:
         self.is_active: bool = False
         self.state: State = State.IDLE
         self._trading_date: Optional[date] = None
+
+        # Concurrency guard — prevents duplicate orders when the background
+        # loop and the frontend /check + /status timers race each other.
+        self._check_lock = threading.Lock()
 
         # Signal / trade details
         self.signal_type: Optional[str] = None   # "CE" or "PE"
@@ -255,23 +260,29 @@ class Strategy2OptionSell:
         if not self.is_active:
             return self.get_status()
 
-        self._check_day_reset()
+        # Non-blocking lock — skip the tick if another thread is in check().
+        if not self._check_lock.acquire(blocking=False):
+            return self.get_status()
+        try:
+            self._check_day_reset()
 
-        if self.state == State.IDLE:
-            self._check_entry_signal(cv_data, spot_price)
-        elif self.state == State.ORDER_PLACED:
-            self._check_entry_fill()
-        elif self.state == State.POSITION_OPEN:
-            now_time = datetime.now().time()
-            if now_time >= PRE_CLOSE_EXIT:
-                logger.info(f"Auto square-off triggered at {now_time.strftime('%H:%M:%S')}")
-                self._auto_square_off()
-            else:
-                self._check_exit()
+            if self.state == State.IDLE:
+                self._check_entry_signal(cv_data, spot_price)
+            elif self.state == State.ORDER_PLACED:
+                self._check_entry_fill()
+            elif self.state == State.POSITION_OPEN:
+                now_time = datetime.now().time()
+                if now_time >= PRE_CLOSE_EXIT:
+                    logger.info(f"Auto square-off triggered at {now_time.strftime('%H:%M:%S')}")
+                    self._auto_square_off()
+                else:
+                    self._check_exit()
 
-        self._refresh_current_ltp()
+            self._refresh_current_ltp()
 
-        return self.get_status()
+            return self.get_status()
+        finally:
+            self._check_lock.release()
 
     # ── Entry ──────────────────────────────────────
     # SELLING: bullish → sell PUT, bearish → sell CALL (opposite of buying)
@@ -337,6 +348,10 @@ class Strategy2OptionSell:
         self._place_entry_order()
 
     def _place_entry_order(self):
+        # Pre-flip state BEFORE the broker call so concurrent ticks that
+        # slip past the lock still see us as busy. Reverted on failure.
+        prev_state = self.state
+        self.state = State.ORDER_PLACED
         try:
             req = OrderRequest(
                 tradingsymbol=self.option_symbol,
@@ -364,12 +379,16 @@ class Strategy2OptionSell:
                 logger.info(f"Paper entry filled at {self.fill_price}")
                 self._on_entry_filled()
             else:
-                self.state = State.ORDER_PLACED
+                # state already == ORDER_PLACED
                 self._save_state()
                 logger.info(f"Entry sell order placed: {resp.order_id}")
 
         except Exception as e:
             logger.error(f"Entry order failed: {e}")
+            # Revert so we can retry on next cycle
+            self.state = prev_state
+            self.entry_order = None
+            self._save_state()
 
     # ── Fill check ─────────────────────────────────
 
