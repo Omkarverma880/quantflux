@@ -158,6 +158,26 @@ def _run_strategies_for_user(uid: int):
 async def lifespan(app: FastAPI):
     print("[LIFESPAN] Trading server starting up …", flush=True)
 
+    # ── Log Railway outbound IP (for Zerodha whitelisting) ──
+    # Prints the public egress IP on every deploy. Find it in Railway
+    # → Deploy Logs by searching for "OUTBOUND IP".
+    try:
+        import urllib.request
+        for svc in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://checkip.amazonaws.com"):
+            try:
+                with urllib.request.urlopen(svc, timeout=4) as r:
+                    ip = r.read().decode().strip()
+                    if ip:
+                        print(f"[LIFESPAN] ===== OUTBOUND IP: {ip}  (whitelist this in Zerodha) =====", flush=True)
+                        app.state.outbound_ip = ip
+                        break
+            except Exception:
+                continue
+        else:
+            print("[LIFESPAN] OUTBOUND IP: could not resolve (no egress to ipify/ifconfig/aws).", flush=True)
+    except Exception as e:
+        print(f"[LIFESPAN] OUTBOUND IP lookup error (non-fatal): {e}", flush=True)
+
     # Ensure all DB tables exist (safe on fresh Railway Postgres)
     try:
         from core.database import engine, Base
@@ -233,6 +253,30 @@ def healthcheck():
         "port": os.getenv("PORT", "8000"),
         "boot_id": _BOOT_ID,
     }
+
+
+@app.get("/api/outbound-ip")
+def get_outbound_ip():
+    """
+    Return this deployment's public outbound IP — the one to whitelist
+    in your Zerodha developer profile. Cached at startup; refreshes live
+    if the cache is empty.
+    """
+    import urllib.request
+    cached = getattr(app.state, "outbound_ip", None)
+    if cached:
+        return {"ip": cached, "source": "startup_cache", "boot_id": _BOOT_ID}
+
+    for svc in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://checkip.amazonaws.com"):
+        try:
+            with urllib.request.urlopen(svc, timeout=4) as r:
+                ip = r.read().decode().strip()
+                if ip:
+                    app.state.outbound_ip = ip
+                    return {"ip": ip, "source": svc, "boot_id": _BOOT_ID}
+        except Exception:
+            continue
+    return {"ip": None, "error": "could not resolve outbound IP", "boot_id": _BOOT_ID}
 
 
 # ── WebSocket ──────────────────────────────────────
