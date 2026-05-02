@@ -112,8 +112,6 @@ export default function Strategy4() {
     max_breakout_extension: 60,
     max_trades_per_day: 1,
     allow_reentry: false,
-    gann_target: false,
-    gann_count: 1,
     index_name: 'NIFTY',
   });
   const [starting, setStarting] = useState(false);
@@ -325,25 +323,10 @@ export default function Strategy4() {
                   onChange={(e) => setConfig((c) => ({ ...c, [k]: Number(e.target.value) }))} />
               </label>
             ))}
-            {config.gann_target && (
-              <label className="text-xs text-gray-400">
-                Gann Count (1-5)
-                <input type="number" min={1} max={5}
-                  className="mt-1 w-full bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-white text-sm"
-                  value={config.gann_count ?? 1}
-                  onChange={(e) => setConfig((c) => ({ ...c, gann_count: Math.max(1, Math.min(5, Number(e.target.value) || 1)) }))} />
-                <span className="text-[10px] text-gray-500">Target = Nth Gann level above fill</span>
-              </label>
-            )}
             <label className="text-xs text-gray-400 flex items-center gap-2 mt-5">
               <input type="checkbox" checked={!!config.allow_reentry}
                 onChange={(e) => setConfig((c) => ({ ...c, allow_reentry: e.target.checked }))} />
               Allow re-entry after target
-            </label>
-            <label className="text-xs text-gray-400 flex items-center gap-2 mt-5">
-              <input type="checkbox" checked={!!config.gann_target}
-                onChange={(e) => setConfig((c) => ({ ...c, gann_target: e.target.checked }))} />
-              Use Gann target (overrides target points)
             </label>
           </div>
           <div className="mt-3 flex items-center justify-between">
@@ -619,6 +602,7 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
               <tr>
                 <th className="text-left px-2 py-1">Time</th>
                 <th className="text-left px-2 py-1">Side</th>
+                <th className="text-left px-2 py-1">Option</th>
                 <th className="text-right px-2 py-1">Entry</th>
                 <th className="text-right px-2 py-1">Exit</th>
                 <th className="text-left px-2 py-1">Result</th>
@@ -629,7 +613,12 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
               {data.trades.map((t, i) => (
                 <tr key={i} className="border-t border-surface-3">
                   <td className="px-2 py-1">{t.time}</td>
-                  <td className={`px-2 py-1 ${t.side === 'CE' ? 'text-green-400' : 'text-red-400'}`}>{t.side}</td>
+                  <td className={`px-2 py-1 ${t.side === 'CE' ? 'text-green-400' : 'text-red-400'}`}>
+                    {t.side === 'CE' ? 'BUY CALL' : 'BUY PUT'}
+                  </td>
+                  <td className="px-2 py-1 font-mono text-gray-300">
+                    {t.option_symbol || (t.strike ? `NIFTY ${t.strike} ${t.side}` : '—')}
+                  </td>
                   <td className="px-2 py-1 text-right font-mono">{Number(t.entry).toFixed(2)}</td>
                   <td className="px-2 py-1 text-right font-mono">{Number(t.exit).toFixed(2)}</td>
                   <td className={`px-2 py-1 ${t.exit_type === 'TARGET_HIT' ? 'text-green-400' : t.exit_type === 'SL_HIT' ? 'text-red-400' : 'text-yellow-400'}`}>

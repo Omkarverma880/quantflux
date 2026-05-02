@@ -1027,6 +1027,10 @@ class Strategy4HighLowRetest:
         tgt = 0.0
         trades_done = 0
         spot_series = []
+        # Pre-compute weekly-expiry tag from sim_day for human-readable
+        # synthetic option symbols (e.g. "NIFTY 22800 CE").
+        def _synth_option(strike: int, opt: str) -> str:
+            return f"{self.index_name} {int(strike)} {opt}"
 
         def candle_time(c):
             d = c.get("date")
@@ -1054,8 +1058,10 @@ class Strategy4HighLowRetest:
             if st == "POSITION_OPEN" and t_ >= PRE_CLOSE_EXIT:
                 exit_move = (close - entry_spot) if side == "CE" else (entry_spot - close)
                 pnl = exit_move * self.lot_size
+                strike_ = self._calc_atm(entry_spot)
                 trades.append({
                     "time": t_.strftime("%H:%M"), "side": side,
+                    "strike": strike_, "option_symbol": _synth_option(strike_, side),
                     "entry": entry_spot, "exit": close, "exit_type": "AUTO_SQUAREOFF",
                     "pnl": round(pnl, 2),
                 })
@@ -1070,23 +1076,29 @@ class Strategy4HighLowRetest:
                     move_low = low - entry_spot   # adverse
                     move_high = high - entry_spot # favorable
                     if move_low <= -sl_pts:
+                        strike_ = self._calc_atm(entry_spot)
                         trades.append({
                             "time": t_.strftime("%H:%M"), "side": side,
+                            "strike": strike_, "option_symbol": _synth_option(strike_, side),
                             "entry": entry_spot, "exit": entry_spot - sl_pts,
                             "exit_type": "SL_HIT", "pnl": round(-sl_pts * self.lot_size, 2),
                         })
                         events.append({"t": t_.strftime("%H:%M"), "kind": "SL", "label": "SL"})
-                        st = "COMPLETED" if not self.allow_reentry else "IDLE"
+                        # Mirror live: SL_HIT deactivates the strategy for the day
+                        trades_done += 1
+                        st = "COMPLETED"
                         side = None; continue
                     if move_high >= tgt_pts:
+                        strike_ = self._calc_atm(entry_spot)
                         trades.append({
                             "time": t_.strftime("%H:%M"), "side": side,
+                            "strike": strike_, "option_symbol": _synth_option(strike_, side),
                             "entry": entry_spot, "exit": entry_spot + tgt_pts,
                             "exit_type": "TARGET_HIT", "pnl": round(tgt_pts * self.lot_size, 2),
                         })
                         events.append({"t": t_.strftime("%H:%M"), "kind": "TGT", "label": "TGT"})
                         trades_done += 1
-                        if trades_done >= max_trades and not self.allow_reentry:
+                        if trades_done >= max_trades or not self.allow_reentry:
                             st = "COMPLETED"
                         else:
                             st = "IDLE"
@@ -1095,23 +1107,29 @@ class Strategy4HighLowRetest:
                     move_high = high - entry_spot  # adverse
                     move_low = low - entry_spot    # favorable
                     if move_high >= sl_pts:
+                        strike_ = self._calc_atm(entry_spot)
                         trades.append({
                             "time": t_.strftime("%H:%M"), "side": side,
+                            "strike": strike_, "option_symbol": _synth_option(strike_, side),
                             "entry": entry_spot, "exit": entry_spot + sl_pts,
                             "exit_type": "SL_HIT", "pnl": round(-sl_pts * self.lot_size, 2),
                         })
                         events.append({"t": t_.strftime("%H:%M"), "kind": "SL", "label": "SL"})
-                        st = "COMPLETED" if not self.allow_reentry else "IDLE"
+                        # Mirror live: SL_HIT deactivates the strategy for the day
+                        trades_done += 1
+                        st = "COMPLETED"
                         side = None; continue
                     if move_low <= -tgt_pts:
+                        strike_ = self._calc_atm(entry_spot)
                         trades.append({
                             "time": t_.strftime("%H:%M"), "side": side,
+                            "strike": strike_, "option_symbol": _synth_option(strike_, side),
                             "entry": entry_spot, "exit": entry_spot - tgt_pts,
                             "exit_type": "TARGET_HIT", "pnl": round(tgt_pts * self.lot_size, 2),
                         })
                         events.append({"t": t_.strftime("%H:%M"), "kind": "TGT", "label": "TGT"})
                         trades_done += 1
-                        if trades_done >= max_trades and not self.allow_reentry:
+                        if trades_done >= max_trades or not self.allow_reentry:
                             st = "COMPLETED"
                         else:
                             st = "IDLE"
