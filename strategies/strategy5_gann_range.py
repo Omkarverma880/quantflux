@@ -1060,16 +1060,28 @@ class Strategy5GannRange:
         self.sl_shadow = True
         self.target_shadow = True
 
-        if exit_type == "SL_HIT":
-            self.is_active = False
-            self.state = State.COMPLETED
-        elif self.allow_reentry and self._trades_today < self.max_trades_per_day:
-            # Re-arm for another setup; re-anchor band to current spot
+        # Re-entry decision. Unlike S4, S5 honors `allow_reentry` even
+        # after SL — Gann levels are static reference points so a fresh
+        # band anchor around the current spot is a valid new setup.
+        # The `max_trades_per_day` cap still bounds total exposure.
+        if self.allow_reentry and self._trades_today < self.max_trades_per_day:
             self.state = State.IDLE
             self._level_crossed = None
             self.spot_extreme = 0.0
+            self.signal_type = None
+            self.signal = "NO_TRADE"
+            self.scenario = "Re-armed after " + exit_type
+            # Re-anchor band around the current spot (post-exit price).
             self._anchor_gann_range()
+            logger.info(
+                "S5 re-armed after %s (trades=%d/%d) — new band [%.2f, %.2f]",
+                exit_type, self._trades_today, self.max_trades_per_day,
+                self.gann_lower, self.gann_upper,
+            )
         else:
+            # Hard stop: SL with no reentry allowed, or trade cap reached
+            if exit_type == "SL_HIT" and not self.allow_reentry:
+                self.is_active = False
             self.state = State.COMPLETED
         self._save_state()
         self._append_trade_history(trade)
@@ -1340,7 +1352,11 @@ class Strategy5GannRange:
                     if adverse >= sl_pts:
                         _record_trade(t_str, entry_spot - sl_pts, "SL_HIT", "SL")
                         trades_done += 1
-                        st = "COMPLETED"
+                        if trades_done >= max_trades or not self.allow_reentry:
+                            st = "COMPLETED"
+                        else:
+                            st = "IDLE"
+                            locked_lower, locked_upper = _gann_pair(close)
                         side = None
                         gann_band_series.append({"t": t_str, "lo": locked_lower, "up": locked_upper, "locked": True})
                         continue
@@ -1362,7 +1378,11 @@ class Strategy5GannRange:
                     if adverse >= sl_pts:
                         _record_trade(t_str, entry_spot + sl_pts, "SL_HIT", "SL")
                         trades_done += 1
-                        st = "COMPLETED"
+                        if trades_done >= max_trades or not self.allow_reentry:
+                            st = "COMPLETED"
+                        else:
+                            st = "IDLE"
+                            locked_lower, locked_upper = _gann_pair(close)
                         side = None
                         gann_band_series.append({"t": t_str, "lo": locked_lower, "up": locked_upper, "locked": True})
                         continue
