@@ -40,6 +40,7 @@ class Strategy4Config(BaseModel):
     itm_offset: int = 100
     gann_target: bool = False
     gann_count: int = 1
+    max_entry_slippage: float = 8
     index_name: str = "NIFTY"
 
 
@@ -195,4 +196,33 @@ async def run_backtest(
         return strat.backtest(target)
     except Exception as exc:
         logger.error("S4 backtest failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/backtest-multi")
+async def run_backtest_multi(
+    payload: dict | None = None,
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    """Aggregated multi-day backtest.
+
+    Body: {"days": 30}  (default 30, hard cap 60)
+    """
+    days = 30
+    if payload and payload.get("days"):
+        try:
+            days = max(1, min(int(payload["days"]), 60))
+        except Exception:
+            return {"status": "error", "message": "Invalid days value"}
+
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated — backtest needs historical data access"}
+
+    strat = Strategy4HighLowRetest(broker, _load_config())
+    try:
+        return strat.backtest_multi(days)
+    except Exception as exc:
+        logger.error("S4 multi backtest failed: %s", exc)
         return {"status": "error", "message": str(exc)}

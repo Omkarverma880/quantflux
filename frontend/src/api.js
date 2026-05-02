@@ -128,6 +128,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(date ? { date } : {}),
     }),
+  strategy4TradeBacktestMulti: (days) =>
+    request('/strategy4-trade/backtest-multi', {
+      method: 'POST',
+      body: JSON.stringify({ days: days || 30 }),
+    }),
 
   // Settings
   getSettings: () => request('/settings/'),

@@ -113,6 +113,7 @@ export default function Strategy4() {
     max_trades_per_day: 1,
     allow_reentry: false,
     itm_offset: 100,
+    max_entry_slippage: 8,
     index_name: 'NIFTY',
   });
   const [starting, setStarting] = useState(false);
@@ -121,6 +122,8 @@ export default function Strategy4() {
   const [backtest, setBacktest] = useState(null);
   const [btLoading, setBtLoading] = useState(false);
   const [btDate, setBtDate] = useState('');
+  const [multiBt, setMultiBt] = useState(null);
+  const [multiBtLoading, setMultiBtLoading] = useState(false);
   const tickRef = useRef(0);
   const timerRef = useRef(null);
   // Track whether the local config has been seeded from the server.
@@ -226,6 +229,19 @@ export default function Strategy4() {
       setBtLoading(false);
     }
   };
+  const runMultiBacktest = async () => {
+    if (multiBtLoading) return;
+    setMultiBtLoading(true);
+    try {
+      const res = await api.strategy4TradeBacktestMulti(30);
+      setMultiBt(res);
+      if (res?.status === 'error') alert(res.message);
+    } catch (e) {
+      alert(e.message || 'Multi backtest failed');
+    } finally {
+      setMultiBtLoading(false);
+    }
+  };
 
   /* ── Derived ───────────────────────────────── */
   const stateMeta = STATE_STYLE[status?.state] || STATE_STYLE.IDLE;
@@ -260,6 +276,7 @@ export default function Strategy4() {
           <span className={`px-3 py-1.5 rounded-lg text-xs font-medium ${stateMeta.bg} ${stateMeta.text}`}>
             {stateMeta.label}
           </span>
+          <HeartbeatPill lastCheckAt={status?.last_check_at} isActive={status?.is_active} />
           {status?.is_active ? (
             <button onClick={stop} disabled={stopping}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 disabled:opacity-50">
@@ -278,6 +295,10 @@ export default function Strategy4() {
           <button onClick={runBacktest} disabled={btLoading}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-600/20 text-purple-300 border border-purple-500/30 hover:bg-purple-600/30 disabled:opacity-50">
             <FlaskConical className="w-3 h-3" /> {btLoading ? 'Backtesting…' : 'Backtest'}
+          </button>
+          <button onClick={runMultiBacktest} disabled={multiBtLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-600/20 text-purple-300 border border-purple-500/30 hover:bg-purple-600/30 disabled:opacity-50">
+            <FlaskConical className="w-3 h-3" /> {multiBtLoading ? 'Running 30d…' : 'Backtest 30d'}
           </button>
           <button onClick={() => setConfigOpen((v) => !v)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-3 text-gray-300 hover:bg-surface-4">
@@ -316,6 +337,7 @@ export default function Strategy4() {
               ['target_proximity', 'Target Proximity'],
               ['max_trades_per_day', 'Max Trades / Day'],
               ['itm_offset', 'ITM Offset (idx pts)'],
+              ['max_entry_slippage', 'Max Entry Slippage (₹)'],
             ].map(([k, label]) => (
               <label key={k} className="text-xs text-gray-400">
                 {label}
@@ -346,6 +368,11 @@ export default function Strategy4() {
       {/* Backtest Panel */}
       {backtest && backtest.status === 'ok' && (
         <BacktestPanel data={backtest} btDate={btDate} setBtDate={setBtDate} onRun={runBacktest} btLoading={btLoading} onClose={() => setBacktest(null)} />
+      )}
+
+      {/* Multi-day Backtest Panel */}
+      {multiBt && multiBt.status === 'ok' && (
+        <MultiBacktestPanel data={multiBt} onClose={() => setMultiBt(null)} onRerun={runMultiBacktest} loading={multiBtLoading} />
       )}
 
       {/* Live Signal Panel */}
@@ -555,20 +582,6 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
               ITM offset: {data.itm_offset} pts
             </span>
           )}
-          {data.summary?.data_source && (
-            <span
-              className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                data.summary.data_source === 'REAL'
-                  ? 'bg-green-600/15 text-green-400 border-green-500/30'
-                  : data.summary.data_source === 'MIXED'
-                  ? 'bg-amber-600/15 text-amber-400 border-amber-500/30'
-                  : 'bg-gray-600/15 text-gray-400 border-gray-500/30'
-              }`}>
-              {data.summary.data_source === 'REAL' && 'Real option prices'}
-              {data.summary.data_source === 'MIXED' && 'Mixed (real + proxy)'}
-              {data.summary.data_source === 'PROXY' && 'Spot proxy (Δ≈1)'}
-            </span>
-          )}
         </div>
         <div className="flex items-center gap-2">
           <input type="date" value={btDate} onChange={(e) => setBtDate(e.target.value)}
@@ -625,11 +638,9 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
                 <th className="text-left px-2 py-1">Time</th>
                 <th className="text-left px-2 py-1">Side</th>
                 <th className="text-left px-2 py-1">Option</th>
-                <th className="text-right px-2 py-1">Spot</th>
-                <th className="text-right px-2 py-1">Entry ₹</th>
-                <th className="text-right px-2 py-1">Exit ₹</th>
+                <th className="text-right px-2 py-1">Entry</th>
+                <th className="text-right px-2 py-1">Exit</th>
                 <th className="text-left px-2 py-1">Result</th>
-                <th className="text-left px-2 py-1">Src</th>
                 <th className="text-right px-2 py-1">PnL</th>
               </tr>
             </thead>
@@ -643,26 +654,10 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
                   <td className="px-2 py-1 font-mono text-gray-300">
                     {t.option_symbol || (t.strike ? `NIFTY ${t.strike} ${t.side}` : '—')}
                   </td>
-                  <td className="px-2 py-1 text-right font-mono text-gray-400">
-                    {Number(t.entry).toFixed(2)}
-                  </td>
-                  <td className="px-2 py-1 text-right font-mono">
-                    {t.entry_premium != null ? Number(t.entry_premium).toFixed(2) : '—'}
-                  </td>
-                  <td className="px-2 py-1 text-right font-mono">
-                    {t.exit_premium != null ? Number(t.exit_premium).toFixed(2) : Number(t.exit).toFixed(2)}
-                  </td>
+                  <td className="px-2 py-1 text-right font-mono">{Number(t.entry).toFixed(2)}</td>
+                  <td className="px-2 py-1 text-right font-mono">{Number(t.exit).toFixed(2)}</td>
                   <td className={`px-2 py-1 ${t.exit_type === 'TARGET_HIT' ? 'text-green-400' : t.exit_type === 'SL_HIT' ? 'text-red-400' : 'text-yellow-400'}`}>
                     {t.exit_type}
-                  </td>
-                  <td className="px-2 py-1">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                      t.data_source === 'REAL'
-                        ? 'bg-green-600/15 text-green-400 border-green-500/30'
-                        : 'bg-gray-600/15 text-gray-400 border-gray-500/30'
-                    }`}>
-                      {t.data_source || 'PROXY'}
-                    </span>
                   </td>
                   <td className={`px-2 py-1 text-right font-mono ${t.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     ₹{Number(t.pnl).toFixed(2)}
@@ -686,6 +681,141 @@ function Stat({ label, value, color = 'text-white' }) {
     <div className="bg-surface-3 rounded-md px-2 py-1.5">
       <p className="text-gray-500 text-[10px] uppercase tracking-wider">{label}</p>
       <p className={`font-mono ${color}`}>{value ?? '—'}</p>
+    </div>
+  );
+}
+
+/* ── Heartbeat (P9) ──────────────────────────── */
+function HeartbeatPill({ lastCheckAt, isActive }) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => force((n) => n + 1), 2000);
+    return () => clearInterval(id);
+  }, []);
+  if (!isActive) return null;
+  if (!lastCheckAt) {
+    return (
+      <span className="px-2 py-1 rounded-md text-[10px] font-medium bg-amber-600/15 text-amber-400 border border-amber-500/30">
+        Awaiting tick…
+      </span>
+    );
+  }
+  const ts = new Date(lastCheckAt).getTime();
+  const ageSec = Math.max(0, (Date.now() - ts) / 1000);
+  // Only flag stale during market hours (09:15-15:30 IST). The browser
+  // may not be in IST, so derive IST time via offset.
+  const now = new Date();
+  const istNow = new Date(now.getTime() + (now.getTimezoneOffset() + 330) * 60000);
+  const istMin = istNow.getHours() * 60 + istNow.getMinutes();
+  const inMarket = istMin >= 9 * 60 + 15 && istMin <= 15 * 60 + 30;
+  const stale = inMarket && ageSec > 10;
+  return (
+    <span
+      title={`Last check: ${new Date(lastCheckAt).toLocaleTimeString()}`}
+      className={`px-2 py-1 rounded-md text-[10px] font-medium border ${
+        stale
+          ? 'bg-red-600/15 text-red-400 border-red-500/30 animate-pulse'
+          : 'bg-green-600/10 text-green-400 border-green-500/30'
+      }`}>
+      {stale ? `Stale ${Math.round(ageSec)}s` : `Live · ${Math.round(ageSec)}s`}
+    </span>
+  );
+}
+
+/* ── Multi-day backtest panel (P7) ───────────── */
+function MultiBacktestPanel({ data, onClose, onRerun, loading }) {
+  const s = data.summary || {};
+  const daily = data.daily || [];
+  const maxAbs = daily.reduce((m, d) => Math.max(m, Math.abs(d.pnl || 0)), 1);
+  return (
+    <div className="bg-surface-2 border border-purple-500/40 rounded-xl p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <FlaskConical className="w-4 h-4 text-purple-400" />
+          <span className="text-sm font-semibold text-purple-300">
+            Multi-day Backtest — last {data.covered_days}/{data.requested_days} sessions
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={onRerun} disabled={loading}
+            className="px-2 py-1 rounded-md text-xs font-medium bg-purple-600/20 text-purple-300 border border-purple-500/30 hover:bg-purple-600/30 disabled:opacity-50">
+            {loading ? 'Running…' : 'Re-run'}
+          </button>
+          <button onClick={onClose}
+            className="px-2 py-1 rounded-md text-xs font-medium bg-surface-3 text-gray-300 hover:bg-surface-4">
+            Close
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 text-xs">
+        <Stat label="Total Trades" value={s.total_trades ?? 0} />
+        <Stat label="Win rate" value={`${(s.win_rate ?? 0).toFixed(1)}%`}
+              color={(s.win_rate ?? 0) >= 50 ? 'text-green-400' : 'text-amber-400'} />
+        <Stat label="Total PnL" value={`₹${Number(s.total_pnl ?? 0).toFixed(2)}`}
+              color={(s.total_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'} />
+        <Stat label="Avg PnL/Day" value={`₹${Number(s.avg_pnl_per_day ?? 0).toFixed(2)}`}
+              color={(s.avg_pnl_per_day ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'} />
+        <Stat label="Max DD" value={`₹${Number(s.max_drawdown ?? 0).toFixed(2)}`}
+              color="text-red-400" />
+        <Stat label="Max Consec Loss" value={s.max_consecutive_losses ?? 0}
+              color="text-amber-400" />
+      </div>
+
+      {/* Daily PnL bar visualization */}
+      {daily.length > 0 && (
+        <div className="bg-surface-3 rounded-md p-2">
+          <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Daily PnL</p>
+          <div className="flex items-end gap-0.5 h-20">
+            {daily.map((d, i) => {
+              const h = Math.round((Math.abs(d.pnl) / maxAbs) * 70);
+              return (
+                <div key={i} className="flex-1 flex flex-col items-center justify-end" title={`${d.date} · ₹${Number(d.pnl).toFixed(2)} · ${d.trades} trades`}>
+                  <div
+                    style={{ height: `${h}px`, minHeight: d.pnl ? '2px' : '0px' }}
+                    className={`w-full ${d.pnl >= 0 ? 'bg-green-500/70' : 'bg-red-500/70'}`}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {daily.length > 0 && (
+        <div className="overflow-x-auto max-h-72">
+          <table className="w-full text-xs">
+            <thead className="text-gray-500 uppercase sticky top-0 bg-surface-2">
+              <tr>
+                <th className="text-left px-2 py-1">Date</th>
+                <th className="text-left px-2 py-1">Prev</th>
+                <th className="text-right px-2 py-1">Trades</th>
+                <th className="text-right px-2 py-1">W / L</th>
+                <th className="text-right px-2 py-1">PnL</th>
+              </tr>
+            </thead>
+            <tbody className="text-gray-300">
+              {daily.map((d, i) => (
+                <tr key={i} className="border-t border-surface-3">
+                  <td className="px-2 py-1 font-mono">{d.date}</td>
+                  <td className="px-2 py-1 font-mono text-gray-500">{d.prev_date}</td>
+                  <td className="px-2 py-1 text-right font-mono">{d.trades}</td>
+                  <td className="px-2 py-1 text-right font-mono text-gray-400">
+                    {d.wins} / {d.losses}
+                  </td>
+                  <td className={`px-2 py-1 text-right font-mono ${d.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    ₹{Number(d.pnl).toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="text-[11px] text-gray-500 italic">
+        ⓘ {data.note}
+      </p>
     </div>
   );
 }
