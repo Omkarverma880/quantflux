@@ -1,0 +1,616 @@
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import {
+  LineChart, Line, XAxis, YAxis, ResponsiveContainer,
+  ReferenceLine, Tooltip, CartesianGrid, ReferenceDot,
+} from 'recharts';
+import {
+  Play, Square, Settings2, ChevronDown, ChevronUp,
+  Shield, Target, TrendingUp, TrendingDown, Zap,
+  CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw, Info, FlaskConical,
+} from 'lucide-react';
+import { api } from '../api';
+
+const REFRESH_MS = 2_000;
+const SPOT_HISTORY_LIMIT = 120; // ~4 minutes of 2s ticks
+
+const STATE_STYLE = {
+  IDLE:             { bg: 'bg-gray-600/20',   text: 'text-gray-400',   label: 'Idle' },
+  BREAKOUT_WATCH:   { bg: 'bg-emerald-600/20', text: 'text-emerald-400', label: 'Breakout Watch' },
+  BREAKDOWN_WATCH:  { bg: 'bg-rose-600/20',    text: 'text-rose-400',   label: 'Breakdown Watch' },
+  ORDER_PLACED:     { bg: 'bg-yellow-600/20', text: 'text-yellow-400', label: 'Order Placed' },
+  POSITION_OPEN:    { bg: 'bg-blue-600/20',   text: 'text-blue-400',   label: 'Position Open' },
+  COMPLETED:        { bg: 'bg-green-600/20',  text: 'text-green-400',  label: 'Completed' },
+};
+
+function signalColor(sig) {
+  if (sig === 'BUY_CALL') return 'text-green-400';
+  if (sig === 'BUY_PUT') return 'text-red-400';
+  return 'text-yellow-400';
+}
+function signalBg(sig) {
+  if (sig === 'BUY_CALL') return 'bg-green-500/15 border-green-500/30';
+  if (sig === 'BUY_PUT') return 'bg-red-500/15 border-red-500/30';
+  return 'bg-yellow-500/15 border-yellow-500/30';
+}
+
+function Card({ title, icon: Icon, children, className = '', right = null }) {
+  return (
+    <div className={`bg-surface-2 border border-surface-3 rounded-xl p-4 ${className}`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 text-gray-400 text-xs font-medium uppercase tracking-wider">
+          {Icon && <Icon className="w-3.5 h-3.5" />}
+          {title}
+        </div>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ScenarioMiniChart({ title, data, high, low, accent, entryDot }) {
+  return (
+    <div className="bg-surface-2 border border-surface-3 rounded-xl p-3">
+      <h4 className={`text-sm font-semibold mb-2 ${accent}`}>{title}</h4>
+      <ResponsiveContainer width="100%" height={140}>
+        <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+          <XAxis dataKey="x" hide />
+          <YAxis domain={['auto', 'auto']} stroke="#475569" fontSize={10} width={45} />
+          <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 6 }} />
+          <ReferenceLine y={high} stroke="#ec4899" strokeDasharray="4 4" />
+          <ReferenceLine y={low} stroke="#f59e0b" strokeDasharray="4 4" />
+          <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} />
+          {entryDot && <ReferenceDot x={entryDot.x} y={entryDot.y} r={5} fill={entryDot.fill} stroke="#fff" />}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+const SCENARIO_SAMPLES = (high, low) => ([
+  {
+    title: 'Breakdown → Retest → PUT', accent: 'text-red-400',
+    data: [19350, 19280, 19300, 19270, 19220].map((y, i) => ({ x: i + 1, y })),
+    entry: { x: 3, y: 19300, fill: '#ef4444' },
+  },
+  {
+    title: 'Breakout → Retest → CALL', accent: 'text-green-400',
+    data: [19480, 19520, 19500, 19540, 19600].map((y, i) => ({ x: i + 1, y })),
+    entry: { x: 3, y: 19500, fill: '#22c55e' },
+  },
+  {
+    title: 'Fake Breakdown → CALL', accent: 'text-green-400',
+    data: [19320, 19280, 19320, 19400, 19480].map((y, i) => ({ x: i + 1, y })),
+    entry: { x: 3, y: 19320, fill: '#22c55e' },
+  },
+  {
+    title: 'Fake Breakout → PUT', accent: 'text-red-400',
+    data: [19480, 19520, 19480, 19420, 19380].map((y, i) => ({ x: i + 1, y })),
+    entry: { x: 3, y: 19480, fill: '#ef4444' },
+  },
+  {
+    title: 'Sideways → NO TRADE', accent: 'text-yellow-400',
+    data: [19380, 19420, 19390, 19410, 19400].map((y, i) => ({ x: i + 1, y })),
+    entry: null,
+  },
+]);
+
+export default function Strategy4() {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [docOpen, setDocOpen] = useState(false);
+  const [config, setConfig] = useState({
+    sl_points: 30,
+    target_points: 60,
+    lot_size: 75,
+    strike_interval: 50,
+    sl_proximity: 5,
+    target_proximity: 5,
+    retest_buffer: 8,
+    max_breakout_extension: 60,
+    max_trades_per_day: 1,
+    allow_reentry: false,
+    index_name: 'NIFTY',
+  });
+  const [starting, setStarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [spotHistory, setSpotHistory] = useState([]);
+  const [backtest, setBacktest] = useState(null);
+  const [btLoading, setBtLoading] = useState(false);
+  const [btDate, setBtDate] = useState('');
+  const tickRef = useRef(0);
+  const timerRef = useRef(null);
+
+  /* ── Data fetching ─────────────────────────── */
+  const fetchStatus = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await api.getStrategy4TradeStatus();
+      setStatus(res);
+      if (res?.config) setConfig((c) => ({ ...c, ...res.config }));
+      const s = res?.spot?.price ?? 0;
+      if (s > 0) {
+        tickRef.current += 1;
+        setSpotHistory((h) => {
+          const next = [...h, { x: tickRef.current, y: s }];
+          return next.slice(-SPOT_HISTORY_LIMIT);
+        });
+      }
+    } catch (e) {
+      console.error('s4 status', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const triggerCheck = useCallback(async () => {
+    try {
+      const res = await api.strategy4TradeCheck();
+      setStatus(res);
+      const s = res?.spot?.price ?? 0;
+      if (s > 0) {
+        tickRef.current += 1;
+        setSpotHistory((h) => {
+          const next = [...h, { x: tickRef.current, y: s }];
+          return next.slice(-SPOT_HISTORY_LIMIT);
+        });
+      }
+    } catch (e) {
+      console.error('s4 check', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStatus();
+    timerRef.current = setInterval(() => {
+      if (status?.is_active) triggerCheck();
+      else fetchStatus();
+    }, REFRESH_MS);
+    return () => clearInterval(timerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.is_active]);
+
+  /* ── Controls ──────────────────────────────── */
+  const start = async () => {
+    if (starting) return;
+    setStarting(true);
+    try { await api.strategy4TradeStart(config); await fetchStatus(); }
+    catch (e) { alert(e.message || 'Start failed'); }
+    finally { setStarting(false); }
+  };
+  const stop = async () => {
+    if (stopping) return;
+    setStopping(true);
+    try { await api.strategy4TradeStop(); await fetchStatus(); }
+    catch (e) { alert(e.message || 'Stop failed'); }
+    finally { setStopping(false); }
+  };
+  const saveConfig = async () => {
+    try { await api.strategy4TradeUpdateConfig(config); await fetchStatus(); }
+    catch (e) { alert(e.message || 'Config save failed'); }
+  };
+  const refreshLevels = async () => {
+    try { await api.getStrategy4Levels(); await fetchStatus(); }
+    catch (e) { alert(e.message || 'Levels refresh failed'); }
+  };
+  const runBacktest = async () => {
+    if (btLoading) return;
+    setBtLoading(true);
+    try {
+      const res = await api.strategy4TradeBacktest(btDate || null);
+      setBacktest(res);
+      if (res?.status === 'error') alert(res.message);
+    } catch (e) {
+      alert(e.message || 'Backtest failed');
+    } finally {
+      setBtLoading(false);
+    }
+  };
+
+  /* ── Derived ───────────────────────────────── */
+  const stateMeta = STATE_STYLE[status?.state] || STATE_STYLE.IDLE;
+  const high = status?.levels?.prev_high || 0;
+  const low = status?.levels?.prev_low || 0;
+  const spot = status?.spot?.price || 0;
+  const signal = status?.signal || 'NO_TRADE';
+  const scenario = status?.scenario || '—';
+
+  const entryDot = useMemo(() => {
+    if (!status?.trade?.fill_price || !status?.trade?.fill_price) return null;
+    // Entry marker at the latest tick, on the spot at entry time
+    return { x: tickRef.current, y: spot, fill: status.trade.signal_type === 'CE' ? '#22c55e' : '#ef4444' };
+  }, [status?.trade?.fill_price, spot]);
+
+  const samples = useMemo(() => SCENARIO_SAMPLES(high || 19500, low || 19300), [high, low]);
+
+  /* ── Render ────────────────────────────────── */
+  return (
+    <div className="p-4 sm:p-6 max-w-[1400px] mx-auto space-y-4 sm:space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-brand-400" />
+            Strategy 4 — Previous-Day 1st-Hour High/Low
+          </h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+            Yesterday 9:15-10:15 high/low → breakout / breakdown retest entries on NIFTY ATM
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`px-3 py-1.5 rounded-lg text-xs font-medium ${stateMeta.bg} ${stateMeta.text}`}>
+            {stateMeta.label}
+          </span>
+          {status?.is_active ? (
+            <button onClick={stop} disabled={stopping}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 disabled:opacity-50">
+              <Square className="w-3 h-3" /> Stop
+            </button>
+          ) : (
+            <button onClick={start} disabled={starting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-green-600/20 text-green-400 border border-green-500/30 hover:bg-green-600/30 disabled:opacity-50">
+              <Play className="w-3 h-3" /> Start
+            </button>
+          )}
+          <button onClick={refreshLevels}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-3 text-gray-300 hover:bg-surface-4">
+            <RefreshCw className="w-3 h-3" /> Refresh Levels
+          </button>
+          <button onClick={runBacktest} disabled={btLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-600/20 text-purple-300 border border-purple-500/30 hover:bg-purple-600/30 disabled:opacity-50">
+            <FlaskConical className="w-3 h-3" /> {btLoading ? 'Backtesting…' : 'Backtest'}
+          </button>
+          <button onClick={() => setConfigOpen((v) => !v)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-3 text-gray-300 hover:bg-surface-4">
+            <Settings2 className="w-3 h-3" /> Config {configOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+          <button onClick={() => setDocOpen((v) => !v)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-3 text-gray-300 hover:bg-surface-4">
+            <Info className="w-3 h-3" /> How it works
+          </button>
+        </div>
+      </div>
+
+      {docOpen && (
+        <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 text-sm text-gray-300 space-y-2">
+          <p>• <strong>Levels</strong>: Yesterday's 9:15-10:15 candle High = resistance; Low = support.</p>
+          <p>• <strong>Breakout Retest → CALL</strong>: spot breaks above prev_high, pulls back to it without losing it → BUY ATM CE.</p>
+          <p>• <strong>Breakdown Retest → PUT</strong>: spot breaks below prev_low, pulls back to it without reclaiming → BUY ATM PE.</p>
+          <p>• <strong>Fake Breakdown → CALL</strong>: spot dips below prev_low then reclaims above it → BUY ATM CE.</p>
+          <p>• <strong>Fake Breakout → PUT</strong>: spot pops above prev_high then loses it → BUY ATM PE.</p>
+          <p>• <strong>Sideways</strong>: spot inside range → NO TRADE.</p>
+          <p className="text-xs text-gray-500">Entries fire after 10:15. Auto square-off at 15:15. SL hit deactivates the strategy until restart.</p>
+        </div>
+      )}
+
+      {configOpen && (
+        <div className="bg-surface-2 border border-surface-3 rounded-xl p-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {[
+              ['sl_points', 'SL (option pts)'],
+              ['target_points', 'Target (option pts)'],
+              ['lot_size', 'Lot Size'],
+              ['strike_interval', 'Strike Interval'],
+              ['retest_buffer', 'Retest Buffer (idx pts)'],
+              ['max_breakout_extension', 'Max Extension (idx pts)'],
+              ['sl_proximity', 'SL Proximity'],
+              ['target_proximity', 'Target Proximity'],
+              ['max_trades_per_day', 'Max Trades / Day'],
+            ].map(([k, label]) => (
+              <label key={k} className="text-xs text-gray-400">
+                {label}
+                <input type="number"
+                  className="mt-1 w-full bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-white text-sm"
+                  value={config[k] ?? 0}
+                  onChange={(e) => setConfig((c) => ({ ...c, [k]: Number(e.target.value) }))} />
+              </label>
+            ))}
+            <label className="text-xs text-gray-400 flex items-center gap-2 mt-5">
+              <input type="checkbox" checked={config.allow_reentry}
+                onChange={(e) => setConfig((c) => ({ ...c, allow_reentry: e.target.checked }))} />
+              Allow re-entry after target
+            </label>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <button onClick={saveConfig}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-brand-600 hover:bg-brand-700 text-white">
+              Save Config
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Backtest Panel */}
+      {backtest && backtest.status === 'ok' && (
+        <BacktestPanel data={backtest} btDate={btDate} setBtDate={setBtDate} onRun={runBacktest} btLoading={btLoading} onClose={() => setBacktest(null)} />
+      )}
+
+      {/* Live Signal Panel */}
+      <div className={`rounded-xl border p-4 ${signalBg(signal)}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Zap className={`w-5 h-5 ${signalColor(signal)}`} />
+            <div>
+              <p className={`text-lg font-bold ${signalColor(signal)}`}>{signal.replace('_', ' ')}</p>
+              <p className="text-xs text-gray-400">{scenario}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-6 text-xs">
+            <div>
+              <p className="text-gray-500">Spot</p>
+              <p className="font-mono text-white text-sm">{spot ? spot.toFixed(2) : '—'}</p>
+            </div>
+            <div>
+              <p className="text-green-500">Prev High</p>
+              <p className="font-mono text-green-300 text-sm">{high ? high.toFixed(2) : '—'}</p>
+            </div>
+            <div>
+              <p className="text-red-500">Prev Low</p>
+              <p className="font-mono text-red-300 text-sm">{low ? low.toFixed(2) : '—'}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Source</p>
+              <p className="font-mono text-gray-300 text-sm">{status?.levels?.source_date || '—'}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Live Chart */}
+      <Card title="Live Spot vs Prev-Day Range" icon={TrendingUp}>
+        {high > 0 && low > 0 ? (
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={spotHistory} margin={{ top: 10, right: 20, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="x" stroke="#475569" fontSize={10} />
+              <YAxis domain={['auto', 'auto']} stroke="#475569" fontSize={10} width={60} />
+              <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 6 }} />
+              <ReferenceLine y={high} stroke="#22c55e" strokeDasharray="6 4" label={{ value: `High ${high.toFixed(2)}`, fill: '#22c55e', fontSize: 11, position: 'right' }} />
+              <ReferenceLine y={low} stroke="#ef4444" strokeDasharray="6 4" label={{ value: `Low ${low.toFixed(2)}`, fill: '#ef4444', fontSize: 11, position: 'right' }} />
+              <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
+              {entryDot && <ReferenceDot x={entryDot.x} y={entryDot.y} r={6} fill={entryDot.fill} stroke="#fff" />}
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-[320px] flex items-center justify-center text-gray-500 text-sm">
+            <AlertCircle className="w-4 h-4 mr-2" /> Levels not yet loaded — click "Refresh Levels".
+          </div>
+        )}
+      </Card>
+
+      {/* Trade & Orders */}
+      {status?.trade?.option_symbol && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card title="Entry" icon={CheckCircle2}>
+            <div className="space-y-1 text-sm">
+              <Row label="Option" value={status.trade.option_symbol} />
+              <Row label="Strike" value={status.trade.atm_strike} />
+              <Row label="Fill" value={status.trade.fill_price?.toFixed(2)} />
+              <Row label="Reason" value={status.trade.entry_reason || '—'} />
+            </div>
+          </Card>
+          <Card title="Risk" icon={Shield}>
+            <div className="space-y-1 text-sm">
+              <Row label="SL" value={status.trade.sl_price?.toFixed(2)} color="text-red-400" />
+              <Row label="Target" value={status.trade.target_price?.toFixed(2)} color="text-green-400" />
+              <Row label="LTP" value={status.trade.current_ltp?.toFixed(2)} />
+              <Row label="Unrealized PnL" value={`₹${(status.trade.unrealized_pnl ?? 0).toFixed(2)}`}
+                   color={(status.trade.unrealized_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'} />
+            </div>
+          </Card>
+          <Card title="Orders" icon={Target}>
+            <OrderRow label="Entry" order={status.orders?.entry} icon={CheckCircle2} color="text-blue-400" />
+            <OrderRow label="SL" order={status.orders?.sl} icon={Shield} color="text-red-400" />
+            <OrderRow label="Target" order={status.orders?.target} icon={Target} color="text-green-400" />
+          </Card>
+        </div>
+      )}
+
+      {/* Scenario gallery (educational) */}
+      <div>
+        <h3 className="text-sm font-medium text-gray-300 mb-2">Scenario Reference</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {samples.map((s) => (
+            <ScenarioMiniChart key={s.title}
+              title={s.title}
+              data={s.data}
+              high={high || 19500}
+              low={low || 19300}
+              accent={s.accent}
+              entryDot={s.entry} />
+          ))}
+        </div>
+      </div>
+
+      {/* Trade log */}
+      {status?.trade_log?.length > 0 && (
+        <Card title="Today's Trade Log" icon={Clock}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-gray-500 uppercase">
+                <tr>
+                  <th className="text-left px-2 py-1">Time</th>
+                  <th className="text-left px-2 py-1">Scenario</th>
+                  <th className="text-left px-2 py-1">Option</th>
+                  <th className="text-right px-2 py-1">Entry</th>
+                  <th className="text-right px-2 py-1">Exit</th>
+                  <th className="text-left px-2 py-1">Result</th>
+                  <th className="text-right px-2 py-1">PnL</th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-300">
+                {status.trade_log.slice().reverse().map((t, i) => (
+                  <tr key={i} className="border-t border-surface-3">
+                    <td className="px-2 py-1">{t.exit_time}</td>
+                    <td className="px-2 py-1">{t.scenario}</td>
+                    <td className="px-2 py-1 font-mono">{t.option}</td>
+                    <td className="px-2 py-1 text-right font-mono">{Number(t.entry_price).toFixed(2)}</td>
+                    <td className="px-2 py-1 text-right font-mono">{Number(t.exit_price).toFixed(2)}</td>
+                    <td className={`px-2 py-1 ${t.exit_type === 'TARGET_HIT' ? 'text-green-400' : t.exit_type === 'SL_HIT' ? 'text-red-400' : 'text-yellow-400'}`}>
+                      {t.exit_type}
+                    </td>
+                    <td className={`px-2 py-1 text-right font-mono ${t.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      ₹{Number(t.pnl).toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function Row({ label, value, color = 'text-white' }) {
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <span className="text-gray-500">{label}</span>
+      <span className={`font-mono ${color}`}>{value ?? '—'}</span>
+    </div>
+  );
+}
+
+function OrderRow({ label, order, icon: Icon, color }) {
+  if (!order) return <div className="text-xs text-gray-600 py-1">{label}: —</div>;
+  const st = order.status || '—';
+  const isFilled = st === 'COMPLETE';
+  const isFailed = st === 'CANCELLED' || st === 'REJECTED';
+  const isShadow = st === 'SHADOW';
+  return (
+    <div className="flex items-center justify-between py-1.5 border-b border-surface-3 last:border-0">
+      <div className="flex items-center gap-2">
+        <Icon className={`w-4 h-4 ${color}`} />
+        <span className="text-sm text-gray-300">{label}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-mono text-white">{order.price?.toFixed?.(2) ?? '—'}</span>
+        {isFilled && <CheckCircle2 className="w-4 h-4 text-green-400" />}
+        {isFailed && <XCircle className="w-4 h-4 text-red-400" />}
+        {isShadow && <Shield className="w-4 h-4 text-purple-400" />}
+        {!isFilled && !isFailed && !isShadow && <Clock className="w-4 h-4 text-yellow-400 animate-pulse" />}
+        <span className={`text-xs ${isFilled ? 'text-green-400' : isFailed ? 'text-red-400' : isShadow ? 'text-purple-400' : 'text-yellow-400'}`}>
+          {isShadow ? 'HIDDEN' : st}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
+  const series = (data.spot_series || []).map((s, i) => ({
+    i, t: s.t, c: s.c,
+  }));
+  const entries = (data.events || []).filter((e) => e.kind === 'ENTRY');
+  const exits = (data.events || []).filter((e) => e.kind === 'SL' || e.kind === 'TGT' || e.kind === 'EXIT');
+  const flips = (data.events || []).filter((e) => e.kind === 'FLIP');
+  // Map time → close for marker placement
+  const timeToClose = new Map(series.map((p) => [p.t, p.c]));
+  const totalPnl = data.summary?.total_pnl ?? 0;
+
+  return (
+    <div className="bg-surface-2 border border-purple-500/40 rounded-xl p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <FlaskConical className="w-4 h-4 text-purple-400" />
+          <span className="text-sm font-semibold text-purple-300">
+            Backtest — {data.sim_date} (using prev-day {data.prev_date})
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="date" value={btDate} onChange={(e) => setBtDate(e.target.value)}
+            className="bg-surface-3 border border-surface-4 rounded-md px-2 py-1 text-xs text-white" />
+          <button onClick={onRun} disabled={btLoading}
+            className="px-2 py-1 rounded-md text-xs font-medium bg-purple-600/20 text-purple-300 border border-purple-500/30 hover:bg-purple-600/30 disabled:opacity-50">
+            {btLoading ? 'Running…' : 'Re-run'}
+          </button>
+          <button onClick={onClose}
+            className="px-2 py-1 rounded-md text-xs font-medium bg-surface-3 text-gray-300 hover:bg-surface-4">
+            Close
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+        <Stat label="Prev High" value={data.prev_high?.toFixed(2)} color="text-green-400" />
+        <Stat label="Prev Low" value={data.prev_low?.toFixed(2)} color="text-red-400" />
+        <Stat label="Trades" value={data.summary?.total_trades ?? 0} />
+        <Stat label="Wins / Losses" value={`${data.summary?.wins ?? 0} / ${data.summary?.losses ?? 0}`} />
+        <Stat label="Total PnL"
+              value={`₹${totalPnl.toFixed(2)}`}
+              color={totalPnl >= 0 ? 'text-green-400' : 'text-red-400'} />
+      </div>
+
+      <ResponsiveContainer width="100%" height={260}>
+        <LineChart data={series} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+          <XAxis dataKey="t" stroke="#475569" fontSize={10} interval={Math.floor(series.length / 8) || 0} />
+          <YAxis domain={['auto', 'auto']} stroke="#475569" fontSize={10} width={60} />
+          <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 6 }} />
+          <ReferenceLine y={data.prev_high} stroke="#22c55e" strokeDasharray="4 4" />
+          <ReferenceLine y={data.prev_low} stroke="#ef4444" strokeDasharray="4 4" />
+          <Line type="monotone" dataKey="c" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
+          {entries.map((e, i) => (
+            <ReferenceDot key={`en${i}`} x={e.t} y={timeToClose.get(e.t)}
+              r={5} fill={e.label.includes('CALL') ? '#22c55e' : '#ef4444'} stroke="#fff" />
+          ))}
+          {exits.map((e, i) => (
+            <ReferenceDot key={`ex${i}`} x={e.t} y={timeToClose.get(e.t)}
+              r={4} fill={e.kind === 'TGT' ? '#22c55e' : e.kind === 'SL' ? '#ef4444' : '#f59e0b'} stroke="#000" />
+          ))}
+          {flips.map((e, i) => (
+            <ReferenceDot key={`fl${i}`} x={e.t} y={timeToClose.get(e.t)} r={3} fill="#a855f7" stroke="#fff" />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+
+      {data.trades?.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-gray-500 uppercase">
+              <tr>
+                <th className="text-left px-2 py-1">Time</th>
+                <th className="text-left px-2 py-1">Side</th>
+                <th className="text-right px-2 py-1">Entry</th>
+                <th className="text-right px-2 py-1">Exit</th>
+                <th className="text-left px-2 py-1">Result</th>
+                <th className="text-right px-2 py-1">PnL</th>
+              </tr>
+            </thead>
+            <tbody className="text-gray-300">
+              {data.trades.map((t, i) => (
+                <tr key={i} className="border-t border-surface-3">
+                  <td className="px-2 py-1">{t.time}</td>
+                  <td className={`px-2 py-1 ${t.side === 'CE' ? 'text-green-400' : 'text-red-400'}`}>{t.side}</td>
+                  <td className="px-2 py-1 text-right font-mono">{Number(t.entry).toFixed(2)}</td>
+                  <td className="px-2 py-1 text-right font-mono">{Number(t.exit).toFixed(2)}</td>
+                  <td className={`px-2 py-1 ${t.exit_type === 'TARGET_HIT' ? 'text-green-400' : t.exit_type === 'SL_HIT' ? 'text-red-400' : 'text-yellow-400'}`}>
+                    {t.exit_type}
+                  </td>
+                  <td className={`px-2 py-1 text-right font-mono ${t.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    ₹{Number(t.pnl).toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="text-[11px] text-gray-500 italic">
+        ⓘ {data.note}
+      </p>
+    </div>
+  );
+}
+
+function Stat({ label, value, color = 'text-white' }) {
+  return (
+    <div className="bg-surface-3 rounded-md px-2 py-1.5">
+      <p className="text-gray-500 text-[10px] uppercase tracking-wider">{label}</p>
+      <p className={`font-mono ${color}`}>{value ?? '—'}</p>
+    </div>
+  );
+}

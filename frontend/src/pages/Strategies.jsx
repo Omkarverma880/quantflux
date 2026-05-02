@@ -19,6 +19,7 @@ const STRATEGY_PAGES = {
   strategy1_gann_cv: '/strategy1-trade',
   strategy2_option_sell: '/strategy2-trade',
   strategy3_cv_vwap_ema_adx: '/strategy3-trade',
+  strategy4_high_low_retest: '/strategy4-trade',
 };
 
 export default function Strategies() {

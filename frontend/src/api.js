@@ -112,6 +112,23 @@ export const api = {
   strategy3TradeHistory: () =>
     request('/strategy3-trade/history'),
 
+  // Strategy 4 — Previous-Day First-Hour High/Low Retest
+  getStrategy4TradeStatus: () => request('/strategy4-trade/status'),
+  getStrategy4Levels: () => request('/strategy4-trade/levels'),
+  strategy4TradeStart: (config) =>
+    request('/strategy4-trade/start', { method: 'POST', body: JSON.stringify(config) }),
+  strategy4TradeStop: () => request('/strategy4-trade/stop', { method: 'POST' }),
+  strategy4TradeCheck: () => request('/strategy4-trade/check', { method: 'POST' }),
+  strategy4TradeUpdateConfig: (config) =>
+    request('/strategy4-trade/config', { method: 'PUT', body: JSON.stringify(config) }),
+  strategy4TradeHistory: () =>
+    request('/strategy4-trade/history'),
+  strategy4TradeBacktest: (date) =>
+    request('/strategy4-trade/backtest', {
+      method: 'POST',
+      body: JSON.stringify(date ? { date } : {}),
+    }),
+
   // Settings
   getSettings: () => request('/settings/'),
   updateSettings: (data) =>

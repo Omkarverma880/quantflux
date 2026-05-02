@@ -12,6 +12,7 @@ import CumulativeVolume from './pages/CumulativeVolume';
 import Strategy1 from './pages/Strategy1';
 import Strategy2 from './pages/Strategy2';
 import Strategy3 from './pages/Strategy3';
+import Strategy4 from './pages/Strategy4';
 import TradeHistory from './pages/TradeHistory';
 import ManualTrading from './pages/ManualTrading';
 
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="strategy1-trade" element={<Strategy1 />} />
           <Route path="strategy2-trade" element={<Strategy2 />} />
           <Route path="strategy3-trade" element={<Strategy3 />} />
+          <Route path="strategy4-trade" element={<Strategy4 />} />
           <Route path="strategies" element={<Strategies />} />
           <Route path="orders" element={<Orders />} />
           <Route path="settings" element={<Settings />} />

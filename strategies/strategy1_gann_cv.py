@@ -322,7 +322,7 @@ class Strategy1GannCV:
             if self.state == State.IDLE:
                 self._check_entry_signal(cv_data, spot_price)
             elif self.state == State.ORDER_PLACED:
-                self._check_entry_fill()
+                self._check_entry_fill(cv_data)
             elif self.state == State.POSITION_OPEN:
                 # Auto square-off at 3:15 PM
                 now_time = datetime.now().time()
@@ -465,10 +465,49 @@ class Strategy1GannCV:
 
     # ── Fill check ─────────────────────────────────
 
-    def _check_entry_fill(self):
+    def _check_entry_fill(self, cv_data: dict | None = None):
         if not self.entry_order:
             self.state = State.IDLE
             return
+
+        # ── Trend guard: if CV has flipped against the pending order's
+        # direction beyond the threshold, cancel it and return to IDLE so
+        # the next tick can fire the opposite direction. This makes the
+        # strategy "dynamic" — a CE order is not held while the market
+        # turns bearish.
+        if cv_data is not None and self.signal_type:
+            cv_now = cv_data.get("last_cumulative_volume", 0)
+            cv_flipped = (
+                (self.signal_type == "CE" and cv_now < -self.cv_threshold)
+                or (self.signal_type == "PE" and cv_now > self.cv_threshold)
+            )
+            if cv_flipped:
+                logger.info(
+                    f"CV reversed while waiting for fill (CV={cv_now:,}) — "
+                    f"cancelling pending {self.signal_type} entry"
+                )
+                self._cancel_order(self.entry_order)
+                self.entry_order["status"] = "CANCELLED"
+                self.state = State.IDLE
+                self.signal_type = None
+                self._save_state()
+                return
+
+        # ── Order staleness: cancel if unfilled for >120 seconds ──
+        placed_at = self.entry_order.get("timestamp")
+        if placed_at:
+            try:
+                elapsed = (datetime.now() - datetime.fromisoformat(placed_at)).total_seconds()
+                if elapsed > 120 and self.entry_order.get("status") != "COMPLETE":
+                    logger.info(f"Entry order stale ({elapsed:.0f}s) — cancelling")
+                    self._cancel_order(self.entry_order)
+                    self.entry_order["status"] = "CANCELLED"
+                    self.state = State.IDLE
+                    self.signal_type = None
+                    self._save_state()
+                    return
+            except Exception:
+                pass
 
         is_paper = self.entry_order.get("is_paper", False)
 

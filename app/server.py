@@ -26,6 +26,7 @@ from app.routes.cumulative_volume_routes import router as cv_router
 from app.routes.strategy1_routes import router as s1_router
 from app.routes.strategy2_routes import router as s2_router
 from app.routes.strategy3_routes import router as s3_router
+from app.routes.strategy4_routes import router as s4_router
 from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
 from core.logger import get_logger
@@ -74,8 +75,9 @@ async def _strategy_background_loop():
                 from app.routes.strategy1_routes import _get_strategy as _get_s1
                 from app.routes.strategy2_routes import _get_strategy as _get_s2
                 from app.routes.strategy3_routes import _get_strategy as _get_s3
+                from app.routes.strategy4_routes import _get_strategy as _get_s4
                 payload = {}
-                for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3)]:
+                for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3), ("s4", _get_s4)]:
                     strat = getter(user_id=active_user_ids[0])
                     payload[label] = {
                         "state": strat.state.value if hasattr(strat.state, "value") else str(strat.state),
@@ -119,6 +121,7 @@ def _run_strategies_for_user(uid: int):
     from app.routes.strategy1_routes import _get_strategy as _get_s1, _get_cv_data
     from app.routes.strategy2_routes import _get_strategy as _get_s2
     from app.routes.strategy3_routes import _get_strategy as _get_s3
+    from app.routes.strategy4_routes import _get_strategy as _get_s4, _get_spot_price as _get_s4_spot
 
     db = get_db_session()
     try:
@@ -150,6 +153,11 @@ def _run_strategies_for_user(uid: int):
                 cv_data = _get_cv_data(broker, authenticated)
                 spot_price = cv_data.get("spot_price", 0)
             s3.check(cv_data, spot_price)
+
+        s4 = _get_s4(broker, uid)
+        if s4.is_active:
+            s4_spot = _get_s4_spot(broker, authenticated)
+            s4.check(s4_spot)
     finally:
         db.close()
 
@@ -189,6 +197,22 @@ async def lifespan(app: FastAPI):
 
     # Start background loop (it self-delays 30s before first run)
     task = asyncio.create_task(_strategy_background_loop())
+
+    # Resume the manual-trading SL/Target monitor for any persisted trades.
+    # Without this, monitored positions are unprotected after a server
+    # restart until the next /monitor/status poll — unacceptable on Railway.
+    try:
+        from app.routes.manual_trading_routes import _monitor as _mt_monitor
+        if _mt_monitor._trades:
+            _mt_monitor._ensure_running()
+            print(
+                f"[LIFESPAN] Manual SL/Target monitor resumed for "
+                f"{len(_mt_monitor._trades)} persisted trade(s).",
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"[LIFESPAN] Manual monitor resume failed: {exc}", flush=True)
+
     print("[LIFESPAN] Server ready.", flush=True)
     yield
     task.cancel()
@@ -233,6 +257,7 @@ app.include_router(cv_router, prefix="/api/strategy1", tags=["Strategy1-Cumulati
 app.include_router(s1_router, prefix="/api/strategy1-trade", tags=["Strategy1-GannCV"])
 app.include_router(s2_router, prefix="/api/strategy2-trade", tags=["Strategy2-OptionSell"])
 app.include_router(s3_router, prefix="/api/strategy3-trade", tags=["Strategy3-CvVwapEmaAdx"])
+app.include_router(s4_router, prefix="/api/strategy4-trade", tags=["Strategy4-HighLowRetest"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 
