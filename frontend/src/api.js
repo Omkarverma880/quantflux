@@ -134,6 +134,28 @@ export const api = {
       body: JSON.stringify({ days: days || 30 }),
     }),
 
+  // Strategy 5 — Dynamic Gann Level Range Retest
+  getStrategy5TradeStatus: () => request('/strategy5-trade/status'),
+  getStrategy5Levels: () => request('/strategy5-trade/levels'),
+  strategy5TradeStart: (config) =>
+    request('/strategy5-trade/start', { method: 'POST', body: JSON.stringify(config) }),
+  strategy5TradeStop: () => request('/strategy5-trade/stop', { method: 'POST' }),
+  strategy5TradeCheck: () => request('/strategy5-trade/check', { method: 'POST' }),
+  strategy5TradeUpdateConfig: (config) =>
+    request('/strategy5-trade/config', { method: 'PUT', body: JSON.stringify(config) }),
+  strategy5TradeHistory: () =>
+    request('/strategy5-trade/history'),
+  strategy5TradeBacktest: (date) =>
+    request('/strategy5-trade/backtest', {
+      method: 'POST',
+      body: JSON.stringify(date ? { date } : {}),
+    }),
+  strategy5TradeBacktestMulti: (days) =>
+    request('/strategy5-trade/backtest-multi', {
+      method: 'POST',
+      body: JSON.stringify({ days: days || 30 }),
+    }),
+
   // Settings
   getSettings: () => request('/settings/'),
   updateSettings: (data) =>

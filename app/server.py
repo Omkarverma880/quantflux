@@ -27,6 +27,7 @@ from app.routes.strategy1_routes import router as s1_router
 from app.routes.strategy2_routes import router as s2_router
 from app.routes.strategy3_routes import router as s3_router
 from app.routes.strategy4_routes import router as s4_router
+from app.routes.strategy5_routes import router as s5_router
 from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
 from core.logger import get_logger
@@ -76,8 +77,9 @@ async def _strategy_background_loop():
                 from app.routes.strategy2_routes import _get_strategy as _get_s2
                 from app.routes.strategy3_routes import _get_strategy as _get_s3
                 from app.routes.strategy4_routes import _get_strategy as _get_s4
+                from app.routes.strategy5_routes import _get_strategy as _get_s5
                 payload = {}
-                for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3), ("s4", _get_s4)]:
+                for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3), ("s4", _get_s4), ("s5", _get_s5)]:
                     strat = getter(user_id=active_user_ids[0])
                     payload[label] = {
                         "state": strat.state.value if hasattr(strat.state, "value") else str(strat.state),
@@ -122,6 +124,7 @@ def _run_strategies_for_user(uid: int):
     from app.routes.strategy2_routes import _get_strategy as _get_s2
     from app.routes.strategy3_routes import _get_strategy as _get_s3
     from app.routes.strategy4_routes import _get_strategy as _get_s4, _get_spot_price as _get_s4_spot
+    from app.routes.strategy5_routes import _get_strategy as _get_s5, _get_spot_price as _get_s5_spot
 
     db = get_db_session()
     try:
@@ -158,6 +161,11 @@ def _run_strategies_for_user(uid: int):
         if s4.is_active:
             s4_spot = _get_s4_spot(broker, authenticated)
             s4.check(s4_spot)
+
+        s5 = _get_s5(broker, uid)
+        if s5.is_active:
+            s5_spot = _get_s5_spot(broker, authenticated)
+            s5.check(s5_spot)
     finally:
         db.close()
 
@@ -258,6 +266,7 @@ app.include_router(s1_router, prefix="/api/strategy1-trade", tags=["Strategy1-Ga
 app.include_router(s2_router, prefix="/api/strategy2-trade", tags=["Strategy2-OptionSell"])
 app.include_router(s3_router, prefix="/api/strategy3-trade", tags=["Strategy3-CvVwapEmaAdx"])
 app.include_router(s4_router, prefix="/api/strategy4-trade", tags=["Strategy4-HighLowRetest"])
+app.include_router(s5_router, prefix="/api/strategy5-trade", tags=["Strategy5-GannRange"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 
