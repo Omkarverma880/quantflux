@@ -95,6 +95,10 @@ class Strategy5GannRange:
         self.max_trades_per_day = int(config.get("max_trades_per_day", 1))
         # Re-entry: continue scanning after one trade closes (within the cap)
         self.allow_reentry = bool(config.get("allow_reentry", False))
+        # When True (default for S5) only the safer trend-confirmation
+        # retest entries fire (Breakout→Retest→CALL, Breakdown→Retest→PUT).
+        # Fake-breakout / fake-breakdown reversal entries are skipped.
+        self.retest_only = bool(config.get("retest_only", True))
         # ITM offset (in index points) added to strike. For BUY CALL the
         # strike used is (ATM − itm_offset); for BUY PUT it is
         # (ATM + itm_offset). Use 0 to trade ATM.
@@ -237,6 +241,7 @@ class Strategy5GannRange:
         self.max_breakout_extension = float(config.get("max_breakout_extension", self.max_breakout_extension))
         self.max_trades_per_day = int(config.get("max_trades_per_day", self.max_trades_per_day))
         self.allow_reentry = bool(config.get("allow_reentry", self.allow_reentry))
+        self.retest_only = bool(config.get("retest_only", self.retest_only))
         self.itm_offset = int(config.get("itm_offset", self.itm_offset))
         self.gann_target = bool(config.get("gann_target", self.gann_target))
         self.gann_count = max(1, int(config.get("gann_count", self.gann_count)))
@@ -554,7 +559,8 @@ class Strategy5GannRange:
                 self.spot_extreme = self.spot_price
 
             # Fake breakout: price came back below gann_upper → BUY PUT
-            if self.spot_price < self.gann_upper - self.retest_buffer / 2:
+            # (skipped when retest_only is enabled)
+            if not self.retest_only and self.spot_price < self.gann_upper - self.retest_buffer / 2:
                 self.scenario = "Fake Breakout → PUT"
                 self.signal = "BUY_PUT"
                 self.entry_reason = (
@@ -594,7 +600,8 @@ class Strategy5GannRange:
                 self.spot_extreme = self.spot_price
 
             # Fake breakdown: price reclaimed above gann_lower → BUY CALL
-            if self.spot_price > self.gann_lower + self.retest_buffer / 2:
+            # (skipped when retest_only is enabled)
+            if not self.retest_only and self.spot_price > self.gann_lower + self.retest_buffer / 2:
                 self.scenario = "Fake Breakdown → CALL"
                 self.signal = "BUY_CALL"
                 self.entry_reason = (
@@ -1250,6 +1257,7 @@ class Strategy5GannRange:
         tgt_pts = float(self.target_points)
         max_trades = int(self.max_trades_per_day)
         itm_offset = int(self.itm_offset)
+        retest_only = bool(self.retest_only)
         lvls = self.gann_levels
 
         st = "IDLE"
@@ -1434,7 +1442,7 @@ class Strategy5GannRange:
             if st == "BREAKOUT_WATCH":
                 if close > extreme:
                     extreme = close
-                if close < locked_upper - retest_buf / 2:
+                if not retest_only and close < locked_upper - retest_buf / 2:
                     side = "PE"; entry_spot = close; st = "POSITION_OPEN"
                     events.append({"t": t_str, "kind": "ENTRY", "label": "Fake Breakout → PUT"})
                     continue
@@ -1451,7 +1459,7 @@ class Strategy5GannRange:
             elif st == "BREAKDOWN_WATCH":
                 if close < extreme:
                     extreme = close
-                if close > locked_lower + retest_buf / 2:
+                if not retest_only and close > locked_lower + retest_buf / 2:
                     side = "CE"; entry_spot = close; st = "POSITION_OPEN"
                     events.append({"t": t_str, "kind": "ENTRY", "label": "Fake Breakdown → CALL"})
                     continue
@@ -1546,6 +1554,7 @@ class Strategy5GannRange:
                 "max_breakout_extension": self.max_breakout_extension,
                 "max_trades_per_day": self.max_trades_per_day,
                 "allow_reentry": self.allow_reentry,
+                "retest_only": self.retest_only,
                 "itm_offset": self.itm_offset,
                 "gann_target": self.gann_target,
                 "gann_count": self.gann_count,
@@ -1658,6 +1667,7 @@ class Strategy5GannRange:
                 "max_breakout_extension": self.max_breakout_extension,
                 "max_trades_per_day": self.max_trades_per_day,
                 "allow_reentry": self.allow_reentry,
+                "retest_only": self.retest_only,
                 "itm_offset": self.itm_offset,
                 "gann_target": self.gann_target,
                 "gann_count": self.gann_count,

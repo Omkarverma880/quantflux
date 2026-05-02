@@ -113,6 +113,7 @@ export default function Strategy5() {
     max_breakout_extension: 60,
     max_trades_per_day: 1,
     allow_reentry: false,
+    retest_only: true,
     itm_offset: 100,
     max_entry_slippage: 8,
     index_name: 'NIFTY',
@@ -362,6 +363,11 @@ export default function Strategy5() {
               <input type="checkbox" checked={!!config.allow_reentry}
                 onChange={(e) => setConfig((c) => ({ ...c, allow_reentry: e.target.checked }))} />
               Allow re-entry after target
+            </label>
+            <label className="text-xs text-gray-400 flex items-center gap-2 mt-5">
+              <input type="checkbox" checked={config.retest_only !== false}
+                onChange={(e) => setConfig((c) => ({ ...c, retest_only: e.target.checked }))} />
+              Retest entries only (skip fake-outs)
             </label>
           </div>
           <div className="mt-3 flex items-center justify-between">
