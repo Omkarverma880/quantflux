@@ -104,7 +104,8 @@ export default function Strategy4() {
   const [config, setConfig] = useState({
     sl_points: 30,
     target_points: 60,
-    lot_size: 75,
+    lot_size: 65,
+    lots: 1,
     strike_interval: 50,
     sl_proximity: 5,
     target_proximity: 5,
@@ -329,7 +330,7 @@ export default function Strategy4() {
             {[
               ['sl_points', 'SL (option pts)'],
               ['target_points', 'Target (option pts)'],
-              ['lot_size', 'Lot Size'],
+              ['lots', 'Lots'],
               ['strike_interval', 'Strike Interval'],
               ['retest_buffer', 'Retest Buffer (idx pts)'],
               ['max_breakout_extension', 'Max Extension (idx pts)'],
@@ -355,7 +356,7 @@ export default function Strategy4() {
           </div>
           <div className="mt-3 flex items-center justify-between">
             <p className="text-[11px] text-gray-500">
-              Tip: Re-entry needs <span className="text-gray-300">Max Trades / Day</span> &gt; 1 to take effect.
+              Tip: Re-entry needs <span className="text-gray-300">Max Trades / Day</span> &gt; 1 to take effect. NIFTY lot size = <span className="text-gray-300">{config.lot_size || 65}</span>; order qty = <span className="text-gray-300">{(Number(config.lots) || 1) * (Number(config.lot_size) || 65)}</span>.
             </p>
             <button onClick={saveConfig}
               className="px-3 py-1.5 rounded-lg text-xs font-medium bg-brand-600 hover:bg-brand-700 text-white">

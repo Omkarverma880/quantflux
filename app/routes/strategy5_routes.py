@@ -28,7 +28,8 @@ CONFIG_FILE = settings.DATA_DIR / "strategy_configs" / "strategy5_gann_range.jso
 class Strategy5Config(BaseModel):
     sl_points: float = 30
     target_points: float = 60
-    lot_size: int = 75
+    lot_size: int = 65
+    lots: int = 1
     strike_interval: int = 50
     sl_proximity: float = 5
     target_proximity: float = 5

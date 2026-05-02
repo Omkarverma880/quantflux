@@ -104,7 +104,8 @@ export default function Strategy5() {
   const [config, setConfig] = useState({
     sl_points: 30,
     target_points: 60,
-    lot_size: 75,
+    lot_size: 65,
+    lots: 1,
     strike_interval: 50,
     sl_proximity: 5,
     target_proximity: 5,
@@ -177,11 +178,21 @@ export default function Strategy5() {
 
   useEffect(() => {
     fetchStatus();
+    // Force-fetch the active Gann pair immediately on mount so the user
+    // always sees the dynamic levels — even before they click Start.
+    api.getStrategy5Levels().then(() => fetchStatus()).catch(() => {});
     timerRef.current = setInterval(() => {
       if (status?.is_active) triggerCheck();
       else fetchStatus();
     }, REFRESH_MS);
-    return () => clearInterval(timerRef.current);
+    // Slow Gann-pair refresh while idle (every 15s) so the floating range
+    // tracks live spot even when the strategy is not active.
+    const lvlTimer = setInterval(() => {
+      if (!status?.is_active) {
+        api.getStrategy5Levels().catch(() => {});
+      }
+    }, 15_000);
+    return () => { clearInterval(timerRef.current); clearInterval(lvlTimer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status?.is_active]);
 
@@ -329,7 +340,7 @@ export default function Strategy5() {
             {[
               ['sl_points', 'SL (option pts)'],
               ['target_points', 'Target (option pts)'],
-              ['lot_size', 'Lot Size'],
+              ['lots', 'Lots'],
               ['strike_interval', 'Strike Interval'],
               ['retest_buffer', 'Retest Buffer (idx pts)'],
               ['max_breakout_extension', 'Max Extension (idx pts)'],
@@ -355,7 +366,7 @@ export default function Strategy5() {
           </div>
           <div className="mt-3 flex items-center justify-between">
             <p className="text-[11px] text-gray-500">
-              Tip: Re-entry needs <span className="text-gray-300">Max Trades / Day</span> &gt; 1 to take effect.
+              Tip: Re-entry needs <span className="text-gray-300">Max Trades / Day</span> &gt; 1 to take effect. NIFTY lot size = <span className="text-gray-300">{config.lot_size || 65}</span>; order qty = <span className="text-gray-300">{(Number(config.lots) || 1) * (Number(config.lot_size) || 65)}</span>.
             </p>
             <button onClick={saveConfig}
               className="px-3 py-1.5 rounded-lg text-xs font-medium bg-brand-600 hover:bg-brand-700 text-white">
@@ -417,8 +428,8 @@ export default function Strategy5() {
               <XAxis dataKey="x" stroke="#475569" fontSize={10} />
               <YAxis domain={['auto', 'auto']} stroke="#475569" fontSize={10} width={60} />
               <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 6 }} />
-              <ReferenceLine y={high} stroke="#22c55e" strokeDasharray="6 4" label={{ value: `High ${high.toFixed(2)}`, fill: '#22c55e', fontSize: 11, position: 'right' }} />
-              <ReferenceLine y={low} stroke="#ef4444" strokeDasharray="6 4" label={{ value: `Low ${low.toFixed(2)}`, fill: '#ef4444', fontSize: 11, position: 'right' }} />
+              <ReferenceLine y={high} stroke="#22c55e" strokeDasharray="6 4" label={{ value: `Gann Up ${high.toFixed(2)}`, fill: '#22c55e', fontSize: 11, position: 'right' }} />
+              <ReferenceLine y={low} stroke="#ef4444" strokeDasharray="6 4" label={{ value: `Gann Lo ${low.toFixed(2)}`, fill: '#ef4444', fontSize: 11, position: 'right' }} />
               <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
               {entryDot && <ReferenceDot x={entryDot.x} y={entryDot.y} r={6} fill={entryDot.fill} stroke="#fff" />}
             </LineChart>
@@ -552,22 +563,25 @@ function OrderRow({ label, order, icon: Icon, color }) {
 }
 
 function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
-  const series = (data.spot_series || []).map((s, i) => ({
-    i, t: s.t, c: s.c,
-  }));
+  // Merge spot + dynamic Gann band by time so we can plot 3 lines on one chart.
+  const bandByTime = new Map((data.gann_band_series || []).map((b) => [b.t, b]));
+  const series = (data.spot_series || []).map((s, i) => {
+    const b = bandByTime.get(s.t);
+    return {
+      i, t: s.t, c: s.c,
+      up: b ? b.up : null,
+      lo: b ? b.lo : null,
+      locked: b ? b.locked : false,
+    };
+  });
   const entries = (data.events || []).filter((e) => e.kind === 'ENTRY');
   const exits = (data.events || []).filter((e) => e.kind === 'SL' || e.kind === 'TGT' || e.kind === 'EXIT');
   const flips = (data.events || []).filter((e) => e.kind === 'FLIP');
-  // Map time → close for marker placement
   const timeToClose = new Map(series.map((p) => [p.t, p.c]));
   const totalPnl = data.summary?.total_pnl ?? 0;
-  // Compute Y domain that always includes gann_upper & gann_lower so the
-  // dotted reference lines are visible even when price never approaches them.
-  const yValues = [
-    ...series.map((p) => p.c),
-    ...(Number.isFinite(data.gann_upper) ? [data.gann_upper] : []),
-    ...(Number.isFinite(data.gann_lower) ? [data.gann_lower] : []),
-  ].filter((v) => Number.isFinite(v));
+  // Y domain spans price + every Gann level the band ever touched, so the
+  // dynamic dotted bands stay visible even when price barely approaches them.
+  const yValues = series.flatMap((p) => [p.c, p.up, p.lo]).filter((v) => Number.isFinite(v));
   const yLo = yValues.length ? Math.min(...yValues) - 20 : 'auto';
   const yHi = yValues.length ? Math.max(...yValues) + 20 : 'auto';
 
@@ -600,8 +614,12 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
-        <Stat label="Gann Upper" value={data.gann_upper?.toFixed(2)} color="text-green-400" />
-        <Stat label="Gann Lower" value={data.gann_lower?.toFixed(2)} color="text-red-400" />
+        <Stat label="Open Gann (Lo / Up)"
+              value={`${Number(data.gann_lower || 0).toFixed(0)} / ${Number(data.gann_upper || 0).toFixed(0)}`}
+              color="text-purple-300" />
+        <Stat label="Final Gann (Lo / Up)"
+              value={`${Number(data.final_gann_lower || 0).toFixed(0)} / ${Number(data.final_gann_upper || 0).toFixed(0)}`}
+              color="text-purple-300" />
         <Stat label="Trades" value={data.summary?.total_trades ?? 0} />
         <Stat label="Wins / Losses" value={`${data.summary?.wins ?? 0} / ${data.summary?.losses ?? 0}`} />
         <Stat label="Total PnL"
@@ -615,9 +633,14 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
           <XAxis dataKey="t" stroke="#475569" fontSize={10} interval={Math.floor(series.length / 8) || 0} />
           <YAxis domain={[yLo, yHi]} stroke="#475569" fontSize={10} width={60} />
           <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 6 }} />
-          <ReferenceLine y={data.gann_upper} stroke="#22c55e" strokeDasharray="4 4" label={{ value: `G-Up ${Number(data.gann_upper).toFixed(0)}`, position: 'right', fill: '#22c55e', fontSize: 10 }} />
-          <ReferenceLine y={data.gann_lower} stroke="#ef4444" strokeDasharray="4 4" label={{ value: `G-Lo ${Number(data.gann_lower).toFixed(0)}`, position: 'right', fill: '#ef4444', fontSize: 10 }} />
-          <Line type="monotone" dataKey="c" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
+          {/* Dynamic Gann band — steps because the active pair only changes when spot crosses a level */}
+          <Line type="stepAfter" dataKey="up" stroke="#22c55e" strokeWidth={1.5}
+                strokeDasharray="4 4" dot={false} isAnimationActive={false}
+                connectNulls name="Gann Upper" />
+          <Line type="stepAfter" dataKey="lo" stroke="#ef4444" strokeWidth={1.5}
+                strokeDasharray="4 4" dot={false} isAnimationActive={false}
+                connectNulls name="Gann Lower" />
+          <Line type="monotone" dataKey="c" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} name="Spot" />
           {entries.map((e, i) => (
             <ReferenceDot key={`en${i}`} x={e.t} y={timeToClose.get(e.t)}
               r={5} fill={e.label.includes('CALL') ? '#22c55e' : '#ef4444'} stroke="#fff" />

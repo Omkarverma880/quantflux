@@ -78,7 +78,12 @@ class Strategy4HighLowRetest:
         # ── Config (with sane NIFTY defaults) ──
         self.sl_points = float(config.get("sl_points", 30))
         self.target_points = float(config.get("target_points", 60))
-        self.lot_size = int(config.get("lot_size", 75))
+        # Per-lot quantity (NIFTY = 65 by default; broker.get_option_info
+        # overwrites this with the live exchange value once we resolve a
+        # contract). Order quantity = lots × lot_size.
+        self.lot_size = int(config.get("lot_size", 65))
+        # Number of lots to trade. Order quantity = lots × lot_size.
+        self.lots = max(1, int(config.get("lots", 1)))
         self.strike_interval = int(config.get("strike_interval", 50))
         self.sl_proximity = float(config.get("sl_proximity", 5))
         self.target_proximity = float(config.get("target_proximity", 5))
@@ -154,6 +159,12 @@ class Strategy4HighLowRetest:
         # ticks stop arriving during market hours.
         self.last_check_at: Optional[datetime] = None
 
+    # ── Derived ───────────────────────────────────────
+    @property
+    def quantity(self) -> int:
+        """Total order quantity = lots × lot_size (per-lot multiplier)."""
+        return max(0, int(self.lots) * int(self.lot_size))
+
     # ── Public controls ───────────────────────────────
 
     @staticmethod
@@ -216,6 +227,7 @@ class Strategy4HighLowRetest:
         self.sl_points = float(config.get("sl_points", self.sl_points))
         self.target_points = float(config.get("target_points", self.target_points))
         self.lot_size = int(config.get("lot_size", self.lot_size))
+        self.lots = max(1, int(config.get("lots", self.lots)))
         self.strike_interval = int(config.get("strike_interval", self.strike_interval))
         self.sl_proximity = float(config.get("sl_proximity", self.sl_proximity))
         self.target_proximity = float(config.get("target_proximity", self.target_proximity))
@@ -270,7 +282,7 @@ class Strategy4HighLowRetest:
                 "exit_price": self.current_ltp or self.fill_price,
                 "exit_time": "15:29",
                 "lot_size": self.lot_size,
-                "pnl": round(((self.current_ltp or self.fill_price) - self.fill_price) * self.lot_size, 2),
+                "pnl": round(((self.current_ltp or self.fill_price) - self.fill_price) * self.quantity, 2),
                 "timestamp": datetime.now().isoformat(),
             }
             self.trade_log.append(trade)
@@ -646,7 +658,7 @@ class Strategy4HighLowRetest:
                 tradingsymbol=self.option_symbol,
                 exchange=Exchange.NFO,
                 side=OrderSide.BUY,
-                quantity=self.lot_size,
+                quantity=self.quantity,
                 order_type=OrderType.MARKET,
                 product=ProductType.MIS,
                 tag="S4ENTRY",
@@ -832,7 +844,7 @@ class Strategy4HighLowRetest:
                     self.broker.place_order(OrderRequest(
                         tradingsymbol=self.option_symbol,
                         exchange=Exchange.NFO, side=OrderSide.SELL,
-                        quantity=self.lot_size, order_type=OrderType.LIMIT,
+                        quantity=self.quantity, order_type=OrderType.LIMIT,
                         product=ProductType.MIS, price=exit_price, tag="S4SL",
                     ))
                     self._complete_trade("SL_HIT", ltp)
@@ -840,7 +852,7 @@ class Strategy4HighLowRetest:
                 resp = self.broker.place_order(OrderRequest(
                     tradingsymbol=self.option_symbol,
                     exchange=Exchange.NFO, side=OrderSide.SELL,
-                    quantity=self.lot_size, order_type=OrderType.SL_M,
+                    quantity=self.quantity, order_type=OrderType.SL_M,
                     product=ProductType.MIS, trigger_price=self.sl_price, tag="S4SL",
                 ))
                 self.sl_order = {
@@ -866,7 +878,7 @@ class Strategy4HighLowRetest:
                     self.broker.place_order(OrderRequest(
                         tradingsymbol=self.option_symbol,
                         exchange=Exchange.NFO, side=OrderSide.SELL,
-                        quantity=self.lot_size, order_type=OrderType.LIMIT,
+                        quantity=self.quantity, order_type=OrderType.LIMIT,
                         product=ProductType.MIS, price=exit_price, tag="S4TGT",
                     ))
                     self._complete_trade("TARGET_HIT", ltp)
@@ -874,7 +886,7 @@ class Strategy4HighLowRetest:
                 resp = self.broker.place_order(OrderRequest(
                     tradingsymbol=self.option_symbol,
                     exchange=Exchange.NFO, side=OrderSide.SELL,
-                    quantity=self.lot_size, order_type=OrderType.LIMIT,
+                    quantity=self.quantity, order_type=OrderType.LIMIT,
                     product=ProductType.MIS, price=self.target_price, tag="S4TGT",
                 ))
                 self.target_order = {
@@ -900,7 +912,7 @@ class Strategy4HighLowRetest:
                 self.broker.place_order(OrderRequest(
                     tradingsymbol=self.option_symbol,
                     exchange=Exchange.NFO, side=OrderSide.SELL,
-                    quantity=self.lot_size, order_type=OrderType.MARKET,
+                    quantity=self.quantity, order_type=OrderType.MARKET,
                     product=ProductType.MIS,
                     tag="S4SLIP",
                 ))
@@ -909,7 +921,7 @@ class Strategy4HighLowRetest:
 
         # Best-effort exit price: market sell ≈ ref LTP (option may dip on impact).
         exit_price = ref_ltp
-        pnl = round((exit_price - self.fill_price) * self.lot_size, 2)
+        pnl = round((exit_price - self.fill_price) * self.quantity, 2)
         trade = {
             "date": (self._trading_date or date.today()).isoformat(),
             "signal": self.signal_type,
@@ -956,7 +968,7 @@ class Strategy4HighLowRetest:
                 self.broker.place_order(OrderRequest(
                     tradingsymbol=self.option_symbol,
                     exchange=Exchange.NFO, side=OrderSide.SELL,
-                    quantity=self.lot_size, order_type=OrderType.LIMIT,
+                    quantity=self.quantity, order_type=OrderType.LIMIT,
                     product=ProductType.MIS,
                     price=max(0.05, round(exit_price * 0.90, 2)),
                     tag="S4SQOFF",
@@ -977,7 +989,7 @@ class Strategy4HighLowRetest:
             logger.warning("S4 cancel failed: %s", exc)
 
     def _complete_trade(self, exit_type: str, exit_price: float):
-        pnl = (exit_price - self.fill_price) * self.lot_size
+        pnl = (exit_price - self.fill_price) * self.quantity
         if exit_type == "SL_HIT":
             pnl = -abs(pnl)
         trade = {
@@ -1249,7 +1261,7 @@ class Strategy4HighLowRetest:
                 move = exit_spot - entry_spot
             else:
                 move = entry_spot - exit_spot
-            pnl = move * self.lot_size
+            pnl = move * self.quantity
             strike_ = _itm_strike(entry_spot, side)
             trades.append({
                 "time": t_str,
@@ -1438,6 +1450,8 @@ class Strategy4HighLowRetest:
                 "sl_points": self.sl_points,
                 "target_points": self.target_points,
                 "lot_size": self.lot_size,
+                "lots": self.lots,
+                "quantity": self.quantity,
                 "strike_interval": self.strike_interval,
                 "sl_proximity": self.sl_proximity,
                 "target_proximity": self.target_proximity,
@@ -1529,7 +1543,7 @@ class Strategy4HighLowRetest:
     def get_status(self) -> dict:
         unrealized = 0.0
         if self.state == State.POSITION_OPEN and self.current_ltp > 0 and self.fill_price > 0:
-            unrealized = round((self.current_ltp - self.fill_price) * self.lot_size, 2)
+            unrealized = round((self.current_ltp - self.fill_price) * self.quantity, 2)
         return {
             "is_active": self.is_active,
             "state": self.state.value,
@@ -1550,6 +1564,8 @@ class Strategy4HighLowRetest:
                 "sl_points": self.sl_points,
                 "target_points": self.target_points,
                 "lot_size": self.lot_size,
+                "lots": self.lots,
+                "quantity": self.quantity,
                 "strike_interval": self.strike_interval,
                 "sl_proximity": self.sl_proximity,
                 "target_proximity": self.target_proximity,
