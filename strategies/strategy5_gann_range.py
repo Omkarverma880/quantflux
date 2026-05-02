@@ -210,10 +210,14 @@ class Strategy5GannRange:
         self.apply_config(config, save=False)
         self.is_active = True
         self._check_day_reset()
+        # Anchor Gann pair at start (uses last known spot; if 0 the
+        # next live tick will trigger _refresh_active_range to anchor).
+        self._anchor_gann_range()
         self._save_state()
         logger.info(
-            "Strategy 5 started: SL=%s TGT=%s LOT=%s",
+            "Strategy 5 started: SL=%s TGT=%s LOT=%s GANN=[%.2f, %.2f]",
             self.sl_points, self.target_points, self.lot_size,
+            self.gann_lower, self.gann_upper,
         )
 
     def stop(self):
@@ -367,21 +371,33 @@ class Strategy5GannRange:
         return (lower, upper)
 
     def _refresh_active_range(self) -> bool:
-        """Recompute the floating Gann pair from the live spot.
+        """Anchor the Gann pair if we don't have one yet.
 
-        Only mutates `gann_lower` / `gann_upper` while we are IDLE — once
-        we cross a level and enter WATCH/POSITION/COMPLETED the range is
-        locked so retest distances and flips reference the boundary that
-        actually triggered the entry.
-        Returns True if the range was updated.
+        The pair is HELD CONSTANT while we are IDLE so that a real
+        breakout / breakdown can be detected when the spot closes
+        outside it. Re-anchoring happens explicitly via
+        `_anchor_gann_range()` on day-open and after a watch is
+        abandoned or a trade closes (with allow_reentry).
+        Returns True if we just set the initial anchor.
         """
         if self.spot_price <= 0:
             return False
-        if self.state != State.IDLE:
+        if self.gann_lower > 0 and self.gann_upper > 0:
+            return False
+        # First-time anchor (day start, fresh state)
+        return self._anchor_gann_range()
+
+    def _anchor_gann_range(self) -> bool:
+        """Re-compute and lock the Gann pair around the current spot."""
+        if self.spot_price <= 0:
             return False
         new_lo, new_hi = self._compute_gann_range(self.spot_price)
         if new_lo == self.gann_lower and new_hi == self.gann_upper:
             return False
+        logger.info(
+            "S5 Gann pair anchored: lower=%.2f upper=%.2f (spot=%.2f)",
+            new_lo, new_hi, self.spot_price,
+        )
         self.gann_lower = new_lo
         self.gann_upper = new_hi
         return True
@@ -407,8 +423,9 @@ class Strategy5GannRange:
 
         # Only mutate when IDLE; otherwise just report the locked pair
         if self.state == State.IDLE:
-            self.gann_lower, self.gann_upper = self._compute_gann_range(spot)
-            self._save_state()
+            if force or self.gann_lower <= 0 or self.gann_upper <= 0:
+                self.gann_lower, self.gann_upper = self._compute_gann_range(spot)
+                self._save_state()
 
         return self._levels_payload()
 
@@ -561,10 +578,16 @@ class Strategy5GannRange:
                 self._fire_entry("CE")
                 return
 
-            # If extension goes very far without retest, abandon (move "extended")
+            # If extension goes very far without retest, abandon and
+            # re-anchor the Gann pair to the new band the spot now sits in.
             if self.spot_extreme - self.gann_upper > self.max_breakout_extension:
-                self.scenario = "Extended — no retest"
+                self.scenario = "Extended — re-anchored"
                 self.signal = "NO_TRADE"
+                self.state = State.IDLE
+                self._level_crossed = None
+                self.spot_extreme = 0.0
+                self._anchor_gann_range()
+                return
 
         elif self.state == State.BREAKDOWN_WATCH:
             if self.spot_price < self.spot_extreme:
@@ -596,8 +619,13 @@ class Strategy5GannRange:
                 return
 
             if self.gann_lower - self.spot_extreme > self.max_breakout_extension:
-                self.scenario = "Extended — no retest"
+                self.scenario = "Extended — re-anchored"
                 self.signal = "NO_TRADE"
+                self.state = State.IDLE
+                self._level_crossed = None
+                self.spot_extreme = 0.0
+                self._anchor_gann_range()
+                return
 
     # ── Option resolution & entry ─────────────────────
 
@@ -1036,10 +1064,11 @@ class Strategy5GannRange:
             self.is_active = False
             self.state = State.COMPLETED
         elif self.allow_reentry and self._trades_today < self.max_trades_per_day:
-            # Re-arm for another setup
+            # Re-arm for another setup; re-anchor band to current spot
             self.state = State.IDLE
             self._level_crossed = None
             self.spot_extreme = 0.0
+            self._anchor_gann_range()
         else:
             self.state = State.COMPLETED
         self._save_state()
@@ -1220,9 +1249,13 @@ class Strategy5GannRange:
         trades_done = 0
         spot_series = []
         gann_band_series = []   # per-bar active (lower, upper) trail
-        # Locked boundary for the current watch/position cycle:
+        # Anchored Gann pair. Held constant while IDLE so a real
+        # breakout can be detected. Re-anchored only when (a) the day
+        # opens, (b) a watch is abandoned (price extended), or (c) a
+        # trade closes and reentry is allowed.
         locked_upper = 0.0
         locked_lower = 0.0
+        initial_open = float(candles[0]["open"]) if candles else 0.0
 
         def _gann_pair(spot: float) -> tuple[float, float]:
             if not lvls:
@@ -1232,6 +1265,10 @@ class Strategy5GannRange:
             i_lo = bisect.bisect_left(lvls, spot)
             lo = float(lvls[i_lo - 1]) if i_lo > 0 else float(lvls[0] - 50)
             return (lo, up)
+
+        # Anchor at day open
+        if initial_open > 0:
+            locked_lower, locked_upper = _gann_pair(initial_open)
 
         def _synth_symbol(strike: int, opt: str) -> str:
             return f"{self.index_name} {int(strike)} {opt}"
@@ -1288,8 +1325,6 @@ class Strategy5GannRange:
                 "o": float(c["open"]), "h": high, "l": low, "c": close,
             })
 
-            # Always compute the current floating pair for visualization.
-            cur_lo, cur_up = _gann_pair(close)
             # Auto square-off
             if st == "POSITION_OPEN" and t_ >= PRE_CLOSE_EXIT:
                 _record_trade(t_str, close, "AUTO_SQUAREOFF", "Auto SqOff")
@@ -1316,6 +1351,8 @@ class Strategy5GannRange:
                             st = "COMPLETED"
                         else:
                             st = "IDLE"
+                            # Re-anchor band to wherever the spot now sits
+                            locked_lower, locked_upper = _gann_pair(close)
                         side = None
                         gann_band_series.append({"t": t_str, "lo": locked_lower, "up": locked_upper, "locked": True})
                         continue
@@ -1336,6 +1373,7 @@ class Strategy5GannRange:
                             st = "COMPLETED"
                         else:
                             st = "IDLE"
+                            locked_lower, locked_upper = _gann_pair(close)
                         side = None
                         gann_band_series.append({"t": t_str, "lo": locked_lower, "up": locked_upper, "locked": True})
                         continue
@@ -1344,21 +1382,24 @@ class Strategy5GannRange:
                 gann_band_series.append({"t": t_str, "lo": locked_lower, "up": locked_upper, "locked": True})
                 continue
 
-            # IDLE: range floats with spot
+            # IDLE: band is anchored (locked at open / re-anchor). Detect
+            # a real breakout/breakdown when spot closes outside it.
             if st == "IDLE":
-                locked_lower, locked_upper = cur_lo, cur_up
-                gann_band_series.append({"t": t_str, "lo": cur_lo, "up": cur_up, "locked": False})
+                # Safety: if no anchor yet (e.g. open was 0), anchor now.
+                if locked_upper <= 0 or locked_lower <= 0:
+                    locked_lower, locked_upper = _gann_pair(close)
+                gann_band_series.append({"t": t_str, "lo": locked_lower, "up": locked_upper, "locked": True})
                 if trades_done >= max_trades:
                     st = "COMPLETED"; continue
-                if close > cur_up:
+                if close > locked_upper:
                     st = "BREAKOUT_WATCH"; extreme = close
-                    events.append({"t": t_str, "kind": "WATCH", "label": f"Breakout {cur_up:.0f}"})
-                elif close < cur_lo:
+                    events.append({"t": t_str, "kind": "WATCH", "label": f"Breakout {locked_upper:.0f}"})
+                elif close < locked_lower:
                     st = "BREAKDOWN_WATCH"; extreme = close
-                    events.append({"t": t_str, "kind": "WATCH", "label": f"Breakdown {cur_lo:.0f}"})
+                    events.append({"t": t_str, "kind": "WATCH", "label": f"Breakdown {locked_lower:.0f}"})
                 continue
 
-            # Locked boundary while in WATCH / position cycle
+            # WATCH states: boundary held; render constant locked pair
             gann_band_series.append({"t": t_str, "lo": locked_lower, "up": locked_upper, "locked": True})
 
             # Dynamic flip vs locked boundary
@@ -1383,6 +1424,8 @@ class Strategy5GannRange:
                     continue
                 if extreme - locked_upper > max_ext:
                     st = "IDLE"
+                    # Re-anchor: spot has extended into a new band
+                    locked_lower, locked_upper = _gann_pair(close)
                     events.append({"t": t_str, "kind": "ABANDON", "label": "Extended"})
 
             elif st == "BREAKDOWN_WATCH":
@@ -1398,6 +1441,7 @@ class Strategy5GannRange:
                     continue
                 if locked_lower - extreme > max_ext:
                     st = "IDLE"
+                    locked_lower, locked_upper = _gann_pair(close)
                     events.append({"t": t_str, "kind": "ABANDON", "label": "Extended"})
 
         total_pnl = sum(t["pnl"] for t in trades)
@@ -1430,9 +1474,11 @@ class Strategy5GannRange:
             },
             "note": (
                 "Backtest assumes option Δ=1 (spot move ≈ option move). "
-                "Active Gann pair floats with the spot while IDLE; locks "
-                "on cross. Live engine buys real ITM CE/PE — actual "
-                "option PnL will differ slightly due to theta/IV."
+                "Gann pair is anchored at day open and held until a "
+                "watch is abandoned or a trade closes — only then it "
+                "re-anchors to the new band. Live engine buys real "
+                "ITM CE/PE; actual option PnL will differ slightly "
+                "due to theta/IV."
             ),
         }
 
