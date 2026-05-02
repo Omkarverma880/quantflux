@@ -90,6 +90,10 @@ class Strategy4HighLowRetest:
         self.max_trades_per_day = int(config.get("max_trades_per_day", 1))
         # Re-entry: continue scanning after one trade closes (within the cap)
         self.allow_reentry = bool(config.get("allow_reentry", False))
+        # ITM offset (in index points) added to strike. For BUY CALL the
+        # strike used is (ATM − itm_offset); for BUY PUT it is
+        # (ATM + itm_offset). Use 0 to trade ATM.
+        self.itm_offset = int(config.get("itm_offset", 100))
         # Gann target: use Gann level grid instead of flat target_points
         self.gann_target = bool(config.get("gann_target", False))
         # How many Gann levels above fill price to target (1, 2, 3, …)
@@ -120,6 +124,7 @@ class Strategy4HighLowRetest:
         self.signal_type: Optional[str] = None  # CE / PE
         self.entry_reason: str = ""
         self.atm_strike: int = 0
+        self.strike: int = 0   # actually-traded strike (ATM ± itm_offset)
         self.option_symbol: str = ""
         self.option_token: int = 0
         self.option_ltp: float = 0.0
@@ -210,6 +215,7 @@ class Strategy4HighLowRetest:
         self.max_breakout_extension = float(config.get("max_breakout_extension", self.max_breakout_extension))
         self.max_trades_per_day = int(config.get("max_trades_per_day", self.max_trades_per_day))
         self.allow_reentry = bool(config.get("allow_reentry", self.allow_reentry))
+        self.itm_offset = int(config.get("itm_offset", self.itm_offset))
         self.gann_target = bool(config.get("gann_target", self.gann_target))
         self.gann_count = max(1, int(config.get("gann_count", self.gann_count)))
         self.index_name = str(config.get("index_name", self.index_name)).upper()
@@ -268,6 +274,7 @@ class Strategy4HighLowRetest:
         self.signal_type = None
         self.entry_reason = ""
         self.atm_strike = 0
+        self.strike = 0
         self.option_symbol = ""
         self.option_token = 0
         self.option_ltp = 0.0
@@ -592,11 +599,18 @@ class Strategy4HighLowRetest:
     def _fire_entry(self, opt_type: str):
         self.signal_type = opt_type
         self.atm_strike = self._calc_atm(self.spot_price)
+        # ITM strike: CE shifts strike DOWN; PE shifts strike UP (so the
+        # option is in-the-money relative to current spot).
+        if opt_type == "CE":
+            self.strike = int(self.atm_strike - self.itm_offset)
+        else:
+            self.strike = int(self.atm_strike + self.itm_offset)
 
-        opt_info = self._find_option(self.atm_strike, opt_type)
+        opt_info = self._find_option(self.strike, opt_type)
         if not opt_info:
-            logger.error("S4 no %s option at strike %s", opt_type, self.atm_strike)
-            self.scenario = f"No {opt_type} option found"
+            logger.error("S4 no %s option at strike %s (ATM=%s, offset=%s)",
+                         opt_type, self.strike, self.atm_strike, self.itm_offset)
+            self.scenario = f"No {opt_type} option found at {self.strike}"
             self.state = State.IDLE
             return
 
@@ -893,6 +907,7 @@ class Strategy4HighLowRetest:
             "scenario": self.scenario,
             "option": self.option_symbol,
             "atm_strike": self.atm_strike,
+            "strike": self.strike,
             "entry_price": self.fill_price,
             "exit_type": exit_type,
             "exit_price": exit_price,
@@ -1010,27 +1025,90 @@ class Strategy4HighLowRetest:
         prev_low: float,
         candles: list[dict],
     ) -> dict:
-        """Pure-python replay. Produces trades + price series for charting."""
+        """Pure-python replay using the live ITM-strike rule.
+
+        For each entry, the strike is computed exactly the way live does
+        it (ATM ± itm_offset). We then attempt to fetch real minute
+        candles for that option contract on sim_day. When we have real
+        option data, SL/TGT and exit P&L are computed in option points
+        (the way they're hit in live). When the contract for that day is
+        no longer queryable (expired & no longer in the instrument
+        master), we fall back to a spot-proxy (option Δ ≈ 1) and tag
+        the trade with `data_source = "PROXY"` so the user can see which
+        rows used real prices.
+        """
         retest_buf = float(self.retest_buffer)
         max_ext = float(self.max_breakout_extension)
         sl_pts = float(self.sl_points)
         tgt_pts = float(self.target_points)
         max_trades = int(self.max_trades_per_day)
+        itm_offset = int(self.itm_offset)
+
+        # Per-(strike, opt_type) cache so back-to-back entries on the
+        # same contract only fetch once.
+        opt_cache: dict[tuple, Optional[dict]] = {}
+
+        def _fetch_option_data(strike: int, opt_type: str) -> Optional[dict]:
+            """Returns {symbol, token, minutes: {HH:MM -> {o,h,l,c}}} or None."""
+            key = (strike, opt_type)
+            if key in opt_cache:
+                return opt_cache[key]
+            info = self._find_option(strike, opt_type)
+            if not info:
+                opt_cache[key] = None
+                return None
+            try:
+                rows = self.broker.get_historical_data(
+                    instrument_token=int(info["instrument_token"]),
+                    from_date=datetime.combine(sim_day, MARKET_OPEN),
+                    to_date=datetime.combine(sim_day, MARKET_CLOSE),
+                    interval="minute",
+                )
+            except Exception as exc:
+                logger.warning("S4 backtest option fetch failed for %s: %s",
+                               info.get("tradingsymbol"), exc)
+                opt_cache[key] = None
+                return None
+            if not rows:
+                opt_cache[key] = None
+                return None
+            minutes: dict[str, dict] = {}
+            for r in rows:
+                d = r.get("date")
+                if isinstance(d, str):
+                    try:
+                        tt = datetime.fromisoformat(d.replace("Z", "+00:00")).time()
+                    except Exception:
+                        continue
+                else:
+                    try:
+                        tt = d.time()
+                    except Exception:
+                        continue
+                minutes[tt.strftime("%H:%M")] = {
+                    "o": float(r.get("open", 0) or 0),
+                    "h": float(r.get("high", 0) or 0),
+                    "l": float(r.get("low", 0) or 0),
+                    "c": float(r.get("close", 0) or 0),
+                }
+            entry = {
+                "symbol": info.get("tradingsymbol", ""),
+                "token": int(info["instrument_token"]),
+                "minutes": minutes,
+            }
+            opt_cache[key] = entry
+            return entry
 
         st = "IDLE"
-        side = None  # CE/PE
+        # When in POSITION_OPEN, `pos` holds the open trade context.
+        pos: Optional[dict] = None
         extreme = 0.0
         trades = []
         events = []
-        entry_spot = 0.0
-        sl = 0.0
-        tgt = 0.0
         trades_done = 0
         spot_series = []
-        # Pre-compute weekly-expiry tag from sim_day for human-readable
-        # synthetic option symbols (e.g. "NIFTY 22800 CE").
-        def _synth_option(strike: int, opt: str) -> str:
-            return f"{self.index_name} {int(strike)} {opt}"
+        any_real = False
+        any_proxy = False
 
         def candle_time(c):
             d = c.get("date")
@@ -1044,166 +1122,234 @@ class Strategy4HighLowRetest:
             except Exception:
                 return None
 
+        def _open_position(t_str: str, side: str, entry_spot: float) -> Optional[dict]:
+            """Resolve strike + entry premium for a new entry. Returns
+            the position dict (or None on failure)."""
+            atm = self._calc_atm(entry_spot)
+            strike_ = atm - itm_offset if side == "CE" else atm + itm_offset
+            opt_data = _fetch_option_data(strike_, side)
+            entry_premium = 0.0
+            data_source = "PROXY"
+            symbol = f"{self.index_name} {strike_} {side}"
+            if opt_data and opt_data["minutes"].get(t_str):
+                entry_premium = opt_data["minutes"][t_str]["c"]
+                data_source = "REAL"
+                symbol = opt_data["symbol"] or symbol
+            if entry_premium <= 0:
+                # Real data available but premium unprintable -> fall back
+                data_source = "PROXY"
+                # Use a notional ITM premium of itm_offset + a small extrinsic
+                # so SL/TGT in option points scale correctly.
+                entry_premium = float(itm_offset + 50)
+            return {
+                "side": side,
+                "strike": int(strike_),
+                "atm": int(atm),
+                "symbol": symbol,
+                "entry_spot": entry_spot,
+                "entry_premium": round(entry_premium, 2),
+                "sl_premium": round(max(0.05, entry_premium - sl_pts), 2),
+                "tgt_premium": round(entry_premium + tgt_pts, 2),
+                "entry_time": t_str,
+                "data_source": data_source,
+                "opt_data": opt_data,
+            }
+
+        def _close_position(p: dict, t_str: str, exit_premium: float, kind: str, label: str):
+            nonlocal any_real, any_proxy
+            pnl = (exit_premium - p["entry_premium"]) * self.lot_size
+            trades.append({
+                "time": t_str,
+                "side": p["side"],
+                "strike": p["strike"],
+                "option_symbol": p["symbol"],
+                "entry": p["entry_spot"],
+                "exit": p["entry_spot"],  # spot column kept for chart marker
+                "entry_premium": p["entry_premium"],
+                "exit_premium": round(exit_premium, 2),
+                "exit_type": kind,
+                "pnl": round(pnl, 2),
+                "data_source": p["data_source"],
+            })
+            events.append({"t": t_str, "kind": kind if kind in ("SL", "TGT") else "EXIT", "label": label})
+            if p["data_source"] == "REAL":
+                any_real = True
+            else:
+                any_proxy = True
+
         for c in candles:
             t_ = candle_time(c)
             if not t_:
                 continue
             high = float(c["high"]); low = float(c["low"]); close = float(c["close"])
+            t_str = t_.strftime("%H:%M")
             spot_series.append({
-                "t": t_.strftime("%H:%M"),
+                "t": t_str,
                 "o": float(c["open"]), "h": high, "l": low, "c": close,
             })
 
-            # Auto square-off
-            if st == "POSITION_OPEN" and t_ >= PRE_CLOSE_EXIT:
-                exit_move = (close - entry_spot) if side == "CE" else (entry_spot - close)
-                pnl = exit_move * self.lot_size
-                strike_ = self._calc_atm(entry_spot)
-                trades.append({
-                    "time": t_.strftime("%H:%M"), "side": side,
-                    "strike": strike_, "option_symbol": _synth_option(strike_, side),
-                    "entry": entry_spot, "exit": close, "exit_type": "AUTO_SQUAREOFF",
-                    "pnl": round(pnl, 2),
-                })
-                st = "COMPLETED"; side = None
-                events.append({"t": t_.strftime("%H:%M"), "kind": "EXIT", "label": "Auto SqOff"})
+            # ── Auto square-off ──
+            if st == "POSITION_OPEN" and pos and t_ >= PRE_CLOSE_EXIT:
+                # Real exit premium if available, else proxy from spot move
+                exit_prem = 0.0
+                if pos["data_source"] == "REAL" and pos["opt_data"]:
+                    cell = pos["opt_data"]["minutes"].get(t_str)
+                    if cell:
+                        exit_prem = cell["c"]
+                if exit_prem <= 0:
+                    # Spot-proxy fallback (delta=1)
+                    if pos["side"] == "CE":
+                        exit_prem = pos["entry_premium"] + (close - pos["entry_spot"])
+                    else:
+                        exit_prem = pos["entry_premium"] + (pos["entry_spot"] - close)
+                    pos["data_source"] = "PROXY"
+                _close_position(pos, t_str, max(0.05, exit_prem), "AUTO_SQUAREOFF", "Auto SqOff")
+                st = "COMPLETED"; pos = None
                 continue
 
-            # Position management — option price move ≈ index move (delta=1)
-            if st == "POSITION_OPEN":
-                # Use intra-bar high/low for SL/TGT trigger
-                if side == "CE":
-                    move_low = low - entry_spot   # adverse
-                    move_high = high - entry_spot # favorable
-                    if move_low <= -sl_pts:
-                        strike_ = self._calc_atm(entry_spot)
-                        trades.append({
-                            "time": t_.strftime("%H:%M"), "side": side,
-                            "strike": strike_, "option_symbol": _synth_option(strike_, side),
-                            "entry": entry_spot, "exit": entry_spot - sl_pts,
-                            "exit_type": "SL_HIT", "pnl": round(-sl_pts * self.lot_size, 2),
-                        })
-                        events.append({"t": t_.strftime("%H:%M"), "kind": "SL", "label": "SL"})
-                        # Mirror live: SL_HIT deactivates the strategy for the day
-                        trades_done += 1
+            # ── Position management ──
+            if st == "POSITION_OPEN" and pos:
+                hit_sl = False
+                hit_tgt = False
+                exit_prem = 0.0
+
+                if pos["data_source"] == "REAL" and pos["opt_data"]:
+                    cell = pos["opt_data"]["minutes"].get(t_str)
+                    if cell:
+                        # Use option's own intra-bar high/low — matches live
+                        # SL_M / LIMIT trigger semantics exactly.
+                        if cell["l"] <= pos["sl_premium"]:
+                            hit_sl = True
+                            exit_prem = pos["sl_premium"]
+                        elif cell["h"] >= pos["tgt_premium"]:
+                            hit_tgt = True
+                            exit_prem = pos["tgt_premium"]
+                else:
+                    # Spot-proxy: option move ≈ favorable spot move
+                    if pos["side"] == "CE":
+                        favor = high - pos["entry_spot"]
+                        adverse = pos["entry_spot"] - low
+                    else:
+                        favor = pos["entry_spot"] - low
+                        adverse = high - pos["entry_spot"]
+                    if adverse >= sl_pts:
+                        hit_sl = True
+                        exit_prem = pos["sl_premium"]
+                    elif favor >= tgt_pts:
+                        hit_tgt = True
+                        exit_prem = pos["tgt_premium"]
+
+                if hit_sl:
+                    _close_position(pos, t_str, exit_prem, "SL_HIT", "SL")
+                    trades_done += 1
+                    st = "COMPLETED"  # mirror live: SL deactivates for the day
+                    pos = None
+                    continue
+                if hit_tgt:
+                    _close_position(pos, t_str, exit_prem, "TARGET_HIT", "TGT")
+                    trades_done += 1
+                    if trades_done >= max_trades or not self.allow_reentry:
                         st = "COMPLETED"
-                        side = None; continue
-                    if move_high >= tgt_pts:
-                        strike_ = self._calc_atm(entry_spot)
-                        trades.append({
-                            "time": t_.strftime("%H:%M"), "side": side,
-                            "strike": strike_, "option_symbol": _synth_option(strike_, side),
-                            "entry": entry_spot, "exit": entry_spot + tgt_pts,
-                            "exit_type": "TARGET_HIT", "pnl": round(tgt_pts * self.lot_size, 2),
-                        })
-                        events.append({"t": t_.strftime("%H:%M"), "kind": "TGT", "label": "TGT"})
-                        trades_done += 1
-                        if trades_done >= max_trades or not self.allow_reentry:
-                            st = "COMPLETED"
-                        else:
-                            st = "IDLE"
-                        side = None; continue
-                else:  # PE
-                    move_high = high - entry_spot  # adverse
-                    move_low = low - entry_spot    # favorable
-                    if move_high >= sl_pts:
-                        strike_ = self._calc_atm(entry_spot)
-                        trades.append({
-                            "time": t_.strftime("%H:%M"), "side": side,
-                            "strike": strike_, "option_symbol": _synth_option(strike_, side),
-                            "entry": entry_spot, "exit": entry_spot + sl_pts,
-                            "exit_type": "SL_HIT", "pnl": round(-sl_pts * self.lot_size, 2),
-                        })
-                        events.append({"t": t_.strftime("%H:%M"), "kind": "SL", "label": "SL"})
-                        # Mirror live: SL_HIT deactivates the strategy for the day
-                        trades_done += 1
-                        st = "COMPLETED"
-                        side = None; continue
-                    if move_low <= -tgt_pts:
-                        strike_ = self._calc_atm(entry_spot)
-                        trades.append({
-                            "time": t_.strftime("%H:%M"), "side": side,
-                            "strike": strike_, "option_symbol": _synth_option(strike_, side),
-                            "entry": entry_spot, "exit": entry_spot - tgt_pts,
-                            "exit_type": "TARGET_HIT", "pnl": round(tgt_pts * self.lot_size, 2),
-                        })
-                        events.append({"t": t_.strftime("%H:%M"), "kind": "TGT", "label": "TGT"})
-                        trades_done += 1
-                        if trades_done >= max_trades or not self.allow_reentry:
-                            st = "COMPLETED"
-                        else:
-                            st = "IDLE"
-                        side = None; continue
+                    else:
+                        st = "IDLE"
+                    pos = None
+                    continue
 
             if st == "COMPLETED":
                 continue
 
-            # IDLE: detect cross
+            # ── IDLE: detect cross ──
             if st == "IDLE":
                 if trades_done >= max_trades:
                     st = "COMPLETED"; continue
                 if close > prev_high:
                     st = "BREAKOUT_WATCH"; extreme = close
-                    events.append({"t": t_.strftime("%H:%M"), "kind": "WATCH", "label": "Breakout"})
+                    events.append({"t": t_str, "kind": "WATCH", "label": "Breakout"})
                 elif close < prev_low:
                     st = "BREAKDOWN_WATCH"; extreme = close
-                    events.append({"t": t_.strftime("%H:%M"), "kind": "WATCH", "label": "Breakdown"})
+                    events.append({"t": t_str, "kind": "WATCH", "label": "Breakdown"})
                 continue
 
-            # Dynamic flip
+            # ── Dynamic flip ──
             if st == "BREAKOUT_WATCH" and close < prev_low:
                 st = "BREAKDOWN_WATCH"; extreme = close
-                events.append({"t": t_.strftime("%H:%M"), "kind": "FLIP", "label": "→ Breakdown"})
+                events.append({"t": t_str, "kind": "FLIP", "label": "→ Breakdown"})
             elif st == "BREAKDOWN_WATCH" and close > prev_high:
                 st = "BREAKOUT_WATCH"; extreme = close
-                events.append({"t": t_.strftime("%H:%M"), "kind": "FLIP", "label": "→ Breakout"})
+                events.append({"t": t_str, "kind": "FLIP", "label": "→ Breakout"})
 
-            # Watch states
+            # ── Watch states → entries ──
             if st == "BREAKOUT_WATCH":
                 if close > extreme:
                     extreme = close
-                # Fake breakout → PUT
+                # Fake breakout → BUY PUT
                 if close < prev_high - retest_buf / 2:
-                    side = "PE"; entry_spot = close; sl = close + sl_pts; tgt = close - tgt_pts
-                    st = "POSITION_OPEN"
-                    events.append({"t": t_.strftime("%H:%M"), "kind": "ENTRY", "label": "Fake Breakout → PUT"})
+                    pos = _open_position(t_str, "PE", close)
+                    if pos:
+                        st = "POSITION_OPEN"
+                        events.append({"t": t_str, "kind": "ENTRY", "label": "Fake Breakout → PUT"})
                     continue
-                # Retest hold → CALL
+                # Retest hold → BUY CALL
                 if prev_high <= close <= prev_high + retest_buf and (extreme - prev_high) >= 2:
-                    side = "CE"; entry_spot = close; sl = close - sl_pts; tgt = close + tgt_pts
-                    st = "POSITION_OPEN"
-                    events.append({"t": t_.strftime("%H:%M"), "kind": "ENTRY", "label": "Breakout → Retest CALL"})
+                    pos = _open_position(t_str, "CE", close)
+                    if pos:
+                        st = "POSITION_OPEN"
+                        events.append({"t": t_str, "kind": "ENTRY", "label": "Breakout → Retest CALL"})
                     continue
                 if extreme - prev_high > max_ext:
                     st = "IDLE"
-                    events.append({"t": t_.strftime("%H:%M"), "kind": "ABANDON", "label": "Extended"})
+                    events.append({"t": t_str, "kind": "ABANDON", "label": "Extended"})
 
             elif st == "BREAKDOWN_WATCH":
                 if close < extreme:
                     extreme = close
+                # Fake breakdown → BUY CALL
                 if close > prev_low + retest_buf / 2:
-                    side = "CE"; entry_spot = close; sl = close - sl_pts; tgt = close + tgt_pts
-                    st = "POSITION_OPEN"
-                    events.append({"t": t_.strftime("%H:%M"), "kind": "ENTRY", "label": "Fake Breakdown → CALL"})
+                    pos = _open_position(t_str, "CE", close)
+                    if pos:
+                        st = "POSITION_OPEN"
+                        events.append({"t": t_str, "kind": "ENTRY", "label": "Fake Breakdown → CALL"})
                     continue
+                # Retest reject → BUY PUT
                 if prev_low - retest_buf <= close <= prev_low and (prev_low - extreme) >= 2:
-                    side = "PE"; entry_spot = close; sl = close + sl_pts; tgt = close - tgt_pts
-                    st = "POSITION_OPEN"
-                    events.append({"t": t_.strftime("%H:%M"), "kind": "ENTRY", "label": "Breakdown → Retest PUT"})
+                    pos = _open_position(t_str, "PE", close)
+                    if pos:
+                        st = "POSITION_OPEN"
+                        events.append({"t": t_str, "kind": "ENTRY", "label": "Breakdown → Retest PUT"})
                     continue
                 if prev_low - extreme > max_ext:
                     st = "IDLE"
-                    events.append({"t": t_.strftime("%H:%M"), "kind": "ABANDON", "label": "Extended"})
+                    events.append({"t": t_str, "kind": "ABANDON", "label": "Extended"})
 
         total_pnl = sum(t["pnl"] for t in trades)
         wins = sum(1 for t in trades if t["pnl"] > 0)
         losses = sum(1 for t in trades if t["pnl"] <= 0)
+
+        if any_real and not any_proxy:
+            note = (
+                "All trades use REAL minute-level option prices for the resolved "
+                f"ITM (offset={itm_offset}) strike. SL/TGT are evaluated on the "
+                "option's intra-bar high/low — matches live execution exactly."
+            )
+        elif any_real and any_proxy:
+            note = (
+                "Mixed sources: rows tagged REAL use the actual option's minute "
+                "candles; rows tagged PROXY fall back to spot-Δ≈1 (option contract "
+                "for that day was not queryable)."
+            )
+        else:
+            note = (
+                f"Option historical data unavailable for the resolved ITM strike "
+                f"(offset={itm_offset}). Using spot-proxy (Δ≈1). PnL is approximate."
+            )
+
         return {
             "status": "ok",
             "sim_date": sim_day.isoformat(),
             "prev_date": prev_day.isoformat(),
             "prev_high": prev_high,
             "prev_low": prev_low,
+            "itm_offset": itm_offset,
             "trades": trades,
             "events": events,
             "spot_series": spot_series,
@@ -1213,12 +1359,11 @@ class Strategy4HighLowRetest:
                 "losses": losses,
                 "total_pnl": round(total_pnl, 2),
                 "lot_size": self.lot_size,
+                "data_source": "REAL" if any_real and not any_proxy else (
+                    "MIXED" if any_real else "PROXY"
+                ),
             },
-            "note": (
-                "Backtest assumes option Δ=1 (spot move ≈ option move). "
-                "Actual ATM option price will differ slightly due to theta/IV. "
-                "Use this for signal-quality validation, not exact PnL."
-            ),
+            "note": note,
         }
 
     # ── Persistence ───────────────────────────────────
@@ -1264,6 +1409,7 @@ class Strategy4HighLowRetest:
                 "max_breakout_extension": self.max_breakout_extension,
                 "max_trades_per_day": self.max_trades_per_day,
                 "allow_reentry": self.allow_reentry,
+                "itm_offset": self.itm_offset,
                 "gann_target": self.gann_target,
                 "gann_count": self.gann_count,
                 "index_name": self.index_name,
@@ -1374,6 +1520,7 @@ class Strategy4HighLowRetest:
                 "max_breakout_extension": self.max_breakout_extension,
                 "max_trades_per_day": self.max_trades_per_day,
                 "allow_reentry": self.allow_reentry,
+                "itm_offset": self.itm_offset,
                 "gann_target": self.gann_target,
                 "gann_count": self.gann_count,
                 "index_name": self.index_name,
@@ -1382,6 +1529,7 @@ class Strategy4HighLowRetest:
                 "signal_type": self.signal_type,
                 "entry_reason": self.entry_reason,
                 "atm_strike": self.atm_strike,
+                "strike": self.strike,
                 "option_symbol": self.option_symbol,
                 "option_ltp": self.option_ltp,
                 "fill_price": self.fill_price,

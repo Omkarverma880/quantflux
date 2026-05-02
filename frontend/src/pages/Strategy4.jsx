@@ -112,6 +112,7 @@ export default function Strategy4() {
     max_breakout_extension: 60,
     max_trades_per_day: 1,
     allow_reentry: false,
+    itm_offset: 100,
     index_name: 'NIFTY',
   });
   const [starting, setStarting] = useState(false);
@@ -314,6 +315,7 @@ export default function Strategy4() {
               ['sl_proximity', 'SL Proximity'],
               ['target_proximity', 'Target Proximity'],
               ['max_trades_per_day', 'Max Trades / Day'],
+              ['itm_offset', 'ITM Offset (idx pts)'],
             ].map(([k, label]) => (
               <label key={k} className="text-xs text-gray-400">
                 {label}
@@ -405,7 +407,8 @@ export default function Strategy4() {
           <Card title="Entry" icon={CheckCircle2}>
             <div className="space-y-1 text-sm">
               <Row label="Option" value={status.trade.option_symbol} />
-              <Row label="Strike" value={status.trade.atm_strike} />
+              <Row label="Strike" value={status.trade.strike || status.trade.atm_strike} />
+              <Row label="ATM (ref)" value={status.trade.atm_strike} />
               <Row label="Fill" value={status.trade.fill_price?.toFixed(2)} />
               <Row label="Reason" value={status.trade.entry_reason || '—'} />
             </div>
@@ -547,6 +550,25 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
           <span className="text-sm font-semibold text-purple-300">
             Backtest — {data.sim_date} (using prev-day {data.prev_date})
           </span>
+          {data.itm_offset !== undefined && (
+            <span className="text-[10px] text-gray-400 bg-surface-3 px-1.5 py-0.5 rounded">
+              ITM offset: {data.itm_offset} pts
+            </span>
+          )}
+          {data.summary?.data_source && (
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                data.summary.data_source === 'REAL'
+                  ? 'bg-green-600/15 text-green-400 border-green-500/30'
+                  : data.summary.data_source === 'MIXED'
+                  ? 'bg-amber-600/15 text-amber-400 border-amber-500/30'
+                  : 'bg-gray-600/15 text-gray-400 border-gray-500/30'
+              }`}>
+              {data.summary.data_source === 'REAL' && 'Real option prices'}
+              {data.summary.data_source === 'MIXED' && 'Mixed (real + proxy)'}
+              {data.summary.data_source === 'PROXY' && 'Spot proxy (Δ≈1)'}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <input type="date" value={btDate} onChange={(e) => setBtDate(e.target.value)}
@@ -603,9 +625,11 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
                 <th className="text-left px-2 py-1">Time</th>
                 <th className="text-left px-2 py-1">Side</th>
                 <th className="text-left px-2 py-1">Option</th>
-                <th className="text-right px-2 py-1">Entry</th>
-                <th className="text-right px-2 py-1">Exit</th>
+                <th className="text-right px-2 py-1">Spot</th>
+                <th className="text-right px-2 py-1">Entry ₹</th>
+                <th className="text-right px-2 py-1">Exit ₹</th>
                 <th className="text-left px-2 py-1">Result</th>
+                <th className="text-left px-2 py-1">Src</th>
                 <th className="text-right px-2 py-1">PnL</th>
               </tr>
             </thead>
@@ -619,10 +643,26 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
                   <td className="px-2 py-1 font-mono text-gray-300">
                     {t.option_symbol || (t.strike ? `NIFTY ${t.strike} ${t.side}` : '—')}
                   </td>
-                  <td className="px-2 py-1 text-right font-mono">{Number(t.entry).toFixed(2)}</td>
-                  <td className="px-2 py-1 text-right font-mono">{Number(t.exit).toFixed(2)}</td>
+                  <td className="px-2 py-1 text-right font-mono text-gray-400">
+                    {Number(t.entry).toFixed(2)}
+                  </td>
+                  <td className="px-2 py-1 text-right font-mono">
+                    {t.entry_premium != null ? Number(t.entry_premium).toFixed(2) : '—'}
+                  </td>
+                  <td className="px-2 py-1 text-right font-mono">
+                    {t.exit_premium != null ? Number(t.exit_premium).toFixed(2) : Number(t.exit).toFixed(2)}
+                  </td>
                   <td className={`px-2 py-1 ${t.exit_type === 'TARGET_HIT' ? 'text-green-400' : t.exit_type === 'SL_HIT' ? 'text-red-400' : 'text-yellow-400'}`}>
                     {t.exit_type}
+                  </td>
+                  <td className="px-2 py-1">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                      t.data_source === 'REAL'
+                        ? 'bg-green-600/15 text-green-400 border-green-500/30'
+                        : 'bg-gray-600/15 text-gray-400 border-gray-500/30'
+                    }`}>
+                      {t.data_source || 'PROXY'}
+                    </span>
                   </td>
                   <td className={`px-2 py-1 text-right font-mono ${t.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     ₹{Number(t.pnl).toFixed(2)}
