@@ -37,6 +37,8 @@ class Strategy4Config(BaseModel):
     max_breakout_extension: float = 60
     max_trades_per_day: int = 1
     allow_reentry: bool = False
+    gann_target: bool = False
+    gann_count: int = 1
     index_name: str = "NIFTY"
 
 

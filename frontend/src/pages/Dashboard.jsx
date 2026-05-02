@@ -214,24 +214,27 @@ export default function Dashboard() {
   const [s1, setS1] = useState(null);
   const [s2, setS2] = useState(null);
   const [s3, setS3] = useState(null);
+  const [s4, setS4] = useState(null);
   const [loading, setLoading] = useState(true);
   const [engineLoading, setEngineLoading] = useState(false);
   const [time, setTime] = useState(new Date());
 
   const fetchData = useCallback(async () => {
     try {
-      const [sm, en, st1, st2, st3] = await Promise.all([
+      const [sm, en, st1, st2, st3, st4] = await Promise.all([
         api.getSummary().catch(() => null),
         api.getEngineStatus().catch(() => null),
         api.getStrategy1TradeStatus().catch(() => null),
         api.getStrategy2TradeStatus().catch(() => null),
         api.getStrategy3TradeStatus().catch(() => null),
+        api.getStrategy4TradeStatus().catch(() => null),
       ]);
       if (sm) setSummary(sm);
       if (en) setEngine(en);
       if (st1) setS1(st1);
       if (st2) setS2(st2);
       if (st3) setS3(st3);
+      if (st4) setS4(st4);
     } finally {
       setLoading(false);
     }
@@ -244,6 +247,7 @@ export default function Dashboard() {
       if (d.s1) setS1(d.s1);
       if (d.s2) setS2(d.s2);
       if (d.s3) setS3(d.s3);
+      if (d.s4) setS4(d.s4);
     }
   }, []));
 
@@ -263,8 +267,8 @@ export default function Dashboard() {
   // Build equity curve from trade logs
   const equityCurve = useMemo(() => {
     const allTrades = [];
-    [s1, s2, s3].forEach((s, idx) => {
-      const label = ['S1', 'S2', 'S3'][idx];
+    [s1, s2, s3, s4].forEach((s, idx) => {
+      const label = ['S1', 'S2', 'S3', 'S4'][idx];
       (s?.trade_log || []).forEach((t) => {
         if (t.pnl !== undefined && t.pnl !== null) {
           allTrades.push({
@@ -288,7 +292,7 @@ export default function Dashboard() {
         strategy: t.strategy,
       };
     });
-  }, [s1, s2, s3]);
+  }, [s1, s2, s3, s4]);
 
   if (loading) return <DashboardSkeleton />;
 
@@ -320,14 +324,16 @@ export default function Dashboard() {
   const s1Pnl = stratPnl(s1);
   const s2Pnl = stratPnl(s2);
   const s3Pnl = stratPnl(s3);
-  const totalStratPnl = s1Pnl + s2Pnl + s3Pnl;
+  const s4Pnl = stratPnl(s4);
+  const totalStratPnl = s1Pnl + s2Pnl + s3Pnl + s4Pnl;
 
   const totalTrades =
     (s1?.trade_log?.length || 0) +
     (s2?.trade_log?.length || 0) +
-    (s3?.trade_log?.length || 0);
+    (s3?.trade_log?.length || 0) +
+    (s4?.trade_log?.length || 0);
 
-  const openPositions = [s1, s2, s3].filter((s) => s?.state === 'POSITION_OPEN').length;
+  const openPositions = [s1, s2, s3, s4].filter((s) => s?.state === 'POSITION_OPEN').length;
 
   const riskBlocked = summary?.risk && !summary.risk.trading_allowed;
 
@@ -434,7 +440,7 @@ export default function Dashboard() {
             <RefreshCw className="w-2.5 h-2.5" /> 3s
           </span>
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           <StrategyCard
             label="Gann CV"
             shortName="Strategy 1"
@@ -452,6 +458,12 @@ export default function Dashboard() {
             shortName="Strategy 3"
             data={s3}
             onClick={() => navigate('/strategy3-trade')}
+          />
+          <StrategyCard
+            label="HL Retest"
+            shortName="Strategy 4"
+            data={s4}
+            onClick={() => navigate('/strategy4-trade')}
           />
         </div>
       </div>

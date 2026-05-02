@@ -112,6 +112,8 @@ export default function Strategy4() {
     max_breakout_extension: 60,
     max_trades_per_day: 1,
     allow_reentry: false,
+    gann_target: false,
+    gann_count: 1,
     index_name: 'NIFTY',
   });
   const [starting, setStarting] = useState(false);
@@ -122,6 +124,10 @@ export default function Strategy4() {
   const [btDate, setBtDate] = useState('');
   const tickRef = useRef(0);
   const timerRef = useRef(null);
+  // Track whether the local config has been seeded from the server.
+  // After seeding once, polls must NOT overwrite the user's in-progress
+  // edits. Re-seeding only happens when the user explicitly clicks Save.
+  const configSeededRef = useRef(false);
 
   /* ── Data fetching ─────────────────────────── */
   const fetchStatus = useCallback(async () => {
@@ -129,7 +135,12 @@ export default function Strategy4() {
       setLoading(true);
       const res = await api.getStrategy4TradeStatus();
       setStatus(res);
-      if (res?.config) setConfig((c) => ({ ...c, ...res.config }));
+      // Seed config from server only on first load to avoid clobbering
+      // the user's in-progress edits during 2s polls.
+      if (res?.config && !configSeededRef.current) {
+        setConfig((c) => ({ ...c, ...res.config }));
+        configSeededRef.current = true;
+      }
       const s = res?.spot?.price ?? 0;
       if (s > 0) {
         tickRef.current += 1;
@@ -188,8 +199,16 @@ export default function Strategy4() {
     finally { setStopping(false); }
   };
   const saveConfig = async () => {
-    try { await api.strategy4TradeUpdateConfig(config); await fetchStatus(); }
-    catch (e) { alert(e.message || 'Config save failed'); }
+    try {
+      await api.strategy4TradeUpdateConfig(config);
+      // Force re-seed from server after save so values reflect the
+      // canonical persisted state.
+      configSeededRef.current = false;
+      await fetchStatus();
+      alert('Config saved');
+    } catch (e) {
+      alert(e.message || 'Config save failed');
+    }
   };
   const refreshLevels = async () => {
     try { await api.getStrategy4Levels(); await fetchStatus(); }
@@ -280,7 +299,7 @@ export default function Strategy4() {
           <p>• <strong>Fake Breakdown → CALL</strong>: spot dips below prev_low then reclaims above it → BUY ATM CE.</p>
           <p>• <strong>Fake Breakout → PUT</strong>: spot pops above prev_high then loses it → BUY ATM PE.</p>
           <p>• <strong>Sideways</strong>: spot inside range → NO TRADE.</p>
-          <p className="text-xs text-gray-500">Entries fire after 10:15. Auto square-off at 15:15. SL hit deactivates the strategy until restart.</p>
+          <p className="text-xs text-gray-500">Entries can fire any time after market open (levels are derived from yesterday). Auto square-off at 15:15. SL hit deactivates the strategy until restart.</p>
         </div>
       )}
 
@@ -306,13 +325,31 @@ export default function Strategy4() {
                   onChange={(e) => setConfig((c) => ({ ...c, [k]: Number(e.target.value) }))} />
               </label>
             ))}
+            {config.gann_target && (
+              <label className="text-xs text-gray-400">
+                Gann Count (1-5)
+                <input type="number" min={1} max={5}
+                  className="mt-1 w-full bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-white text-sm"
+                  value={config.gann_count ?? 1}
+                  onChange={(e) => setConfig((c) => ({ ...c, gann_count: Math.max(1, Math.min(5, Number(e.target.value) || 1)) }))} />
+                <span className="text-[10px] text-gray-500">Target = Nth Gann level above fill</span>
+              </label>
+            )}
             <label className="text-xs text-gray-400 flex items-center gap-2 mt-5">
-              <input type="checkbox" checked={config.allow_reentry}
+              <input type="checkbox" checked={!!config.allow_reentry}
                 onChange={(e) => setConfig((c) => ({ ...c, allow_reentry: e.target.checked }))} />
               Allow re-entry after target
             </label>
+            <label className="text-xs text-gray-400 flex items-center gap-2 mt-5">
+              <input type="checkbox" checked={!!config.gann_target}
+                onChange={(e) => setConfig((c) => ({ ...c, gann_target: e.target.checked }))} />
+              Use Gann target (overrides target points)
+            </label>
           </div>
-          <div className="mt-3 flex justify-end">
+          <div className="mt-3 flex items-center justify-between">
+            <p className="text-[11px] text-gray-500">
+              Tip: Re-entry needs <span className="text-gray-300">Max Trades / Day</span> &gt; 1 to take effect.
+            </p>
             <button onClick={saveConfig}
               className="px-3 py-1.5 rounded-lg text-xs font-medium bg-brand-600 hover:bg-brand-700 text-white">
               Save Config
@@ -509,6 +546,15 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
   // Map time → close for marker placement
   const timeToClose = new Map(series.map((p) => [p.t, p.c]));
   const totalPnl = data.summary?.total_pnl ?? 0;
+  // Compute Y domain that always includes prev_high & prev_low so the
+  // dotted reference lines are visible even when price never approaches them.
+  const yValues = [
+    ...series.map((p) => p.c),
+    ...(Number.isFinite(data.prev_high) ? [data.prev_high] : []),
+    ...(Number.isFinite(data.prev_low) ? [data.prev_low] : []),
+  ].filter((v) => Number.isFinite(v));
+  const yLo = yValues.length ? Math.min(...yValues) - 20 : 'auto';
+  const yHi = yValues.length ? Math.max(...yValues) + 20 : 'auto';
 
   return (
     <div className="bg-surface-2 border border-purple-500/40 rounded-xl p-4 space-y-3">
@@ -547,10 +593,10 @@ function BacktestPanel({ data, btDate, setBtDate, onRun, btLoading, onClose }) {
         <LineChart data={series} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
           <XAxis dataKey="t" stroke="#475569" fontSize={10} interval={Math.floor(series.length / 8) || 0} />
-          <YAxis domain={['auto', 'auto']} stroke="#475569" fontSize={10} width={60} />
+          <YAxis domain={[yLo, yHi]} stroke="#475569" fontSize={10} width={60} />
           <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 6 }} />
-          <ReferenceLine y={data.prev_high} stroke="#22c55e" strokeDasharray="4 4" />
-          <ReferenceLine y={data.prev_low} stroke="#ef4444" strokeDasharray="4 4" />
+          <ReferenceLine y={data.prev_high} stroke="#22c55e" strokeDasharray="4 4" label={{ value: `H ${Number(data.prev_high).toFixed(0)}`, position: 'right', fill: '#22c55e', fontSize: 10 }} />
+          <ReferenceLine y={data.prev_low} stroke="#ef4444" strokeDasharray="4 4" label={{ value: `L ${Number(data.prev_low).toFixed(0)}`, position: 'right', fill: '#ef4444', fontSize: 10 }} />
           <Line type="monotone" dataKey="c" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
           {entries.map((e, i) => (
             <ReferenceDot key={`en${i}`} x={e.t} y={timeToClose.get(e.t)}

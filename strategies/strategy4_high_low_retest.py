@@ -31,6 +31,7 @@ Trades-per-day cap is configurable; default = 1.
 """
 from __future__ import annotations
 
+import bisect
 import json
 import threading
 from datetime import date, datetime, time as dtime, timedelta
@@ -51,6 +52,8 @@ MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
 FIRST_HOUR_END = dtime(10, 15)
 PRE_CLOSE_EXIT = dtime(15, 15)
+
+GANN_CSV = Path(__file__).resolve().parent.parent / "gann_levels.csv"
 
 STATE_FILE = settings.DATA_DIR / "strategy_configs" / "strategy4_state.json"
 TRADE_HISTORY_FILE = settings.DATA_DIR / "trade_history" / "strategy4_trades.json"
@@ -87,6 +90,11 @@ class Strategy4HighLowRetest:
         self.max_trades_per_day = int(config.get("max_trades_per_day", 1))
         # Re-entry: continue scanning after one trade closes (within the cap)
         self.allow_reentry = bool(config.get("allow_reentry", False))
+        # Gann target: use Gann level grid instead of flat target_points
+        self.gann_target = bool(config.get("gann_target", False))
+        # How many Gann levels above fill price to target (1, 2, 3, …)
+        self.gann_count = max(1, int(config.get("gann_count", 1)))
+        self.gann_levels = self._load_gann_levels()
         # Index symbol — fixed to NIFTY for now per spec.
         self.index_name = str(config.get("index_name", "NIFTY")).upper()
 
@@ -135,6 +143,47 @@ class Strategy4HighLowRetest:
 
     # ── Public controls ───────────────────────────────
 
+    @staticmethod
+    def _load_gann_levels() -> list[int]:
+        levels = []
+        if GANN_CSV.exists():
+            with open(GANN_CSV, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and line.isdigit():
+                        levels.append(int(line))
+        levels.sort()
+        return levels
+
+    def _ceil_gann(self, price: float) -> float:
+        """Smallest gann level strictly greater than price."""
+        if not self.gann_levels:
+            return price + self.target_points
+        idx = bisect.bisect_right(self.gann_levels, price)
+        if idx < len(self.gann_levels):
+            return float(self.gann_levels[idx])
+        return float(self.gann_levels[-1])
+
+    def _nth_gann_above(self, price: float, n: int) -> float:
+        """N-th Gann level above the given price."""
+        if not self.gann_levels:
+            return price + self.target_points * max(1, n)
+        idx = bisect.bisect_right(self.gann_levels, price)
+        target_idx = idx + (max(1, n) - 1)
+        if target_idx < len(self.gann_levels):
+            return float(self.gann_levels[target_idx])
+        return float(self.gann_levels[-1])
+
+    def _compute_target(self, fill_price: float) -> float:
+        """Resolve target price honoring gann_target / gann_count config."""
+        if self.gann_target and self.gann_levels:
+            tgt = self._nth_gann_above(fill_price, self.gann_count)
+            # Safety: never below fill_price + 1
+            if tgt <= fill_price:
+                tgt = fill_price + max(1.0, self.target_points)
+            return float(tgt)
+        return float(fill_price + self.target_points)
+
     def start(self, config: dict):
         self.apply_config(config, save=False)
         self.is_active = True
@@ -161,12 +210,14 @@ class Strategy4HighLowRetest:
         self.max_breakout_extension = float(config.get("max_breakout_extension", self.max_breakout_extension))
         self.max_trades_per_day = int(config.get("max_trades_per_day", self.max_trades_per_day))
         self.allow_reentry = bool(config.get("allow_reentry", self.allow_reentry))
+        self.gann_target = bool(config.get("gann_target", self.gann_target))
+        self.gann_count = max(1, int(config.get("gann_count", self.gann_count)))
         self.index_name = str(config.get("index_name", self.index_name)).upper()
 
         # Recompute SL / target on an open position when shadow legs are alive
         if self.state == State.POSITION_OPEN and self.fill_price > 0:
             if self.target_shadow:
-                self.target_price = self.fill_price + self.target_points
+                self.target_price = self._compute_target(self.fill_price)
                 if self.target_order:
                     self.target_order["price"] = self.target_price
             if self.sl_shadow:
@@ -663,7 +714,7 @@ class Strategy4HighLowRetest:
             logger.error("S4 fill check failed: %s", exc)
 
     def _on_entry_filled(self):
-        self.target_price = self.fill_price + self.target_points
+        self.target_price = self._compute_target(self.fill_price)
         self.sl_price = max(0.05, self.fill_price - self.sl_points)
         self.sl_shadow = True
         self.target_shadow = True
@@ -1195,6 +1246,8 @@ class Strategy4HighLowRetest:
                 "max_breakout_extension": self.max_breakout_extension,
                 "max_trades_per_day": self.max_trades_per_day,
                 "allow_reentry": self.allow_reentry,
+                "gann_target": self.gann_target,
+                "gann_count": self.gann_count,
                 "index_name": self.index_name,
             },
             "saved_at": datetime.now().isoformat(),
@@ -1303,6 +1356,8 @@ class Strategy4HighLowRetest:
                 "max_breakout_extension": self.max_breakout_extension,
                 "max_trades_per_day": self.max_trades_per_day,
                 "allow_reentry": self.allow_reentry,
+                "gann_target": self.gann_target,
+                "gann_count": self.gann_count,
                 "index_name": self.index_name,
             },
             "trade": {
