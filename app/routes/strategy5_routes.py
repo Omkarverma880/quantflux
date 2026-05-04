@@ -148,7 +148,9 @@ async def check_strategy(user_id: int = Depends(login_required), db: Session = D
     broker = get_user_broker(db, user_id)
     authed = _is_authed(db, user_id)
     strat = _get_strategy(broker, user_id)
-    if not strat.is_active:
+    # Drive check() while a position is open even after a manual stop —
+    # otherwise SL/TGT promotion and 15:15 auto square-off are skipped.
+    if not strat.is_active and getattr(strat.state, "value", str(strat.state)) != "POSITION_OPEN":
         return strat.get_status()
     try:
         spot = _get_spot_price(broker, authed)

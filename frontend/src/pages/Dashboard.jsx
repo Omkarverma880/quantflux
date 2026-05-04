@@ -514,11 +514,13 @@ export default function Dashboard() {
           <BarChart3 className="w-4 h-4 text-brand-400" />
           <h3 className="text-sm font-semibold text-white">Strategy Comparison</h3>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {[
             { label: 'Gann CV', short: 'S1', data: s1, pnl: s1Pnl, color: 'brand' },
             { label: 'Option Sell', short: 'S2', data: s2, pnl: s2Pnl, color: 'blue' },
             { label: 'CV+VWAP', short: 'S3', data: s3, pnl: s3Pnl, color: 'brand' },
+            { label: 'HL Retest', short: 'S4', data: s4, pnl: s4Pnl, color: 'brand' },
+            { label: 'Gann Range', short: 'S5', data: s5, pnl: s5Pnl, color: 'brand' },
           ].map((s) => {
             const trades = s.data?.trade_log?.length || 0;
             const wins = (s.data?.trade_log || []).filter((t) => (t.pnl || 0) > 0).length;
@@ -550,6 +552,8 @@ export default function Dashboard() {
               { label: 'Strategy 1 — Gann CV', pnl: s1Pnl, trades: s1?.trade_log?.length || 0, color: 'brand' },
               { label: 'Strategy 2 — Option Sell', pnl: s2Pnl, trades: s2?.trade_log?.length || 0, color: 'blue' },
               { label: 'Strategy 3 — CV+VWAP', pnl: s3Pnl, trades: s3?.trade_log?.length || 0, color: 'brand' },
+              { label: 'Strategy 4 — HL Retest', pnl: s4Pnl, trades: s4?.trade_log?.length || 0, color: 'brand' },
+              { label: 'Strategy 5 — Gann Range', pnl: s5Pnl, trades: s5?.trade_log?.length || 0, color: 'brand' },
             ].map((s) => (
               <div key={s.label} className="flex items-center justify-between py-2 border-b border-surface-3/40 last:border-0">
                 <div>

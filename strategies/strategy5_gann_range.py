@@ -152,6 +152,10 @@ class Strategy5GannRange:
         self.sl_shadow: bool = True
         self.target_shadow: bool = True
 
+        # Counter used to throttle the (relatively heavy) positions
+        # endpoint poll inside _check_exit — see manual-exit detection.
+        self._exit_check_count: int = 0
+
         # ── Misc ──
         self._instruments_cache = None
         self._instruments_date: Optional[date] = None
@@ -483,7 +487,10 @@ class Strategy5GannRange:
     # ── Main check ────────────────────────────────────
 
     def check(self, spot_price: float) -> dict:
-        if not self.is_active:
+        # Allow management of an open position even after a manual stop —
+        # otherwise SL/TGT promotion and 15:15 auto square-off would be
+        # silently skipped (the bug seen in live testing on 04-May).
+        if not self.is_active and self.state != State.POSITION_OPEN:
             return self.get_status()
 
         if not self._check_lock.acquire(blocking=False):
@@ -592,6 +599,25 @@ class Strategy5GannRange:
             if self.spot_price > self.spot_extreme:
                 self.spot_extreme = self.spot_price
 
+            # Reclaim abandon (retest_only): if the spot has dropped back
+            # well below gann_upper the breakout thesis is invalidated.
+            # Without this, the strategy would sit in BREAKOUT_WATCH for
+            # hours and fire a stale BUY CALL on any later wick that
+            # touched the level — the mirror-image of the bad PUT trade
+            # observed on 04-May.
+            if self.retest_only and self.spot_price < self.gann_upper - self.retest_buffer / 2:
+                logger.info(
+                    "S5 BREAKOUT_WATCH abandoned — spot %.2f reclaimed below gann_upper %.2f (retest_only)",
+                    self.spot_price, self.gann_upper,
+                )
+                self.scenario = "Reclaim — re-anchored"
+                self.signal = "NO_TRADE"
+                self.state = State.IDLE
+                self._level_crossed = None
+                self.spot_extreme = 0.0
+                self._anchor_gann_range()
+                return
+
             # Fake breakout: price came back below gann_upper → BUY PUT
             # (skipped when retest_only is enabled)
             if not self.retest_only and self.spot_price < self.gann_upper - self.retest_buffer / 2:
@@ -632,6 +658,25 @@ class Strategy5GannRange:
         elif self.state == State.BREAKDOWN_WATCH:
             if self.spot_price < self.spot_extreme:
                 self.spot_extreme = self.spot_price
+
+            # Reclaim abandon (retest_only): if the spot has rallied back
+            # well above gann_lower the breakdown thesis is invalidated.
+            # This was the exact bug seen on 04-May — spot dipped to
+            # 24019 (below gann_lower 24025), then bounced into the
+            # range and stayed bullish; hours later a single wick to
+            # ~24025 fired a BUY PUT against a clear up-move.
+            if self.retest_only and self.spot_price > self.gann_lower + self.retest_buffer / 2:
+                logger.info(
+                    "S5 BREAKDOWN_WATCH abandoned — spot %.2f reclaimed above gann_lower %.2f (retest_only)",
+                    self.spot_price, self.gann_lower,
+                )
+                self.scenario = "Reclaim — re-anchored"
+                self.signal = "NO_TRADE"
+                self.state = State.IDLE
+                self._level_crossed = None
+                self.spot_extreme = 0.0
+                self._anchor_gann_range()
+                return
 
             # Fake breakdown: price reclaimed above gann_lower → BUY CALL
             # (skipped when retest_only is enabled)
@@ -869,14 +914,54 @@ class Strategy5GannRange:
     # ── Exit handling ─────────────────────────────────
 
     def _check_exit(self):
+        # Resilient LTP read: fall back to the most-recent cached LTP
+        # when the broker quote endpoint flakes out — without this, a
+        # single API hiccup would silently skip SL/TGT promotion (the
+        # bug seen on 04-May).
+        ltp = 0.0
         try:
             ltp_map = self.broker.get_ltp([f"NFO:{self.option_symbol}"])
             ltp = float(ltp_map.get(f"NFO:{self.option_symbol}", 0) or 0)
-        except Exception:
-            return
+        except Exception as exc:
+            logger.warning(
+                "S5 exit-LTP fetch failed (%s) — falling back to cached %.2f",
+                exc, self.current_ltp,
+            )
+        if ltp <= 0:
+            ltp = float(self.current_ltp or 0)
         if ltp <= 0:
             return
         self.current_ltp = ltp
+
+        # ── Manual-exit detection ──
+        # If the user closed the position via Kite Web / mobile (or the
+        # broker squared it off externally), the net qty for our option
+        # symbol drops to zero. Detect that and complete the trade so
+        # the UI doesn't keep showing "Position Open" forever.
+        if (
+            not settings.PAPER_TRADE
+            and self.option_symbol
+            and self.fill_price > 0
+        ):
+            self._exit_check_count = (self._exit_check_count + 1) % 10
+            if self._exit_check_count == 0:
+                try:
+                    positions = self.broker.get_positions()
+                    matched = next(
+                        (p for p in positions if p.tradingsymbol == self.option_symbol),
+                        None,
+                    )
+                    if matched is not None and int(matched.quantity) == 0:
+                        logger.warning(
+                            "S5 manual exit detected (%s qty=0) — closing trade",
+                            self.option_symbol,
+                        )
+                        self._cancel_order(self.sl_order)
+                        self._cancel_order(self.target_order)
+                        self._complete_trade("MANUAL_EXIT", ltp)
+                        return
+                except Exception as exc:
+                    logger.debug("S5 position poll failed: %s", exc)
 
         if settings.PAPER_TRADE:
             if ltp <= self.sl_price:

@@ -158,12 +158,15 @@ def _run_strategies_for_user(uid: int):
             s3.check(cv_data, spot_price)
 
         s4 = _get_s4(broker, uid)
-        if s4.is_active:
+        # Continue driving check() while a position is open even after
+        # the user has stopped the strategy — otherwise SL/TGT promotion
+        # and the 15:15 auto square-off would be silently skipped.
+        if s4.is_active or getattr(s4.state, "value", str(s4.state)) == "POSITION_OPEN":
             s4_spot = _get_s4_spot(broker, authenticated)
             s4.check(s4_spot)
 
         s5 = _get_s5(broker, uid)
-        if s5.is_active:
+        if s5.is_active or getattr(s5.state, "value", str(s5.state)) == "POSITION_OPEN":
             s5_spot = _get_s5_spot(broker, authenticated)
             s5.check(s5_spot)
     finally:

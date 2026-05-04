@@ -149,6 +149,10 @@ class Strategy4HighLowRetest:
         self.sl_shadow: bool = True
         self.target_shadow: bool = True
 
+        # Counter used to throttle the (relatively heavy) positions
+        # endpoint poll inside _check_exit — see manual-exit detection.
+        self._exit_check_count: int = 0
+
         # ── Misc ──
         self._instruments_cache = None
         self._instruments_date: Optional[date] = None
@@ -457,7 +461,10 @@ class Strategy4HighLowRetest:
     # ── Main check ────────────────────────────────────
 
     def check(self, spot_price: float) -> dict:
-        if not self.is_active:
+        # Allow management of an open position even after a manual stop —
+        # otherwise SL/TGT promotion and 15:15 auto square-off would be
+        # silently skipped (the bug seen in live testing on 04-May).
+        if not self.is_active and self.state != State.POSITION_OPEN:
             return self.get_status()
 
         if not self._check_lock.acquire(blocking=False):
@@ -828,14 +835,57 @@ class Strategy4HighLowRetest:
     # ── Exit handling ─────────────────────────────────
 
     def _check_exit(self):
+        # Resilient LTP read: fall back to the most-recent cached LTP
+        # when the broker quote endpoint flakes out — without this, a
+        # single API hiccup would silently skip SL/TGT promotion (the
+        # bug seen on 04-May where target was never placed even though
+        # LTP had pushed well past the level).
+        ltp = 0.0
         try:
             ltp_map = self.broker.get_ltp([f"NFO:{self.option_symbol}"])
             ltp = float(ltp_map.get(f"NFO:{self.option_symbol}", 0) or 0)
-        except Exception:
-            return
+        except Exception as exc:
+            logger.warning(
+                "S4 exit-LTP fetch failed (%s) — falling back to cached %.2f",
+                exc, self.current_ltp,
+            )
+        if ltp <= 0:
+            ltp = float(self.current_ltp or 0)
         if ltp <= 0:
             return
         self.current_ltp = ltp
+
+        # ── Manual-exit detection ──
+        # If the user closed the position via Kite Web / mobile (or the
+        # broker squared it off externally), the net qty for our option
+        # symbol drops to zero. Detect that and complete the trade so
+        # the UI doesn't keep showing "Position Open" forever.
+        # Throttled to ~once every 10 ticks to avoid hammering the
+        # positions endpoint.
+        if (
+            not settings.PAPER_TRADE
+            and self.option_symbol
+            and self.fill_price > 0
+        ):
+            self._exit_check_count = (self._exit_check_count + 1) % 10
+            if self._exit_check_count == 0:
+                try:
+                    positions = self.broker.get_positions()
+                    matched = next(
+                        (p for p in positions if p.tradingsymbol == self.option_symbol),
+                        None,
+                    )
+                    if matched is not None and int(matched.quantity) == 0:
+                        logger.warning(
+                            "S4 manual exit detected (%s qty=0) — closing trade",
+                            self.option_symbol,
+                        )
+                        self._cancel_order(self.sl_order)
+                        self._cancel_order(self.target_order)
+                        self._complete_trade("MANUAL_EXIT", ltp)
+                        return
+                except Exception as exc:
+                    logger.debug("S4 position poll failed: %s", exc)
 
         if settings.PAPER_TRADE:
             if ltp <= self.sl_price:
