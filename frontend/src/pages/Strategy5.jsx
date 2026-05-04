@@ -148,8 +148,9 @@ export default function Strategy5() {
       const s = res?.spot?.price ?? 0;
       if (s > 0) {
         tickRef.current += 1;
+        const tStr = new Date().toLocaleTimeString('en-IN', { hour12: false });
         setSpotHistory((h) => {
-          const next = [...h, { x: tickRef.current, y: s }];
+          const next = [...h, { x: tickRef.current, y: s, t: tStr }];
           return next.slice(-SPOT_HISTORY_LIMIT);
         });
       }
@@ -167,8 +168,9 @@ export default function Strategy5() {
       const s = res?.spot?.price ?? 0;
       if (s > 0) {
         tickRef.current += 1;
+        const tStr = new Date().toLocaleTimeString('en-IN', { hour12: false });
         setSpotHistory((h) => {
-          const next = [...h, { x: tickRef.current, y: s }];
+          const next = [...h, { x: tickRef.current, y: s, t: tStr }];
           return next.slice(-SPOT_HISTORY_LIMIT);
         });
       }
@@ -264,10 +266,10 @@ export default function Strategy5() {
   const scenario = status?.scenario || '—';
 
   const entryDot = useMemo(() => {
-    if (!status?.trade?.fill_price || !status?.trade?.fill_price) return null;
-    // Entry marker at the latest tick, on the spot at entry time
-    return { x: tickRef.current, y: spot, fill: status.trade.signal_type === 'CE' ? '#22c55e' : '#ef4444' };
-  }, [status?.trade?.fill_price, spot]);
+    if (!status?.trade?.fill_price || !spotHistory.length) return null;
+    const last = spotHistory[spotHistory.length - 1];
+    return { x: last.t, y: spot, fill: status.trade.signal_type === 'CE' ? '#22c55e' : '#ef4444' };
+  }, [status?.trade?.fill_price, status?.trade?.signal_type, spot, spotHistory]);
 
   const samples = useMemo(() => SCENARIO_SAMPLES(high || 19500, low || 19300), [high, low]);
 
@@ -428,18 +430,86 @@ export default function Strategy5() {
       {/* Main Live Chart */}
       <Card title="Live Spot vs Active Gann Range" icon={TrendingUp}>
         {high > 0 && low > 0 ? (
-          <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={spotHistory} margin={{ top: 10, right: 20, left: 0, bottom: 5 }}>
+          <>
+          <ResponsiveContainer width="100%" height={340}>
+            <LineChart data={spotHistory} margin={{ top: 10, right: 70, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="x" stroke="#475569" fontSize={10} />
-              <YAxis domain={['auto', 'auto']} stroke="#475569" fontSize={10} width={60} />
-              <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 6 }} />
+              <XAxis dataKey="t" stroke="#475569" fontSize={10} minTickGap={40} />
+              <YAxis
+                domain={[
+                  (dataMin) => {
+                    const lo = Math.min(dataMin ?? low, low, high);
+                    return Math.floor(lo - Math.max(15, lo * 0.0015));
+                  },
+                  (dataMax) => {
+                    const hi = Math.max(dataMax ?? high, low, high);
+                    return Math.ceil(hi + Math.max(15, hi * 0.0015));
+                  },
+                ]}
+                stroke="#475569" fontSize={10} width={60}
+                tickFormatter={(v) => Number(v).toFixed(0)}
+              />
+              <Tooltip
+                contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 6 }}
+                labelStyle={{ color: '#94a3b8', fontSize: 11 }}
+                formatter={(val) => [`₹ ${Number(val).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Spot']}
+                labelFormatter={(t) => `Time: ${t}`}
+              />
               <ReferenceLine y={high} stroke="#22c55e" strokeDasharray="6 4" label={{ value: `Gann Up ${high.toFixed(2)}`, fill: '#22c55e', fontSize: 11, position: 'right' }} />
               <ReferenceLine y={low} stroke="#ef4444" strokeDasharray="6 4" label={{ value: `Gann Lo ${low.toFixed(2)}`, fill: '#ef4444', fontSize: 11, position: 'right' }} />
               <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
+              {spotHistory.length > 0 && (
+                <ReferenceDot
+                  x={spotHistory[spotHistory.length - 1].t}
+                  y={spotHistory[spotHistory.length - 1].y}
+                  r={5} fill="#3b82f6" stroke="#fff" strokeWidth={1.5}
+                  label={{
+                    value: `LTP ${Number(spotHistory[spotHistory.length - 1].y).toFixed(2)}`,
+                    position: 'right', fill: '#60a5fa', fontSize: 11,
+                  }}
+                />
+              )}
               {entryDot && <ReferenceDot x={entryDot.x} y={entryDot.y} r={6} fill={entryDot.fill} stroke="#fff" />}
             </LineChart>
           </ResponsiveContainer>
+          {/* Live snapshot footer: LTP, range distance, ITM CE/PE preview */}
+          {spot > 0 && (() => {
+            const atm = Math.round(spot / (config.strike_interval || 50)) * (config.strike_interval || 50);
+            const itm = Number(config.itm_offset ?? 100);
+            const ceStrike = atm - itm;
+            const peStrike = atm + itm;
+            const inRange = spot >= low && spot <= high;
+            const distHigh = spot - high;
+            const distLow = spot - low;
+            const locked = !!status?.levels?.locked;
+            return (
+              <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                <div className="bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5">
+                  <div className="text-gray-500">LTP</div>
+                  <div className="text-white font-semibold">₹ {spot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                </div>
+                <div className="bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5">
+                  <div className="text-gray-500">Position vs Gann {locked ? '(LOCKED)' : '(FLOATING)'}</div>
+                  <div className={`font-semibold ${inRange ? 'text-yellow-400' : distHigh > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {inRange
+                      ? `INSIDE  (+${distLow.toFixed(1)} / ${distHigh.toFixed(1)})`
+                      : distHigh > 0
+                        ? `ABOVE UP +${distHigh.toFixed(1)}`
+                        : `BELOW LO ${distLow.toFixed(1)}`}
+                  </div>
+                </div>
+                <div className="bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5">
+                  <div className="text-gray-500">ITM CE (if BUY CALL)</div>
+                  <div className="text-emerald-400 font-semibold">{ceStrike} CE  <span className="text-gray-500 text-[10px]">(ATM {atm} − {itm})</span></div>
+                </div>
+                <div className="bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5">
+                  <div className="text-gray-500">ITM PE (if BUY PUT)</div>
+                  <div className="text-rose-400 font-semibold">{peStrike} PE  <span className="text-gray-500 text-[10px]">(ATM {atm} + {itm})</span></div>
+                </div>
+              </div>
+            );
+          })()}
+          </>
         ) : (
           <div className="h-[320px] flex items-center justify-center text-gray-500 text-sm">
             <AlertCircle className="w-4 h-4 mr-2" /> Levels not yet loaded — click "Refresh Levels".
