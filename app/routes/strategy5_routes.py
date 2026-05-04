@@ -110,6 +110,21 @@ async def get_levels(user_id: int = Depends(login_required), db: Session = Depen
     return strat.fetch_levels(force=True)
 
 
+@router.get("/intraday")
+async def get_intraday(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Today's NIFTY 50 minute-candle close series (9:15 → now)."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "series": []}
+    strat = _get_strategy(broker, user_id)
+    try:
+        series = strat.get_intraday_series()
+        return {"status": "ok", "series": series}
+    except Exception as exc:
+        logger.error("S5 intraday fetch failed: %s", exc)
+        return {"status": "error", "series": [], "message": str(exc)}
+
+
 @router.post("/start")
 async def start_strategy(config: Strategy5Config, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     params = config.model_dump()

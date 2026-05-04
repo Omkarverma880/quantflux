@@ -11,7 +11,7 @@ import {
 import { api } from '../api';
 
 const REFRESH_MS = 2_000;
-const SPOT_HISTORY_LIMIT = 120; // ~4 minutes of 2s ticks
+const SPOT_HISTORY_LIMIT = 500; // full intraday session (~375 minute candles + live ticks)
 
 const STATE_STYLE = {
   IDLE:             { bg: 'bg-gray-600/20',   text: 'text-gray-400',   label: 'Idle' },
@@ -187,6 +187,34 @@ export default function Strategy4() {
     return () => clearInterval(timerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status?.is_active]);
+
+  // One-time seed of spotHistory with today's intraday minute candles
+  // so the live chart shows the full session shape (like backtest).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.getStrategy4Intraday();
+        if (cancelled) return;
+        const series = Array.isArray(res?.series) ? res.series : [];
+        if (!series.length) return;
+        // Seed tickRef beyond seeded length so live appends keep ascending
+        tickRef.current = series.length;
+        setSpotHistory((h) => {
+          // If live ticks already accumulated, keep newer tail and prepend seed
+          const seeded = series.map((p, i) => ({ x: i + 1, y: p.y, t: p.t }));
+          const tail = h.slice(-Math.max(0, SPOT_HISTORY_LIMIT - seeded.length));
+          // Renumber tail x to continue after seed
+          const renumbered = tail.map((p, i) => ({ ...p, x: seeded.length + i + 1 }));
+          tickRef.current = seeded.length + renumbered.length;
+          return [...seeded, ...renumbered].slice(-SPOT_HISTORY_LIMIT);
+        });
+      } catch (e) {
+        console.warn('s4 intraday seed failed', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   /* ── Controls ──────────────────────────────── */
   const start = async () => {

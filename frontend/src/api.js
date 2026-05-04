@@ -115,6 +115,7 @@ export const api = {
   // Strategy 4 — Previous-Day First-Hour High/Low Retest
   getStrategy4TradeStatus: () => request('/strategy4-trade/status'),
   getStrategy4Levels: () => request('/strategy4-trade/levels'),
+  getStrategy4Intraday: () => request('/strategy4-trade/intraday'),
   strategy4TradeStart: (config) =>
     request('/strategy4-trade/start', { method: 'POST', body: JSON.stringify(config) }),
   strategy4TradeStop: () => request('/strategy4-trade/stop', { method: 'POST' }),
@@ -137,6 +138,7 @@ export const api = {
   // Strategy 5 — Dynamic Gann Level Range Retest
   getStrategy5TradeStatus: () => request('/strategy5-trade/status'),
   getStrategy5Levels: () => request('/strategy5-trade/levels'),
+  getStrategy5Intraday: () => request('/strategy5-trade/intraday'),
   strategy5TradeStart: (config) =>
     request('/strategy5-trade/start', { method: 'POST', body: JSON.stringify(config) }),
   strategy5TradeStop: () => request('/strategy5-trade/stop', { method: 'POST' }),

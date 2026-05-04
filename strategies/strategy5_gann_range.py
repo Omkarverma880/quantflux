@@ -446,6 +446,40 @@ class Strategy5GannRange:
             "for_date": (self._trading_date or date.today()).isoformat(),
         }
 
+    def get_intraday_series(self, target_day: Optional[date] = None) -> list[dict]:
+        """Return today's NIFTY 50 minute-candle close series since 9:15
+        until now. Used to seed the live chart with real intraday data.
+        """
+        token = self._resolve_index_token()
+        if not token:
+            return []
+        day = target_day or date.today()
+        from_dt = datetime.combine(day, MARKET_OPEN)
+        now = datetime.now()
+        if day == date.today() and now.time() < MARKET_CLOSE:
+            to_dt = now
+        else:
+            to_dt = datetime.combine(day, MARKET_CLOSE)
+        try:
+            candles = self.broker.get_historical_data(
+                instrument_token=token,
+                from_date=from_dt,
+                to_date=to_dt,
+                interval="minute",
+            ) or []
+        except Exception as exc:
+            logger.warning("S5 intraday fetch failed: %s", exc)
+            return []
+        out: list[dict] = []
+        for c in candles:
+            ts = c.get("date")
+            if hasattr(ts, "strftime"):
+                t_str = ts.strftime("%H:%M:%S")
+            else:
+                t_str = str(ts)[-8:] if ts else ""
+            out.append({"t": t_str, "y": float(c.get("close", 0))})
+        return out
+
     # ── Main check ────────────────────────────────────
 
     def check(self, spot_price: float) -> dict:
