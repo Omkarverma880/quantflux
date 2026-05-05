@@ -5,6 +5,7 @@ Mounts API routes, WebSocket, serves React frontend.
 import os
 import sys
 import uuid
+import json
 import asyncio
 from pathlib import Path
 from datetime import time as dtime, datetime
@@ -72,6 +73,9 @@ async def _strategy_background_loop():
                     print(f"[BG] Strategy check error user {uid}: {e}", flush=True)
 
             # ── Broadcast strategy state via WebSocket ──
+            # Send the FULL get_status() payload (not just state/is_active/ltp)
+            # so the dashboard never loses trade_log / trade / signal_type
+            # data via a thin WS message overwriting the REST response.
             try:
                 from app.routes.strategy1_routes import _get_strategy as _get_s1
                 from app.routes.strategy2_routes import _get_strategy as _get_s2
@@ -81,11 +85,18 @@ async def _strategy_background_loop():
                 payload = {}
                 for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3), ("s4", _get_s4), ("s5", _get_s5)]:
                     strat = getter(user_id=active_user_ids[0])
-                    payload[label] = {
-                        "state": strat.state.value if hasattr(strat.state, "value") else str(strat.state),
-                        "is_active": strat.is_active,
-                        "ltp": getattr(strat, "current_ltp", 0),
-                    }
+                    try:
+                        status = strat.get_status()
+                        # Make payload JSON-safe (datetimes / dates / Enums).
+                        payload[label] = json.loads(json.dumps(status, default=str))
+                    except Exception as exc:
+                        # Fall back to thin payload if get_status() blows up.
+                        payload[label] = {
+                            "state": strat.state.value if hasattr(strat.state, "value") else str(strat.state),
+                            "is_active": strat.is_active,
+                            "current_ltp": getattr(strat, "current_ltp", 0),
+                            "_error": str(exc),
+                        }
                 await ws_manager.broadcast("strategy_update", payload)
             except Exception:
                 pass  # non-critical

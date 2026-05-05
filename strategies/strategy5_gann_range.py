@@ -878,10 +878,35 @@ class Strategy5GannRange:
                             return
                         self._on_entry_filled()
                     elif status in ("CANCELLED", "REJECTED"):
-                        self.entry_order["status"] = status
-                        self.state = State.COMPLETED
+                        # Don't get "stuck" — reset cleanly so next tick can
+                        # re-arm. No phantom trade is recorded (entry never
+                        # filled). The user keeps full control via Stop.
+                        logger.warning(
+                            "S5 entry %s — resetting to IDLE for re-arm", status,
+                        )
+                        self.entry_order = None
+                        self.signal_type = None
+                        self.signal = "NO_TRADE"
+                        self.scenario = f"Entry {status} — re-arming"
+                        self.entry_reason = ""
+                        self.option_symbol = ""
+                        self.option_token = 0
+                        self.option_ltp = 0.0
+                        self.fill_price = 0.0
+                        self.sl_price = 0.0
+                        self.target_price = 0.0
+                        self.current_ltp = 0.0
+                        self.atm_strike = 0
+                        self.strike = 0
+                        self.state = State.IDLE
+                        self._level_crossed = None
+                        self.spot_extreme = 0.0
+                        # Re-anchor band around the current spot.
+                        try:
+                            self._anchor_gann_range()
+                        except Exception:
+                            pass
                         self._save_state()
-                        logger.warning("S5 entry %s", status)
                     break
         except Exception as exc:
             logger.error("S5 fill check failed: %s", exc)
@@ -981,21 +1006,41 @@ class Strategy5GannRange:
                 status = o.get("status", "")
                 if (
                     not self.sl_shadow and self.sl_order
-                    and oid == str(self.sl_order["order_id"]) and status == "COMPLETE"
+                    and oid == str(self.sl_order["order_id"])
                 ):
-                    self._cancel_order(self.target_order)
-                    self._complete_trade("SL_HIT", self.sl_price)
-                    return
+                    if status == "COMPLETE":
+                        self._cancel_order(self.target_order)
+                        self._complete_trade("SL_HIT", self.sl_price)
+                        return
+                    if status in ("CANCELLED", "REJECTED"):
+                        logger.warning(
+                            "S5 SL order %s on exchange (%s) — reverting to shadow",
+                            oid, status,
+                        )
+                        self.sl_order = None
+                        self.sl_shadow = True
                 if (
                     not self.target_shadow and self.target_order
-                    and oid == str(self.target_order["order_id"]) and status == "COMPLETE"
+                    and oid == str(self.target_order["order_id"])
                 ):
-                    self._cancel_order(self.sl_order)
-                    self._complete_trade("TARGET_HIT", self.target_price)
-                    return
+                    if status == "COMPLETE":
+                        self._cancel_order(self.sl_order)
+                        self._complete_trade("TARGET_HIT", self.target_price)
+                        return
+                    if status in ("CANCELLED", "REJECTED"):
+                        logger.warning(
+                            "S5 TGT order %s on exchange (%s) — reverting to shadow",
+                            oid, status,
+                        )
+                        self.target_order = None
+                        self.target_shadow = True
 
         # SL leg promotion
         if self.sl_shadow and ltp <= (self.sl_price + self.sl_proximity):
+            logger.info(
+                "S5 SL proximity hit: ltp=%.2f sl=%.2f prox=%.2f — promoting",
+                ltp, self.sl_price, self.sl_proximity,
+            )
             if not self.target_shadow and self.target_order:
                 self._cancel_order(self.target_order)
                 self.target_order = None
@@ -1003,13 +1048,13 @@ class Strategy5GannRange:
             self.sl_shadow = False
             try:
                 if ltp <= self.sl_price:
-                    exit_price = max(0.05, round(ltp * 0.90, 2))
                     self.broker.place_order(OrderRequest(
                         tradingsymbol=self.option_symbol,
                         exchange=Exchange.NFO, side=OrderSide.SELL,
-                        quantity=self.quantity, order_type=OrderType.LIMIT,
-                        product=ProductType.MIS, price=exit_price, tag="S5SL",
+                        quantity=self.quantity, order_type=OrderType.MARKET,
+                        product=ProductType.MIS, tag="S5SL",
                     ))
+                    logger.warning("S5 SL breach — MARKET sell @ ltp=%.2f", ltp)
                     self._complete_trade("SL_HIT", ltp)
                     return
                 resp = self.broker.place_order(OrderRequest(
@@ -1023,6 +1068,7 @@ class Strategy5GannRange:
                     "price": self.sl_price,
                     "timestamp": datetime.now().isoformat(),
                 }
+                logger.info("S5 SL-M order placed on exchange: %s", resp.order_id)
                 self._save_state()
             except Exception as exc:
                 logger.error("S5 SL placement failed: %s", exc)
@@ -1030,6 +1076,10 @@ class Strategy5GannRange:
 
         # Target leg promotion
         if self.target_shadow and ltp >= (self.target_price - self.target_proximity):
+            logger.info(
+                "S5 TGT proximity hit: ltp=%.2f tgt=%.2f prox=%.2f — promoting",
+                ltp, self.target_price, self.target_proximity,
+            )
             if not self.sl_shadow and self.sl_order:
                 self._cancel_order(self.sl_order)
                 self.sl_order = None
@@ -1037,13 +1087,13 @@ class Strategy5GannRange:
             self.target_shadow = False
             try:
                 if ltp >= self.target_price:
-                    exit_price = max(0.05, round(ltp * 0.90, 2))
                     self.broker.place_order(OrderRequest(
                         tradingsymbol=self.option_symbol,
                         exchange=Exchange.NFO, side=OrderSide.SELL,
-                        quantity=self.quantity, order_type=OrderType.LIMIT,
-                        product=ProductType.MIS, price=exit_price, tag="S5TGT",
+                        quantity=self.quantity, order_type=OrderType.MARKET,
+                        product=ProductType.MIS, tag="S5TGT",
                     ))
+                    logger.warning("S5 TGT breach — MARKET sell @ ltp=%.2f", ltp)
                     self._complete_trade("TARGET_HIT", ltp)
                     return
                 resp = self.broker.place_order(OrderRequest(
@@ -1057,6 +1107,7 @@ class Strategy5GannRange:
                     "price": self.target_price,
                     "timestamp": datetime.now().isoformat(),
                 }
+                logger.info("S5 TGT LIMIT order placed on exchange: %s", resp.order_id)
                 self._save_state()
             except Exception as exc:
                 logger.error("S5 target placement failed: %s", exc)
@@ -1178,13 +1229,26 @@ class Strategy5GannRange:
         logger.info("S5 trade done: %s | Entry=%.2f Exit=%.2f PnL=%.2f",
                     exit_type, self.fill_price, exit_price, pnl)
 
-        # Reset trade-specific fields
+        # Reset trade-specific fields. Cleared aggressively so the
+        # dashboard / strategy page never show stale entry / SL / TGT /
+        # LTP values after the trade closes (the "ghost panel" bug).
         self.fill_price = 0.0
         self.entry_order = None
         self.sl_order = None
         self.target_order = None
         self.sl_shadow = True
         self.target_shadow = True
+        self.sl_price = 0.0
+        self.target_price = 0.0
+        self.current_ltp = 0.0
+        self.option_ltp = 0.0
+        self.option_symbol = ""
+        self.option_token = 0
+        self.atm_strike = 0
+        self.strike = 0
+        self.signal_type = None
+        self.signal = "NO_TRADE"
+        self.entry_reason = ""
 
         # Re-entry decision. Unlike S4, S5 honors `allow_reentry` even
         # after SL — Gann levels are static reference points so a fresh

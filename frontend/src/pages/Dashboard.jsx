@@ -541,90 +541,60 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── Bottom row: P&L Breakdown + Account + System ── */}
+      {/* ── Bottom row: Account + Risk + System ──
+          (P&L Breakdown removed — Strategy Comparison above is the
+          single source of truth for per-strategy P&L) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
 
-        {/* P&L Breakdown */}
+        {/* Account */}
         <div className="bg-surface-1 border border-surface-3 rounded-xl p-4">
-          <h4 className="text-xs text-gray-500 uppercase tracking-wider font-medium mb-4">P&L Breakdown</h4>
-          <div className="space-y-3">
-            {[
-              { label: 'Strategy 1 — Gann CV', pnl: s1Pnl, trades: s1?.trade_log?.length || 0, color: 'brand' },
-              { label: 'Strategy 2 — Option Sell', pnl: s2Pnl, trades: s2?.trade_log?.length || 0, color: 'blue' },
-              { label: 'Strategy 3 — CV+VWAP', pnl: s3Pnl, trades: s3?.trade_log?.length || 0, color: 'brand' },
-              { label: 'Strategy 4 — HL Retest', pnl: s4Pnl, trades: s4?.trade_log?.length || 0, color: 'brand' },
-              { label: 'Strategy 5 — Gann Range', pnl: s5Pnl, trades: s5?.trade_log?.length || 0, color: 'brand' },
-            ].map((s) => (
-              <div key={s.label} className="flex items-center justify-between py-2 border-b border-surface-3/40 last:border-0">
-                <div>
-                  <p className="text-xs text-gray-300 font-medium">{s.label}</p>
-                  <p className="text-[10px] text-gray-600">{s.trades} trade{s.trades !== 1 ? 's' : ''}</p>
-                </div>
-                <span className={`text-sm font-bold mono ${s.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {s.pnl >= 0 ? '+' : ''}₹{INR(s.pnl, 0)}
-                </span>
-              </div>
-            ))}
-            <div className="flex items-center justify-between pt-2">
-              <span className="text-xs text-gray-400 font-semibold">Total</span>
-              <span className={`text-sm font-bold mono ${totalStratPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {totalStratPnl >= 0 ? '+' : ''}₹{INR(totalStratPnl, 0)}
+          <div className="flex items-center gap-2 mb-3">
+            <IndianRupee className="w-4 h-4 text-brand-400" />
+            <h4 className="text-xs text-gray-500 uppercase tracking-wider font-medium">Account</h4>
+          </div>
+          <div className="space-y-2.5 text-xs">
+            <div className="flex justify-between">
+              <span className="text-gray-400">Available</span>
+              <span className="text-white mono font-semibold">₹{INR(summary?.account?.available)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">Used Margin</span>
+              <span className="text-gray-300 mono">₹{INR(summary?.account?.used)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">Positions P&L</span>
+              <span className={`mono font-medium ${(summary?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {(summary?.total_pnl || 0) >= 0 ? '+' : ''}₹{INR(summary?.total_pnl, 2)}
+              </span>
+            </div>
+            <div className="border-t border-surface-3 pt-2.5 flex justify-between">
+              <span className="text-gray-300 font-medium">Net Value</span>
+              <span className="text-white mono font-bold">
+                ₹{INR((summary?.account?.available || 0) + (summary?.account?.used || 0))}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Account + Risk */}
-        <div className="space-y-3">
-          <div className="bg-surface-1 border border-surface-3 rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <IndianRupee className="w-4 h-4 text-brand-400" />
-              <h4 className="text-xs text-gray-500 uppercase tracking-wider font-medium">Account</h4>
-            </div>
-            <div className="space-y-2.5 text-xs">
-              <div className="flex justify-between">
-                <span className="text-gray-400">Available</span>
-                <span className="text-white mono font-semibold">₹{INR(summary?.account?.available)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Used Margin</span>
-                <span className="text-gray-300 mono">₹{INR(summary?.account?.used)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Positions P&L</span>
-                <span className={`mono font-medium ${(summary?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {(summary?.total_pnl || 0) >= 0 ? '+' : ''}₹{INR(summary?.total_pnl, 2)}
-                </span>
-              </div>
-              <div className="border-t border-surface-3 pt-2.5 flex justify-between">
-                <span className="text-gray-300 font-medium">Net Value</span>
-                <span className="text-white mono font-bold">
-                  ₹{INR((summary?.account?.available || 0) + (summary?.account?.used || 0))}
-                </span>
-              </div>
-            </div>
+        {/* Risk Limits */}
+        <div className="bg-surface-1 border border-surface-3 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-brand-400" />
+            <h4 className="text-xs text-gray-500 uppercase tracking-wider font-medium">Risk Limits</h4>
+            {riskBlocked && <AlertTriangle className="w-3.5 h-3.5 text-red-400 ml-auto" />}
           </div>
-
-          {/* Risk Limits */}
-          <div className="bg-surface-1 border border-surface-3 rounded-xl p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-brand-400" />
-              <h4 className="text-xs text-gray-500 uppercase tracking-wider font-medium">Risk Limits</h4>
-              {riskBlocked && <AlertTriangle className="w-3.5 h-3.5 text-red-400 ml-auto" />}
-            </div>
-            <Gauge
-              label="Daily P&L"
-              value={Math.round(summary?.risk?.daily_pnl || 0)}
-              max={summary?.risk?.max_loss_limit || 5000}
-              unit="₹"
-              warn={riskBlocked}
-            />
-            <Gauge
-              label="Trade Count"
-              value={summary?.risk?.trade_count || 0}
-              max={summary?.risk?.max_trades_limit || 20}
-            />
-          </div>
+          <Gauge
+            label="Daily P&L"
+            value={Math.round(summary?.risk?.daily_pnl || 0)}
+            max={summary?.risk?.max_loss_limit || 5000}
+            unit="₹"
+            warn={riskBlocked}
+          />
+          <Gauge
+            label="Trade Count"
+            value={summary?.risk?.trade_count || 0}
+            max={summary?.risk?.max_trades_limit || 20}
+          />
         </div>
 
         {/* System Status */}
@@ -654,7 +624,7 @@ export default function Dashboard() {
             <div className="flex justify-between items-center">
               <span className="text-gray-400">Strategies</span>
               <span className="text-gray-300 font-medium">
-                {[s1, s2, s3].filter((s) => s?.is_active).length} / 3 active
+                {[s1, s2, s3, s4, s5].filter((s) => s?.is_active).length} / 5 active
               </span>
             </div>
             <div className="flex justify-between items-center">
