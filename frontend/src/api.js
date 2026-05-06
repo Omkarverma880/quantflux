@@ -172,6 +172,32 @@ export const api = {
   strategy6TradeHistory: () =>
     request('/strategy6-trade/history'),
 
+  // Portfolio Analytics (independent module — holdings/watchlist/research)
+  getPortfolioHoldings: () => request('/portfolio/holdings'),
+  getPortfolioWatchlists: () => request('/portfolio/watchlists'),
+  createWatchlist: (name) =>
+    request('/portfolio/watchlists', { method: 'POST', body: JSON.stringify({ name }) }),
+  deleteWatchlist: (id) =>
+    request(`/portfolio/watchlists/${id}`, { method: 'DELETE' }),
+  addWatchlistItem: (id, item) =>
+    request(`/portfolio/watchlists/${id}/items`, { method: 'POST', body: JSON.stringify(item) }),
+  deleteWatchlistItem: (itemId) =>
+    request(`/portfolio/watchlists/items/${itemId}`, { method: 'DELETE' }),
+  getResearchEntries: () => request('/portfolio/research'),
+  createResearchEntry: (body) =>
+    request('/portfolio/research', { method: 'POST', body: JSON.stringify(body) }),
+  updateResearchEntry: (id, body) =>
+    request(`/portfolio/research/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteResearchEntry: (id) =>
+    request(`/portfolio/research/${id}`, { method: 'DELETE' }),
+  getHoldingExitLevels: () => request('/portfolio/holdings/exit-levels'),
+  upsertHoldingExitLevel: (body) =>
+    request('/portfolio/holdings/exit-levels', { method: 'PUT', body: JSON.stringify(body) }),
+  deleteHoldingExitLevel: (symbol, exchange = 'NSE') =>
+    request(`/portfolio/holdings/exit-levels/${encodeURIComponent(symbol)}?exchange=${encodeURIComponent(exchange)}`, { method: 'DELETE' }),
+  getPortfolioQuote: (symbol, exchange = 'NSE') =>
+    request(`/portfolio/quote?symbol=${encodeURIComponent(symbol)}&exchange=${encodeURIComponent(exchange)}`),
+
   // Settings
   getSettings: () => request('/settings/'),
   updateSettings: (data) =>

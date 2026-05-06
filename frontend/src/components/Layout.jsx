@@ -23,12 +23,14 @@ import {
   X,
   Power,
   UserCircle,
+  Briefcase,
 } from 'lucide-react';
 
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/strategy1', icon: BarChart3, label: 'Cum. Volume' },
   { to: '/strategies', icon: TrendingUp, label: 'Strategies' },
+  { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },
   { to: '/orders', icon: ClipboardList, label: 'Orders' },
   { to: '/manual-trading', icon: Activity, label: 'Manual Trading' },
   { to: '/settings', icon: Settings, label: 'Settings' },

@@ -30,6 +30,7 @@ from app.routes.strategy3_routes import router as s3_router
 from app.routes.strategy4_routes import router as s4_router
 from app.routes.strategy5_routes import router as s5_router
 from app.routes.strategy6_routes import router as s6_router
+from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
 from core.logger import get_logger
@@ -290,6 +291,7 @@ app.include_router(s3_router, prefix="/api/strategy3-trade", tags=["Strategy3-Cv
 app.include_router(s4_router, prefix="/api/strategy4-trade", tags=["Strategy4-HighLowRetest"])
 app.include_router(s5_router, prefix="/api/strategy5-trade", tags=["Strategy5-GannRange"])
 app.include_router(s6_router, prefix="/api/strategy6-trade", tags=["Strategy6-CallPutLines"])
+app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 
