@@ -3,17 +3,19 @@ API routes for Strategy 1 — Gann + Cumulative Volume.
 Endpoints: start, stop, check (trigger), status, config.
 """
 import json
-from datetime import datetime
+from datetime import datetime, date
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from config import settings
 from core.logger import get_logger
 from core.database import get_db
 from core.auth import login_required
 from core.broker import Broker, get_user_broker
+from core.models import OrderHistory
 from strategies.strategy1_gann_cv import Strategy1GannCV
 
 router = APIRouter()
@@ -219,45 +221,49 @@ ORDER_HISTORY_FILE = settings.DATA_DIR / "trade_history" / "order_history.json"
 
 @router.get("/history")
 async def get_trade_history(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
-    """Return historical orders grouped by date."""
-    history = _load_order_history()
+    """Return historical orders grouped by date.
 
-    # Also include today's live orders from Zerodha so they show up
-    # before the snapshot is saved at end-of-day
+    Past-day data is sourced from the `order_history` Postgres table —
+    this is critical on Railway where the local disk is wiped on every
+    deploy. Today's live orders are also persisted on each call so the
+    DB always has an up-to-date snapshot, even without an explicit
+    end-of-day snapshot call.
+
+    A legacy JSON file (`order_history.json`) is merged in as a
+    one-way fallback so any data captured before this change still
+    shows up.
+    """
     today_str = datetime.now().strftime("%Y-%m-%d")
-    today_already = any(d.get("date") == today_str for d in history)
 
-    if not today_already:
-        try:
-            broker = get_user_broker(db, user_id)
-            raw_orders = broker.get_orders()
-            if raw_orders:
-                today_orders = []
-                for o in raw_orders:
-                    today_orders.append({
-                        "time": o.get("order_timestamp", o.get("exchange_timestamp", "")),
-                        "tradingsymbol": o.get("tradingsymbol", ""),
-                        "transaction_type": o.get("transaction_type", ""),
-                        "quantity": o.get("quantity", 0),
-                        "average_price": o.get("average_price", 0),
-                        "price": o.get("price", 0),
-                        "status": o.get("status", ""),
-                        "order_id": str(o.get("order_id", "")),
-                        "tag": o.get("tag", ""),
-                    })
-                if today_orders:
-                    history.append({"date": today_str, "orders": today_orders})
-        except Exception:
-            pass
+    # 1) Persist today's live orders to DB (idempotent upsert by order_id)
+    try:
+        broker = get_user_broker(db, user_id)
+        raw_orders = broker.get_orders() or []
+        if raw_orders:
+            today_orders = [_normalize_order(o) for o in raw_orders]
+            _persist_orders_to_db(db, user_id, today_str, today_orders)
+    except Exception as e:
+        logger.debug(f"history: live order pull failed (non-fatal): {e}")
 
-    # Sort newest first
+    # 2) Read full history back from DB
+    history = _load_order_history_from_db(db, user_id)
+
+    # 3) Merge legacy JSON-file rows for any dates not already in DB
+    #    (so historical data captured before this change isn't lost).
+    legacy = _load_order_history_legacy()
+    if legacy:
+        existing_dates = {d.get("date") for d in history}
+        for day in legacy:
+            if day.get("date") and day["date"] not in existing_dates:
+                history.append(day)
+
     history.sort(key=lambda d: d.get("date", ""), reverse=True)
     return history
 
 
 @router.post("/history/snapshot")
 async def save_order_snapshot(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
-    """Save today's orders from Zerodha to history (call at end of day)."""
+    """Save today's orders from Zerodha to DB history (call at end of day)."""
     try:
         broker = get_user_broker(db, user_id)
         raw_orders = broker.get_orders()
@@ -268,26 +274,143 @@ async def save_order_snapshot(user_id: int = Depends(login_required), db: Sessio
         return {"status": "no_orders", "message": "No orders to save"}
 
     today_str = datetime.now().strftime("%Y-%m-%d")
-    today_orders = []
-    for o in raw_orders:
-        today_orders.append({
-            "time": str(o.get("order_timestamp", o.get("exchange_timestamp", ""))),
-            "tradingsymbol": o.get("tradingsymbol", ""),
-            "transaction_type": o.get("transaction_type", ""),
-            "quantity": o.get("quantity", 0),
-            "average_price": o.get("average_price", 0),
-            "price": o.get("price", 0),
-            "status": o.get("status", ""),
-            "order_id": str(o.get("order_id", "")),
-            "tag": o.get("tag", ""),
-        })
-
-    _save_order_snapshot(today_str, today_orders)
+    today_orders = [_normalize_order(o) for o in raw_orders]
+    _persist_orders_to_db(db, user_id, today_str, today_orders)
+    # Keep JSON snapshot too for backward compatibility / local dev
+    _save_order_snapshot_legacy(today_str, today_orders)
     return {"status": "saved", "date": today_str, "order_count": len(today_orders)}
 
 
-def _load_order_history() -> list:
-    """Load order history: list of { date, orders: [...] }"""
+def _normalize_order(o: dict) -> dict:
+    """Coerce a raw Kite order into the JSON shape the frontend expects."""
+    return {
+        "time": str(o.get("order_timestamp", o.get("exchange_timestamp", ""))),
+        "tradingsymbol": o.get("tradingsymbol", ""),
+        "exchange": o.get("exchange", "NFO"),
+        "transaction_type": o.get("transaction_type", ""),
+        "quantity": int(o.get("quantity", 0) or 0),
+        "average_price": float(o.get("average_price", 0) or 0),
+        "price": float(o.get("price", 0) or 0),
+        "status": o.get("status", ""),
+        "order_id": str(o.get("order_id", "")),
+        "tag": o.get("tag", ""),
+        "order_type": o.get("order_type", ""),
+        "product": o.get("product", ""),
+    }
+
+
+def _parse_order_time(t) -> Optional[datetime]:
+    if not t:
+        return None
+    if isinstance(t, datetime):
+        return t
+    s = str(t)
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.strptime(s[:len(fmt) + 3 if "%f" in fmt else len(fmt)] if "%f" in fmt else s[:len(fmt)], fmt)
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _persist_orders_to_db(db: Session, user_id: int, date_str: str, orders: list):
+    """Upsert orders into `order_history` keyed by (user_id, order_date, order_id).
+
+    Why upsert: the frontend polls /history and we re-snapshot every call,
+    so the same order_id will recur. We update average_price/status in
+    place so partial fills become COMPLETE without creating duplicates.
+    """
+    if not orders:
+        return
+    try:
+        order_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        order_date = date.today()
+
+    # Pre-fetch existing orders for this user/date to avoid N round-trips.
+    existing = {
+        row.order_id: row
+        for row in db.execute(
+            select(OrderHistory).where(
+                OrderHistory.user_id == user_id,
+                OrderHistory.order_date == order_date,
+            )
+        ).scalars().all()
+        if row.order_id
+    }
+
+    for o in orders:
+        oid = o.get("order_id") or ""
+        if not oid:
+            continue
+        order_time_dt = _parse_order_time(o.get("time"))
+        row = existing.get(oid)
+        if row is None:
+            row = OrderHistory(
+                user_id=user_id,
+                order_date=order_date,
+                order_time=order_time_dt,
+                tradingsymbol=o.get("tradingsymbol", ""),
+                exchange=o.get("exchange", "NFO"),
+                transaction_type=o.get("transaction_type", ""),
+                quantity=int(o.get("quantity", 0) or 0),
+                price=o.get("price") or 0,
+                average_price=o.get("average_price") or 0,
+                status=o.get("status", ""),
+                order_id=oid,
+                tag=o.get("tag", ""),
+                order_type=o.get("order_type", ""),
+                product=o.get("product", ""),
+                extra={},
+            )
+            db.add(row)
+        else:
+            # Refresh mutable fields (status / fill price)
+            row.status = o.get("status", row.status)
+            row.average_price = o.get("average_price") or row.average_price
+            row.price = o.get("price") or row.price
+            row.quantity = int(o.get("quantity", row.quantity) or row.quantity)
+            if order_time_dt:
+                row.order_time = order_time_dt
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to persist orders to DB: {e}")
+
+
+def _load_order_history_from_db(db: Session, user_id: int) -> list:
+    """Return [{date, orders: [...]}] grouped by order_date for this user."""
+    rows = db.execute(
+        select(OrderHistory)
+        .where(OrderHistory.user_id == user_id)
+        .order_by(OrderHistory.order_date.desc(), OrderHistory.order_time.asc())
+    ).scalars().all()
+
+    grouped: dict[str, list] = {}
+    for r in rows:
+        d = r.order_date.strftime("%Y-%m-%d") if r.order_date else ""
+        if not d:
+            continue
+        grouped.setdefault(d, []).append({
+            "time": r.order_time.strftime("%Y-%m-%d %H:%M:%S") if r.order_time else "",
+            "tradingsymbol": r.tradingsymbol or "",
+            "exchange": r.exchange or "NFO",
+            "transaction_type": r.transaction_type or "",
+            "quantity": int(r.quantity or 0),
+            "price": float(r.price or 0),
+            "average_price": float(r.average_price or 0),
+            "status": r.status or "",
+            "order_id": r.order_id or "",
+            "tag": r.tag or "",
+            "order_type": r.order_type or "",
+            "product": r.product or "",
+        })
+    return [{"date": d, "orders": orders} for d, orders in grouped.items()]
+
+
+def _load_order_history_legacy() -> list:
+    """Legacy JSON file fallback (pre-DB data)."""
     if ORDER_HISTORY_FILE.exists():
         try:
             return json.loads(ORDER_HISTORY_FILE.read_text())
@@ -296,10 +419,9 @@ def _load_order_history() -> list:
     return []
 
 
-def _save_order_snapshot(date_str: str, orders: list):
-    """Save or replace a day's order snapshot in history."""
-    history = _load_order_history()
-    # Replace if date already exists
+def _save_order_snapshot_legacy(date_str: str, orders: list):
+    """Save or replace a day's order snapshot in the legacy JSON file."""
+    history = _load_order_history_legacy()
     history = [d for d in history if d.get("date") != date_str]
     history.append({"date": date_str, "orders": orders})
     history.sort(key=lambda d: d.get("date", ""), reverse=True)
@@ -307,7 +429,16 @@ def _save_order_snapshot(date_str: str, orders: list):
     try:
         ORDER_HISTORY_FILE.write_text(json.dumps(history, indent=2, default=str))
     except Exception as e:
-        logger.error(f"Failed to save order history: {e}")
+        logger.error(f"Failed to save legacy order history: {e}")
+
+
+# Backward-compat alias used elsewhere in the codebase
+def _load_order_history() -> list:
+    return _load_order_history_legacy()
+
+
+def _save_order_snapshot(date_str: str, orders: list):
+    _save_order_snapshot_legacy(date_str, orders)
 
 
 def _load_trade_history() -> list:

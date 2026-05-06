@@ -29,6 +29,7 @@ from app.routes.strategy2_routes import router as s2_router
 from app.routes.strategy3_routes import router as s3_router
 from app.routes.strategy4_routes import router as s4_router
 from app.routes.strategy5_routes import router as s5_router
+from app.routes.strategy6_routes import router as s6_router
 from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
 from core.logger import get_logger
@@ -82,8 +83,9 @@ async def _strategy_background_loop():
                 from app.routes.strategy3_routes import _get_strategy as _get_s3
                 from app.routes.strategy4_routes import _get_strategy as _get_s4
                 from app.routes.strategy5_routes import _get_strategy as _get_s5
+                from app.routes.strategy6_routes import _get_strategy as _get_s6
                 payload = {}
-                for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3), ("s4", _get_s4), ("s5", _get_s5)]:
+                for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3), ("s4", _get_s4), ("s5", _get_s5), ("s6", _get_s6)]:
                     strat = getter(user_id=active_user_ids[0])
                     try:
                         status = strat.get_status()
@@ -136,6 +138,7 @@ def _run_strategies_for_user(uid: int):
     from app.routes.strategy3_routes import _get_strategy as _get_s3
     from app.routes.strategy4_routes import _get_strategy as _get_s4, _get_spot_price as _get_s4_spot
     from app.routes.strategy5_routes import _get_strategy as _get_s5, _get_spot_price as _get_s5_spot
+    from app.routes.strategy6_routes import _get_strategy as _get_s6, _get_spot_price as _get_s6_spot
 
     db = get_db_session()
     try:
@@ -180,6 +183,11 @@ def _run_strategies_for_user(uid: int):
         if s5.is_active or getattr(s5.state, "value", str(s5.state)) == "POSITION_OPEN":
             s5_spot = _get_s5_spot(broker, authenticated)
             s5.check(s5_spot)
+
+        s6 = _get_s6(broker, uid)
+        if s6.is_active or getattr(s6.state, "value", str(s6.state)) == "POSITION_OPEN":
+            s6_spot = _get_s6_spot(broker, authenticated)
+            s6.check(s6_spot)
     finally:
         db.close()
 
@@ -281,6 +289,7 @@ app.include_router(s2_router, prefix="/api/strategy2-trade", tags=["Strategy2-Op
 app.include_router(s3_router, prefix="/api/strategy3-trade", tags=["Strategy3-CvVwapEmaAdx"])
 app.include_router(s4_router, prefix="/api/strategy4-trade", tags=["Strategy4-HighLowRetest"])
 app.include_router(s5_router, prefix="/api/strategy5-trade", tags=["Strategy5-GannRange"])
+app.include_router(s6_router, prefix="/api/strategy6-trade", tags=["Strategy6-CallPutLines"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 

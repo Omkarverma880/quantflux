@@ -158,6 +158,20 @@ export const api = {
       body: JSON.stringify({ days: days || 30 }),
     }),
 
+  // Strategy 6 — Manual CALL / PUT Line Touch Entry
+  getStrategy6TradeStatus: () => request('/strategy6-trade/status'),
+  getStrategy6Intraday: () => request('/strategy6-trade/intraday'),
+  strategy6TradeStart: (config) =>
+    request('/strategy6-trade/start', { method: 'POST', body: JSON.stringify(config) }),
+  strategy6TradeStop: () => request('/strategy6-trade/stop', { method: 'POST' }),
+  strategy6TradeCheck: () => request('/strategy6-trade/check', { method: 'POST' }),
+  strategy6TradeUpdateConfig: (config) =>
+    request('/strategy6-trade/config', { method: 'PUT', body: JSON.stringify(config) }),
+  strategy6UpdateLines: (lines) =>
+    request('/strategy6-trade/lines', { method: 'POST', body: JSON.stringify(lines) }),
+  strategy6TradeHistory: () =>
+    request('/strategy6-trade/history'),
+
   // Settings
   getSettings: () => request('/settings/'),
   updateSettings: (data) =>
