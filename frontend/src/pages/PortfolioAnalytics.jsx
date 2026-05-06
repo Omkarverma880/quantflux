@@ -6,7 +6,7 @@
  *   - User-owned watchlists & research entries (own DB tables)
  *   - Pure visual proximity indicators, no automation
  *
- * Never imports from /strategy*/* and never calls any /trading/* mutation
+ * Never imports from strategy pages and never calls any trading mutation
  * endpoints — see app/routes/portfolio_routes.py for the mirror invariant.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
