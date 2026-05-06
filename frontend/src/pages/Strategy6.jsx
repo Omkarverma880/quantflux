@@ -571,23 +571,27 @@ export default function Strategy6() {
               <YAxis
                 domain={[
                   (dataMin) => {
-                    const lo = Math.min(
-                      dataMin ?? spot ?? 0,
-                      ...(displayCall ? [displayCall] : []),
-                      ...(displayPut ? [displayPut] : []),
-                    );
+                    // Guard: recharts can pass +/-Infinity when the data array
+                    // is empty. Math.min(...[]) is also Infinity. Coerce every
+                    // candidate through isFinite before reducing.
+                    const cands = [dataMin, spot, displayCall, displayPut]
+                      .map(Number)
+                      .filter((v) => Number.isFinite(v) && v > 0);
+                    if (!cands.length) return 0;
+                    const lo = Math.min(...cands);
                     return Math.floor(lo - Math.max(15, lo * 0.0015));
                   },
                   (dataMax) => {
-                    const hi = Math.max(
-                      dataMax ?? spot ?? 0,
-                      ...(displayCall ? [displayCall] : []),
-                      ...(displayPut ? [displayPut] : []),
-                    );
+                    const cands = [dataMax, spot, displayCall, displayPut]
+                      .map(Number)
+                      .filter((v) => Number.isFinite(v) && v > 0);
+                    if (!cands.length) return 100;
+                    const hi = Math.max(...cands);
                     return Math.ceil(hi + Math.max(15, hi * 0.0015));
                   },
                 ]}
                 stroke="#475569" fontSize={10} width={60}
+                allowDataOverflow={false}
                 tickFormatter={(v) => Number(v).toFixed(0)}
               />
               <Tooltip

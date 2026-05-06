@@ -20,6 +20,7 @@ const getStrategyLabel = (tag) => {
   if (t.startsWith('S3')) return 'Strategy 3';
   if (t.startsWith('S4')) return 'Strategy 4';
   if (t.startsWith('S5')) return 'Strategy 5';
+  if (t.startsWith('S6')) return 'Strategy 6';
   if (t.startsWith('MANUAL')) return 'Manual';
   return 'Manual';
 };
@@ -31,6 +32,7 @@ const strategyBadge = (label) => {
     case 'Strategy 3': return 'bg-cyan-600/20 text-cyan-400 border border-cyan-500/30';
     case 'Strategy 4': return 'bg-rose-600/20 text-rose-400 border border-rose-500/30';
     case 'Strategy 5': return 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30';
+    case 'Strategy 6': return 'bg-blue-600/20 text-blue-400 border border-blue-500/30';
     default:           return 'bg-gray-600/20 text-gray-400 border border-gray-500/30';
   }
 };
