@@ -283,8 +283,14 @@ async def save_order_snapshot(user_id: int = Depends(login_required), db: Sessio
 
 def _normalize_order(o: dict) -> dict:
     """Coerce a raw Kite order into the JSON shape the frontend expects."""
+    raw_ts = o.get("order_timestamp") or o.get("exchange_timestamp") or ""
+    if isinstance(raw_ts, datetime):
+        time_str = raw_ts.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        time_str = str(raw_ts)
     return {
-        "time": str(o.get("order_timestamp", o.get("exchange_timestamp", ""))),
+        "time": time_str,
+        "_raw_time": raw_ts,  # kept for DB persistence; stripped before frontend if needed
         "tradingsymbol": o.get("tradingsymbol", ""),
         "exchange": o.get("exchange", "NFO"),
         "transaction_type": o.get("transaction_type", ""),
@@ -300,14 +306,29 @@ def _normalize_order(o: dict) -> dict:
 
 
 def _parse_order_time(t) -> Optional[datetime]:
+    """Robustly coerce a kite order timestamp (datetime or string) into a
+    naive `datetime`. Kite typically returns a `datetime` object, but the
+    JSON snapshots store it as a string, so both paths must work.
+    """
     if not t:
         return None
     if isinstance(t, datetime):
         return t
-    s = str(t)
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+    s = str(t).strip()
+    if not s:
+        return None
+    # Drop any trailing timezone designator that strptime can't handle
+    if s.endswith("Z"):
+        s = s[:-1]
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d",
+    ):
         try:
-            return datetime.strptime(s[:len(fmt) + 3 if "%f" in fmt else len(fmt)] if "%f" in fmt else s[:len(fmt)], fmt)
+            return datetime.strptime(s, fmt)
         except (ValueError, TypeError):
             continue
     return None
@@ -343,7 +364,9 @@ def _persist_orders_to_db(db: Session, user_id: int, date_str: str, orders: list
         oid = o.get("order_id") or ""
         if not oid:
             continue
-        order_time_dt = _parse_order_time(o.get("time"))
+        # Prefer the raw kite datetime object (fed in via _normalize_order)
+        # over the pre-formatted string for accurate persistence.
+        order_time_dt = _parse_order_time(o.get("_raw_time") or o.get("time"))
         row = existing.get(oid)
         if row is None:
             row = OrderHistory(
