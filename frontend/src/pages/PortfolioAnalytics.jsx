@@ -73,7 +73,7 @@ function ProximityDot({ label, color = 'amber' }) {
 
 /* ─── Holdings panel ────────────────────────────────────────── */
 
-function HoldingsTable({ rows, onSetExit, sortKey, sortDir, onSort, filter, onFilter }) {
+function HoldingsTable({ rows, onSetExit, onSetSector, sortKey, sortDir, onSort, filter, onFilter }) {
   const sorted = useMemo(() => {
     const arr = (rows || []).filter((r) =>
       !filter || r.tradingsymbol.toLowerCase().includes(filter.toLowerCase())
@@ -150,7 +150,17 @@ function HoldingsTable({ rows, onSetExit, sortKey, sortDir, onSort, filter, onFi
                     {h.near_exit && <ProximityDot label="Near exit level" color="amber" />}
                   </div>
                 </td>
-                <td className="px-3 py-2 text-xs text-gray-400">{h.sector}</td>
+                <td className="px-3 py-2 text-xs">
+                  <button
+                    onClick={() => onSetSector(h)}
+                    title="Click to assign sector"
+                    className={cls(
+                      'px-1.5 py-0.5 rounded hover:bg-surface-4 transition',
+                      h.sector === 'Others' ? 'text-gray-500 italic' : 'text-gray-300',
+                    )}>
+                    {h.sector}
+                  </button>
+                </td>
                 <td className="px-3 py-2 text-right mono">{h.quantity}</td>
                 <td className="px-3 py-2 text-right mono">{fmtINR(h.average_price)}</td>
                 <td className="px-3 py-2 text-right mono text-white">{fmtINR(h.last_price)}</td>
@@ -466,6 +476,8 @@ function ExitLevelModal({ holding, onClose, onSave, onDelete }) {
         </label>
         <p className="text-[11px] text-gray-500 mt-2">
           Visual notification only — no order will be placed automatically.
+          You will simply see a pulsing dot next to the symbol when LTP
+          enters the proximity band.
         </p>
         <div className="flex items-center justify-between gap-2 mt-4">
           {holding.exit_level && (
@@ -502,20 +514,24 @@ export default function PortfolioAnalytics() {
   const [sortKey, setSortKey] = useState('current_value');
   const [sortDir, setSortDir] = useState('desc');
   const [exitModal, setExitModal] = useState(null);
+  const [sectorModal, setSectorModal] = useState(null);
+  const [sectorSuggestions, setSectorSuggestions] = useState([]);
   const timerRef = useRef(null);
 
   const fetchAll = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setRefreshing(true);
     try {
-      const [h, w, r] = await Promise.all([
+      const [h, w, r, s] = await Promise.all([
         api.getPortfolioHoldings().catch((e) => { setErr(String(e.message || e)); return null; }),
         api.getPortfolioWatchlists().catch(() => []),
         api.getResearchEntries().catch(() => []),
+        api.getSectorOverrides().catch(() => null),
       ]);
       if (h) setData(h);
       setWatchlists(Array.isArray(w) ? w : []);
       setResearch(Array.isArray(r) ? r : []);
+      if (s && Array.isArray(s.suggestions)) setSectorSuggestions(s.suggestions);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -583,6 +599,22 @@ export default function PortfolioAnalytics() {
       setExitModal(null);
       await fetchAll(true);
     } catch (e) { alert(e.message || 'Failed'); }
+  };
+
+  /* Sector override handlers */
+  const saveSector = async (symbol, sector) => {
+    try {
+      await api.upsertSectorOverride(symbol, sector);
+      setSectorModal(null);
+      await fetchAll(true);
+    } catch (e) { alert(e.message || 'Failed'); }
+  };
+  const clearSector = async (symbol) => {
+    try {
+      await api.deleteSectorOverride(symbol);
+    } catch (_) { /* ignore 404 */ }
+    setSectorModal(null);
+    await fetchAll(true);
   };
 
   /* Derived */
@@ -716,7 +748,7 @@ export default function PortfolioAnalytics() {
 
       {/* Holdings table */}
       <HoldingsTable
-        rows={holdings} onSetExit={setExitModal}
+        rows={holdings} onSetExit={setExitModal} onSetSector={setSectorModal}
         sortKey={sortKey} sortDir={sortDir} onSort={handleSort}
         filter={filter} onFilter={setFilter}
       />
@@ -748,6 +780,16 @@ export default function PortfolioAnalytics() {
           onClose={() => setExitModal(null)}
           onSave={saveExit}
           onDelete={deleteExit}
+        />
+      )}
+
+      {sectorModal && (
+        <SectorModal
+          holding={sectorModal}
+          suggestions={sectorSuggestions}
+          onClose={() => setSectorModal(null)}
+          onSave={saveSector}
+          onClear={clearSector}
         />
       )}
     </div>

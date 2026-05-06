@@ -40,6 +40,7 @@ from core.logger import get_logger
 from core.models import (
     HoldingExitLevel,
     ResearchEntry,
+    SectorOverride,
     Watchlist,
     WatchlistItem,
 )
@@ -110,11 +111,21 @@ SECTOR_MAP: dict[str, str] = {
 }
 
 
-def _sector_for(symbol: str) -> str:
+def _sector_for(symbol: str, overrides: Optional[dict[str, str]] = None) -> str:
+    """Resolve sector: user override → static map → 'Others'."""
     if not symbol:
         return "Others"
     s = symbol.upper().strip()
+    if overrides and s in overrides:
+        return overrides[s]
     return SECTOR_MAP.get(s, "Others")
+
+
+def _load_sector_overrides(db: Session, user_id: int) -> dict[str, str]:
+    rows = db.execute(
+        select(SectorOverride).where(SectorOverride.user_id == user_id)
+    ).scalars().all()
+    return {r.tradingsymbol.upper(): r.sector for r in rows}
 
 
 def _decimal(v) -> Optional[float]:
@@ -153,6 +164,11 @@ class ExitLevelIn(BaseModel):
     exit_level: float = Field(gt=0)
     proximity_pct: float = Field(default=1.0, ge=0.05, le=20)
     note: str = Field(default="", max_length=255)
+
+
+class SectorOverrideIn(BaseModel):
+    tradingsymbol: str = Field(min_length=1, max_length=60)
+    sector: str = Field(min_length=1, max_length=60)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────
@@ -203,6 +219,7 @@ async def get_holdings(
         f"{(r.exchange or 'NSE').upper()}:{r.tradingsymbol.upper()}": r
         for r in exit_rows
     }
+    sector_overrides = _load_sector_overrides(db, user_id)
 
     holdings: list[dict] = []
     total_invested = 0.0
@@ -234,7 +251,7 @@ async def get_holdings(
         holdings.append({
             "tradingsymbol": sym,
             "exchange": exch,
-            "sector": _sector_for(sym),
+            "sector": _sector_for(sym, sector_overrides),
             "quantity": qty,
             "average_price": avg,
             "last_price": ltp,
@@ -410,6 +427,7 @@ async def list_watchlists(
         except Exception as e:
             logger.debug(f"watchlist LTP fetch skipped: {e}")
 
+    sector_overrides = _load_sector_overrides(db, user_id)
     out = []
     for wl in wls:
         items = []
@@ -422,7 +440,7 @@ async def list_watchlists(
                 "exchange": it.exchange,
                 "note": it.note or "",
                 "last_price": ltp,
-                "sector": _sector_for(it.tradingsymbol),
+                "sector": _sector_for(it.tradingsymbol, sector_overrides),
             })
         out.append({
             "id": wl.id,
@@ -547,6 +565,7 @@ async def list_research(
         except Exception as e:
             logger.debug(f"research LTP fetch skipped: {e}")
 
+    sector_overrides = _load_sector_overrides(db, user_id)
     out = []
     for r in rows:
         key = _instrument_key(r.exchange, r.tradingsymbol)
@@ -580,7 +599,7 @@ async def list_research(
             "near_entry": near_entry,
             "near_target": near_target,
             "near_stop": near_stop,
-            "sector": _sector_for(r.tradingsymbol),
+            "sector": _sector_for(r.tradingsymbol, sector_overrides),
             "created_at": r.created_at.isoformat() if r.created_at else None,
         })
     return out
@@ -669,3 +688,76 @@ async def quote_symbol(
         return {"tradingsymbol": sym, "exchange": exch, "last_price": price}
     except Exception as e:
         return {"tradingsymbol": sym, "exchange": exch, "last_price": 0, "error": str(e)}
+
+
+# ─── Endpoints: Sector overrides ─────────────────────────────────
+
+# Suggested sector list shown to the UI when classifying a stock.
+SUGGESTED_SECTORS: list[str] = [
+    "Banking", "Financials", "IT", "Energy", "FMCG", "Auto", "Pharma",
+    "Metals", "Cement", "Telecom", "Infrastructure", "Realty",
+    "Consumer", "Retail", "Chemicals", "Capital Goods", "Media",
+    "Defence", "Logistics", "Insurance", "Textiles", "Agriculture",
+    "Hospitality", "Healthcare", "Others",
+]
+
+
+@router.get("/sectors")
+async def list_sector_overrides(
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    """Return all user sector overrides + suggestion list + the static map."""
+    rows = db.execute(
+        select(SectorOverride).where(SectorOverride.user_id == user_id)
+    ).scalars().all()
+    return {
+        "overrides": [
+            {"tradingsymbol": r.tradingsymbol, "sector": r.sector}
+            for r in rows
+        ],
+        "suggestions": SUGGESTED_SECTORS,
+    }
+
+
+@router.put("/sectors")
+async def upsert_sector_override(
+    body: SectorOverrideIn,
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    sym = body.tradingsymbol.upper().strip()
+    sector = body.sector.strip() or "Others"
+    row = db.execute(
+        select(SectorOverride).where(
+            SectorOverride.user_id == user_id,
+            SectorOverride.tradingsymbol == sym,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = SectorOverride(user_id=user_id, tradingsymbol=sym, sector=sector)
+        db.add(row)
+    else:
+        row.sector = sector
+    db.commit()
+    return {"status": "ok", "tradingsymbol": sym, "sector": sector}
+
+
+@router.delete("/sectors/{symbol}")
+async def delete_sector_override(
+    symbol: str,
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    sym = symbol.upper().strip()
+    row = db.execute(
+        select(SectorOverride).where(
+            SectorOverride.user_id == user_id,
+            SectorOverride.tradingsymbol == sym,
+        )
+    ).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted"}

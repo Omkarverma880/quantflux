@@ -221,3 +221,24 @@ class HoldingExitLevel(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "tradingsymbol", "exchange", name="uq_holding_exit_user_sym"),
     )
+
+
+class SectorOverride(Base):
+    """User-assigned sector for a symbol (overrides the static SECTOR_MAP).
+
+    Zerodha does not return sector data, so users can manually classify
+    each ticker. Scoped per-user so different users can have their own
+    classification preferences.
+    """
+    __tablename__ = "sector_overrides"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    tradingsymbol = Column(String(60), nullable=False)
+    sector = Column(String(60), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "tradingsymbol", name="uq_sector_override_user_sym"),
+    )
