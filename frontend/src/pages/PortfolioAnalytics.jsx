@@ -320,43 +320,76 @@ function WatchlistsPanel({ watchlists, onCreate, onDelete, onAddItem, onRemoveIt
 
 /* ─── Research panel ────────────────────────────────────────── */
 
+function Field({ label, children, className = '' }) {
+  return (
+    <label className={cls('text-[10px] uppercase tracking-wider text-gray-500 block', className)}>
+      <span className="block mb-0.5">{label}</span>
+      {children}
+    </label>
+  );
+}
+
 function ResearchPanel({ entries, onCreate, onUpdate, onDelete }) {
   const empty = {
     tradingsymbol: '', exchange: 'NSE',
     entry_level: '', target_level: '', stop_level: '',
-    proximity_pct: 1, note: '',
+    proximity_pct: '1', note: '',
   };
   const [draft, setDraft] = useState(empty);
   const [editingId, setEditingId] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
 
   const startEdit = (e) => {
+    setFormError('');
     setEditingId(e.id);
     setDraft({
       tradingsymbol: e.tradingsymbol, exchange: e.exchange || 'NSE',
-      entry_level: e.entry_level, target_level: e.target_level,
-      stop_level: e.stop_level ?? '', proximity_pct: e.proximity_pct ?? 1,
+      entry_level: String(e.entry_level ?? ''),
+      target_level: String(e.target_level ?? ''),
+      stop_level: e.stop_level == null ? '' : String(e.stop_level),
+      proximity_pct: String(e.proximity_pct ?? 1),
       note: e.note || '',
     });
   };
 
   const submit = async () => {
+    if (submitting) return;
+    setFormError('');
     const sym = (draft.tradingsymbol || '').trim().toUpperCase();
-    if (!sym) return alert('Symbol is required');
-    if (!draft.entry_level || !draft.target_level) return alert('Entry and target levels are required');
+    if (!sym) { setFormError('Symbol is required'); return; }
+    const entry  = Number(draft.entry_level);
+    const target = Number(draft.target_level);
+    if (!Number.isFinite(entry)  || entry  <= 0) { setFormError('Entry must be a positive number');  return; }
+    if (!Number.isFinite(target) || target <= 0) { setFormError('Target must be a positive number'); return; }
+    const stopRaw = String(draft.stop_level ?? '').trim();
+    const stop = stopRaw === '' ? null : Number(stopRaw);
+    if (stop != null && (!Number.isFinite(stop) || stop <= 0)) {
+      setFormError('Stop must be empty or a positive number'); return;
+    }
+    let prox = Number(draft.proximity_pct);
+    if (!Number.isFinite(prox) || prox < 0.05) prox = 1;
+    if (prox > 20) prox = 20;
     const body = {
       tradingsymbol: sym,
       exchange: (draft.exchange || 'NSE').toUpperCase(),
-      entry_level: Number(draft.entry_level),
-      target_level: Number(draft.target_level),
-      stop_level: draft.stop_level === '' || draft.stop_level == null
-        ? null : Number(draft.stop_level),
-      proximity_pct: Number(draft.proximity_pct) || 1,
+      entry_level: entry,
+      target_level: target,
+      stop_level: stop,
+      proximity_pct: prox,
       note: draft.note || '',
     };
-    if (editingId) await onUpdate(editingId, body);
-    else await onCreate(body);
-    setDraft(empty);
-    setEditingId(null);
+    setSubmitting(true);
+    try {
+      if (editingId) await onUpdate(editingId, body);
+      else           await onCreate(body);
+      setDraft(empty);
+      setEditingId(null);
+    } catch (e) {
+      setFormError(e?.message || 'Failed to save');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -370,30 +403,81 @@ function ResearchPanel({ entries, onCreate, onUpdate, onDelete }) {
       </div>
 
       {/* Form */}
-      <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 mb-3">
-        <input className="col-span-2 sm:col-span-2 bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-sm text-white mono"
-          placeholder="Symbol" value={draft.tradingsymbol}
-          onChange={(e) => setDraft({ ...draft, tradingsymbol: e.target.value.toUpperCase() })} />
-        <input className="bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-sm text-white mono"
-          placeholder="Entry" type="number" value={draft.entry_level}
-          onChange={(e) => setDraft({ ...draft, entry_level: e.target.value })} />
-        <input className="bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-sm text-white mono"
-          placeholder="Target" type="number" value={draft.target_level}
-          onChange={(e) => setDraft({ ...draft, target_level: e.target.value })} />
-        <input className="bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-sm text-white mono"
-          placeholder="Stop (opt)" type="number" value={draft.stop_level}
-          onChange={(e) => setDraft({ ...draft, stop_level: e.target.value })} />
-        <input className="bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-sm text-white mono"
-          placeholder="Prox %" type="number" step="0.1" value={draft.proximity_pct}
-          onChange={(e) => setDraft({ ...draft, proximity_pct: e.target.value })} />
-        <button onClick={submit}
-          className="px-3 py-1.5 text-xs font-medium rounded-md bg-brand-600 hover:bg-brand-700 text-white inline-flex items-center justify-center gap-1">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-2 mb-2">
+        <Field className="col-span-2 lg:col-span-2" label="Symbol">
+          <input
+            className="w-full bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-sm text-white mono"
+            placeholder="e.g. RELIANCE"
+            value={draft.tradingsymbol}
+            onChange={(e) => setDraft({ ...draft, tradingsymbol: e.target.value.toUpperCase() })}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
+        </Field>
+        <Field label="Entry *">
+          <input
+            type="number" step="0.05" inputMode="decimal"
+            className="w-full bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-sm text-white mono"
+            value={draft.entry_level}
+            onChange={(e) => setDraft({ ...draft, entry_level: e.target.value })}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
+        </Field>
+        <Field label="Target *">
+          <input
+            type="number" step="0.05" inputMode="decimal"
+            className="w-full bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-sm text-white mono"
+            value={draft.target_level}
+            onChange={(e) => setDraft({ ...draft, target_level: e.target.value })}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
+        </Field>
+        <Field label="Stop (opt)">
+          <input
+            type="number" step="0.05" inputMode="decimal"
+            className="w-full bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-sm text-white mono"
+            value={draft.stop_level}
+            onChange={(e) => setDraft({ ...draft, stop_level: e.target.value })}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
+        </Field>
+        <Field label="Prox %">
+          <input
+            type="number" step="0.1" inputMode="decimal"
+            className="w-full bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-sm text-white mono"
+            value={draft.proximity_pct}
+            onChange={(e) => setDraft({ ...draft, proximity_pct: e.target.value })}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
+        </Field>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-6 gap-2 mb-2">
+        <Field className="lg:col-span-5" label="Note">
+          <input
+            className="w-full bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-sm text-white"
+            placeholder="Optional thesis / source"
+            value={draft.note}
+            onChange={(e) => setDraft({ ...draft, note: e.target.value })}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
+        </Field>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={submitting}
+          className="px-3 py-1.5 text-xs font-semibold rounded-md bg-brand-600 hover:bg-brand-700
+                     text-white inline-flex items-center justify-center gap-1 disabled:opacity-50">
           {editingId ? <Pencil className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
-          {editingId ? 'Update' : 'Add'}
+          {submitting ? 'Saving…' : (editingId ? 'Update' : 'Add')}
         </button>
       </div>
+      {formError && (
+        <div className="mb-2 px-2 py-1 rounded-md bg-rose-500/10 border border-rose-500/30
+                        text-rose-300 text-[11px]">
+          {formError}
+        </div>
+      )}
       {editingId && (
-        <button onClick={() => { setEditingId(null); setDraft(empty); }}
+        <button onClick={() => { setEditingId(null); setDraft(empty); setFormError(''); }}
           className="mb-3 text-[11px] text-gray-400 underline hover:text-gray-200">
           Cancel edit
         </button>
@@ -704,12 +788,12 @@ export default function PortfolioAnalytics() {
 
   /* Research handlers */
   const createResearch = async (body) => {
-    try { await api.createResearchEntry(body); await fetchAll(true); }
-    catch (e) { alert(e.message || 'Failed'); }
+    await api.createResearchEntry(body);
+    await fetchAll(true);
   };
   const updateResearch = async (id, body) => {
-    try { await api.updateResearchEntry(id, body); await fetchAll(true); }
-    catch (e) { alert(e.message || 'Failed'); }
+    await api.updateResearchEntry(id, body);
+    await fetchAll(true);
   };
   const deleteResearch = async (id) => {
     try { await api.deleteResearchEntry(id); await fetchAll(true); }

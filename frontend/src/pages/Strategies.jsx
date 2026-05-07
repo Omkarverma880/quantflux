@@ -22,6 +22,7 @@ const STRATEGY_PAGES = {
   strategy4_high_low_retest: '/strategy4-trade',
   strategy5_gann_range: '/strategy5-trade',
   strategy6_call_put_lines: '/strategy6-trade',
+  strategy7_strike_lines: '/strategy7-trade',
 };
 
 export default function Strategies() {

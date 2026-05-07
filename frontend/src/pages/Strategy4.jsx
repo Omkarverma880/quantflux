@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 
-const REFRESH_MS = 2_000;
+const REFRESH_MS = 1_000;
 const SPOT_HISTORY_LIMIT = 500; // full intraday session (~375 minute candles + live ticks)
 
 const STATE_STYLE = {

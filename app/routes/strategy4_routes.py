@@ -100,7 +100,16 @@ def _get_spot_price(broker: Broker, authenticated: bool) -> float:
 @router.get("/status")
 async def get_status(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     broker = get_user_broker(db, user_id)
-    return _get_strategy(broker, user_id).get_status()
+    strat = _get_strategy(broker, user_id)
+    # Always refresh live spot so the front-end's spot card stays live
+    # even before Start. This is a single LTP call (very cheap).
+    try:
+        spot = _get_spot_price(broker, _is_authed(db, user_id))
+        if spot > 0:
+            strat.spot_price = spot
+    except Exception:
+        pass
+    return strat.get_status()
 
 
 @router.get("/levels")

@@ -59,66 +59,134 @@ const TONE_BG = {
   rose:    'from-rose-500/20 to-rose-500/0 border-rose-400/30 text-rose-300',
 };
 
-/* ─── Curated swing universe (broad, sector-diverse blue chips) ─ */
-const SWING_UNIVERSE = [
-  { sym: 'RELIANCE',  sector: 'Energy' },
-  { sym: 'HDFCBANK',  sector: 'Banking' },
-  { sym: 'ICICIBANK', sector: 'Banking' },
-  { sym: 'INFY',      sector: 'IT' },
-  { sym: 'TCS',       sector: 'IT' },
-  { sym: 'LT',        sector: 'Infrastructure' },
-  { sym: 'BHARTIARTL',sector: 'Telecom' },
-  { sym: 'TITAN',     sector: 'Consumer' },
-  { sym: 'SUNPHARMA', sector: 'Pharma' },
-  { sym: 'TATAMOTORS',sector: 'Auto' },
-  { sym: 'DIXON',     sector: 'Electronics' },
-  { sym: 'HAL',       sector: 'Defence' },
-  { sym: 'BEL',       sector: 'Defence' },
-  { sym: 'TRENT',     sector: 'Consumer' },
-  { sym: 'CDSL',      sector: 'Capital Markets' },
-  { sym: 'KAYNES',    sector: 'Electronics' },
-  { sym: 'POLYCAB',   sector: 'Industrials' },
-  { sym: 'PERSISTENT',sector: 'IT' },
-  { sym: 'JSWSTEEL',  sector: 'Metals' },
-  { sym: 'ULTRACEMCO',sector: 'Cement' },
-];
+/* ─── Three-horizon opportunity universes ─────────────────────
+   Curated to favour fast-moving / breakout-prone names instead of
+   slow blue-chips. Heavy stocks (>₹3500) and traditionally slow
+   compounders are intentionally excluded. */
+const HORIZON_UNIVERSE = {
+  // 7d → 1m  : aggressive momentum, small/mid-cap, ₹80–₹1500
+  short: {
+    key: 'short', label: '7 Days → 1 Month',
+    accent: 'from-orange-400 to-rose-400',
+    badge: 'bg-orange-500/15 text-orange-300 border-orange-400/30',
+    holdMin: 1, holdMax: 4,         // weeks
+    priceMin: 80, priceMax: 1500,
+    momentumBias: 18, breakoutBias: 22, volBias: 80, // % vol exp uplift
+    upsideBias: 0.04,                                // +4% target uplift
+    items: [
+      { sym: 'KAYNES',     sector: 'Electronics' },
+      { sym: 'CYIENTDLM',  sector: 'Electronics' },
+      { sym: 'HBLPOWER',   sector: 'Capital Goods' },
+      { sym: 'CDSL',       sector: 'Capital Markets' },
+      { sym: 'BSE',        sector: 'Capital Markets' },
+      { sym: 'BLS',        sector: 'Services' },
+      { sym: 'NETWEB',     sector: 'Hardware' },
+      { sym: 'INOXWIND',   sector: 'Renewables' },
+      { sym: 'SUZLON',     sector: 'Renewables' },
+      { sym: 'IREDA',      sector: 'Financials' },
+      { sym: 'RVNL',       sector: 'Railways' },
+      { sym: 'IRFC',       sector: 'Financials' },
+      { sym: 'YESBANK',    sector: 'Banking' },
+      { sym: 'IDEA',       sector: 'Telecom' },
+      { sym: 'PNB',        sector: 'Banking' },
+    ],
+  },
+  // 1m → 3m : swing setups, ₹150–₹2500
+  swing: {
+    key: 'swing', label: '1 Month → 3 Months',
+    accent: 'from-cyan-400 to-indigo-400',
+    badge: 'bg-cyan-500/15 text-cyan-300 border-cyan-400/30',
+    holdMin: 4, holdMax: 12,
+    priceMin: 150, priceMax: 2500,
+    momentumBias: 8, breakoutBias: 10, volBias: 30,
+    upsideBias: 0.06,
+    items: [
+      { sym: 'DIXON',      sector: 'Electronics' },
+      { sym: 'POLYCAB',    sector: 'Industrials' },
+      { sym: 'PERSISTENT', sector: 'IT' },
+      { sym: 'COFORGE',    sector: 'IT' },
+      { sym: 'TRENT',      sector: 'Consumer' },
+      { sym: 'BEL',        sector: 'Defence' },
+      { sym: 'HAL',        sector: 'Defence' },
+      { sym: 'PFC',        sector: 'Financials' },
+      { sym: 'RECLTD',     sector: 'Financials' },
+      { sym: 'NTPC',       sector: 'Power' },
+      { sym: 'POWERGRID',  sector: 'Power' },
+      { sym: 'BHEL',       sector: 'Capital Goods' },
+      { sym: 'TATAPOWER',  sector: 'Power' },
+      { sym: 'CGPOWER',    sector: 'Capital Goods' },
+      { sym: 'ZOMATO',     sector: 'Consumer Tech' },
+    ],
+  },
+  // 3m → 6m : positional, ₹250–₹3500
+  positional: {
+    key: 'positional', label: '3 Months → 6 Months',
+    accent: 'from-emerald-400 to-cyan-400',
+    badge: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30',
+    holdMin: 12, holdMax: 26,
+    priceMin: 250, priceMax: 3500,
+    momentumBias: 0, breakoutBias: 0, volBias: 0,
+    upsideBias: 0.10,
+    items: [
+      { sym: 'ICICIBANK',  sector: 'Banking' },
+      { sym: 'AXISBANK',   sector: 'Banking' },
+      { sym: 'SBIN',       sector: 'Banking' },
+      { sym: 'BAJFINANCE', sector: 'Financials' },
+      { sym: 'TITAN',      sector: 'Consumer' },
+      { sym: 'TATAMOTORS', sector: 'Auto' },
+      { sym: 'M&M',        sector: 'Auto' },
+      { sym: 'BHARTIARTL', sector: 'Telecom' },
+      { sym: 'LT',         sector: 'Infrastructure' },
+      { sym: 'JSWSTEEL',   sector: 'Metals' },
+      { sym: 'TATASTEEL',  sector: 'Metals' },
+      { sym: 'ADANIPORTS', sector: 'Logistics' },
+      { sym: 'ADANIENT',   sector: 'Conglomerate' },
+      { sym: 'INDHOTEL',   sector: 'Consumer' },
+      { sym: 'HINDPETRO',  sector: 'Energy' },
+    ],
+  },
+};
 
 /* Build a deterministic opportunity from a symbol seed. */
-function buildOpportunity({ sym, sector }, seedSalt = '') {
+function buildOpportunity({ sym, sector }, horizon, seedSalt = '') {
+  const h = HORIZON_UNIVERSE[horizon] || HORIZON_UNIVERSE.swing;
   const r1 = hash01(sym + seedSalt + 'a');
   const r2 = hash01(sym + seedSalt + 'b');
   const r3 = hash01(sym + seedSalt + 'c');
   const r4 = hash01(sym + seedSalt + 'd');
   const r5 = hash01(sym + seedSalt + 'e');
 
-  const price = Math.round(120 + r1 * 4800);
+  // Price stays inside the horizon's typical band — keeps slow, expensive
+  // names out of the 7d-1m bucket.
+  const price = Math.round(h.priceMin + r1 * (h.priceMax - h.priceMin));
   const buyLow  = Math.round(price * (0.96 - r2 * 0.03));
   const buyHigh = Math.round(price * (0.99 + r3 * 0.01));
   const entry   = Math.round((buyLow + buyHigh) / 2);
-  const target  = Math.round(price * (1.08 + r4 * 0.18));
+  // Upside scales with horizon — short bursts vs longer compounds.
+  const target  = Math.round(price * (1.06 + h.upsideBias + r4 * 0.20));
   const stop    = Math.round(price * (0.92 - r5 * 0.04));
 
-  const momentum = clamp(Math.round(40 + r1 * 60));
-  const rs       = clamp(Math.round(35 + r2 * 60));
-  const breakout = clamp(Math.round(30 + r3 * 65));
+  const momentum = clamp(Math.round(40 + r1 * 60 + h.momentumBias));
+  const rs       = clamp(Math.round(35 + r2 * 60 + h.momentumBias * 0.4));
+  const breakout = clamp(Math.round(30 + r3 * 65 + h.breakoutBias));
   const trend    = clamp(Math.round(40 + r4 * 55));
-  const volExp   = Math.round(20 + r5 * 280); // %
+  const volExp   = Math.round(20 + r5 * 280 + h.volBias);
   const confidence = clamp(Math.round((momentum + rs + breakout + trend) / 4));
   const risk = clamp(Math.round(100 - confidence + (r5 * 30 - 15)));
-  const holdWeeks = 4 + Math.round(r2 * 16); // 4–20 weeks
+  const holdWeeks = h.holdMin + Math.round(r2 * (h.holdMax - h.holdMin));
 
   const v = verdictFor(momentum, rs, breakout);
 
-  // tiny 24-pt sparkline
   const spark = Array.from({ length: 24 }, (_, i) => {
     const t = i / 23;
-    const trendUp = (momentum - 50) / 50; // -1..1
+    const trendUp = (momentum - 50) / 50;
     const noise = (hash01(sym + 'spark' + i) - 0.5) * 0.06;
     return { i, v: price * (0.92 + trendUp * 0.12 * t + noise + t * 0.04) };
   });
 
   return {
-    symbol: sym, sector, price, buyLow, buyHigh, entry, target, stop,
+    symbol: sym, sector, horizon, horizonMeta: h,
+    price, buyLow, buyHigh, entry, target, stop,
     momentum, rs, breakout, trend, volExp, confidence, risk,
     holdWeeks, verdict: v, spark,
   };
@@ -197,11 +265,19 @@ function OpportunityCard({ o }) {
         {/* header */}
         <div className="flex items-start justify-between gap-2">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-base font-bold text-white tracking-tight">{o.symbol}</h3>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-gray-400 border border-white/10">
                 {o.sector}
               </span>
+              {o.horizonMeta && (
+                <span className={cls(
+                  'text-[10px] px-1.5 py-0.5 rounded border font-medium',
+                  o.horizonMeta.badge,
+                )}>
+                  {o.horizonMeta.label}
+                </span>
+              )}
             </div>
             <p className="mt-0.5 text-[11px] text-gray-500">
               Hold ~{o.holdWeeks}w · Conf {o.confidence}
@@ -674,16 +750,26 @@ export default function AnalyticsWorld() {
   const holdings = data?.holdings || [];
   const summary = data?.summary || {};
 
-  const opportunities = useMemo(
-    () => SWING_UNIVERSE.map((u) => buildOpportunity(u))
-                       .sort((a, b) => b.confidence - a.confidence),
-    [],
-  );
+  // Build opportunities for all three horizons.
+  const opportunities = useMemo(() => {
+    const all = [];
+    Object.values(HORIZON_UNIVERSE).forEach((bucket) => {
+      bucket.items.forEach((u) => {
+        all.push(buildOpportunity(u, bucket.key));
+      });
+    });
+    return all.sort((a, b) => b.confidence - a.confidence);
+  }, []);
+
+  const buckets = useMemo(() => ({
+    short:      opportunities.filter((o) => o.horizon === 'short').slice(0, 6),
+    swing:      opportunities.filter((o) => o.horizon === 'swing').slice(0, 6),
+    positional: opportunities.filter((o) => o.horizon === 'positional').slice(0, 6),
+  }), [opportunities]);
 
   const verdictGroups = ['All', 'Strong Buy', 'Buy on Dip', 'Momentum Building', 'Watchlist'];
-  const filtered = filter === 'All'
-    ? opportunities
-    : opportunities.filter((o) => o.verdict.label === filter);
+
+  const horizonOrder = ['short', 'swing', 'positional'];
 
   return (
     <div className="min-h-screen relative overflow-hidden text-white"
@@ -740,19 +826,19 @@ export default function AnalyticsWorld() {
             Engine online
           </span>
           <span className="text-[11px] text-gray-500">
-            {holdings.length} holdings · {opportunities.length} opportunities scanned
+            {holdings.length} holdings · {opportunities.length} setups across 3 horizons
           </span>
         </div>
       </header>
 
       <main className="relative z-10 px-4 sm:px-8 py-6 space-y-6 max-w-[1500px] mx-auto">
-        {/* Hero — Treasure Hunter */}
+        {/* Hero — Treasure Hunter, three horizons */}
         <GlassCard className="p-5 lg:p-7 overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
             <SectionTitle
               icon={Gem}
               title="Treasure Hunter Engine"
-              sub="Top swing & positional opportunities, ranked by composite intelligence"
+              sub="Momentum-led opportunities, ranked by composite intelligence and bucketed by holding horizon"
               accent="from-fuchsia-400 to-cyan-400"
             />
             <div className="flex flex-wrap items-center gap-1.5">
@@ -773,8 +859,41 @@ export default function AnalyticsWorld() {
           {loading ? (
             <SkeletonGrid />
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-              {filtered.slice(0, 9).map((o) => <OpportunityCard key={o.symbol} o={o} />)}
+            <div className="space-y-6">
+              {horizonOrder.map((hk) => {
+                const meta = HORIZON_UNIVERSE[hk];
+                const items = (filter === 'All'
+                  ? buckets[hk]
+                  : buckets[hk].filter((o) => o.verdict.label === filter)
+                );
+                return (
+                  <div key={hk}>
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className={cls(
+                        'h-7 px-3 inline-flex items-center rounded-full text-[11px] font-semibold border',
+                        meta.badge,
+                      )}>
+                        {meta.label}
+                      </div>
+                      <div className={cls(
+                        'flex-1 h-px bg-gradient-to-r to-transparent', meta.accent.replace('to-', 'via-')
+                      )} />
+                      <span className="text-[11px] text-gray-500">
+                        {items.length} setup{items.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    {items.length === 0 ? (
+                      <p className="text-xs text-gray-500 italic px-1 pb-1">
+                        No matching setups in this horizon for the selected filter.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {items.map((o) => <OpportunityCard key={o.symbol} o={o} />)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </GlassCard>

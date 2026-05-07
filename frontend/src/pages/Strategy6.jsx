@@ -6,11 +6,11 @@ import {
 import {
   Play, Square, Settings2, ChevronDown, ChevronUp,
   Shield, Target, TrendingUp, Zap, Pencil, Move,
-  CheckCircle2, XCircle, Clock, AlertCircle, Info,
+  CheckCircle2, XCircle, Clock, AlertCircle, Info, Trash2,
 } from 'lucide-react';
 import { api } from '../api';
 
-const REFRESH_MS = 2_000;
+const REFRESH_MS = 1_000;
 const SPOT_HISTORY_LIMIT = 500;
 
 const STATE_STYLE = {
@@ -468,6 +468,13 @@ export default function Strategy6() {
                 }`}>
                 Pick
               </button>
+              <button
+                onClick={() => { setCallDraft(''); updateLines(0, undefined); }}
+                disabled={!callLine}
+                title="Clear CALL line"
+                className="px-2 py-1.5 rounded-md text-[11px] font-medium border bg-rose-600/10 text-rose-300 border-rose-500/30 hover:bg-rose-600/20 disabled:opacity-40 disabled:cursor-not-allowed">
+                <Trash2 className="w-3 h-3" />
+              </button>
             </div>
           </div>
 
@@ -511,6 +518,13 @@ export default function Strategy6() {
                     : 'bg-surface-3 text-gray-300 border-surface-4 hover:bg-surface-4'
                 }`}>
                 Pick
+              </button>
+              <button
+                onClick={() => { setPutDraft(''); updateLines(undefined, 0); }}
+                disabled={!putLine}
+                title="Clear PUT line"
+                className="px-2 py-1.5 rounded-md text-[11px] font-medium border bg-rose-600/10 text-rose-300 border-rose-500/30 hover:bg-rose-600/20 disabled:opacity-40 disabled:cursor-not-allowed">
+                <Trash2 className="w-3 h-3" />
               </button>
             </div>
           </div>
@@ -649,22 +663,38 @@ export default function Strategy6() {
           {(callLine > 0 || putLine > 0) && (
             <div className="absolute top-2 right-2 flex flex-col gap-1 pointer-events-auto">
               {callLine > 0 && (
-                <button
-                  onDoubleClick={() => editLineViaPrompt('CALL')}
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-[10px] px-2 py-0.5 rounded bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-600/30"
-                  title="Double-click to edit CALL price">
-                  <Pencil className="w-2.5 h-2.5 inline -mt-0.5" /> CALL
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onDoubleClick={() => editLineViaPrompt('CALL')}
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-[10px] px-2 py-0.5 rounded bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-600/30"
+                    title="Double-click to edit CALL price">
+                    <Pencil className="w-2.5 h-2.5 inline -mt-0.5" /> CALL
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setCallDraft(''); updateLines(0, undefined); }}
+                    title="Remove CALL line"
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-rose-600/15 text-rose-300 border border-rose-500/30 hover:bg-rose-600/25">
+                    <XCircle className="w-2.5 h-2.5" />
+                  </button>
+                </div>
               )}
               {putLine > 0 && (
-                <button
-                  onDoubleClick={() => editLineViaPrompt('PUT')}
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-[10px] px-2 py-0.5 rounded bg-rose-600/20 text-rose-300 border border-rose-500/30 hover:bg-rose-600/30"
-                  title="Double-click to edit PUT price">
-                  <Pencil className="w-2.5 h-2.5 inline -mt-0.5" /> PUT
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onDoubleClick={() => editLineViaPrompt('PUT')}
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-[10px] px-2 py-0.5 rounded bg-rose-600/20 text-rose-300 border border-rose-500/30 hover:bg-rose-600/30"
+                    title="Double-click to edit PUT price">
+                    <Pencil className="w-2.5 h-2.5 inline -mt-0.5" /> PUT
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setPutDraft(''); updateLines(undefined, 0); }}
+                    title="Remove PUT line"
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-rose-600/15 text-rose-300 border border-rose-500/30 hover:bg-rose-600/25">
+                    <XCircle className="w-2.5 h-2.5" />
+                  </button>
+                </div>
               )}
             </div>
           )}

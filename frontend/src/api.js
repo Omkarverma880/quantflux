@@ -21,7 +21,21 @@ async function request(path, options = {}) {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || err.detail || res.statusText);
+    // FastAPI/Pydantic returns `detail` as a list of {loc, msg, type}.
+    // Flatten it to a readable string instead of "[object Object]".
+    let msg = err.error;
+    if (!msg && err.detail) {
+      if (Array.isArray(err.detail)) {
+        msg = err.detail
+          .map((d) => `${(d.loc || []).slice(-1)[0] || 'field'}: ${d.msg || d.type || 'invalid'}`)
+          .join('; ');
+      } else if (typeof err.detail === 'string') {
+        msg = err.detail;
+      } else {
+        msg = JSON.stringify(err.detail);
+      }
+    }
+    throw new Error(msg || res.statusText);
   }
   return res.json();
 }
@@ -171,6 +185,24 @@ export const api = {
     request('/strategy6-trade/lines', { method: 'POST', body: JSON.stringify(lines) }),
   strategy6TradeHistory: () =>
     request('/strategy6-trade/history'),
+
+  // Strategy 7 — CE/PE Strike Line Touch Entry
+  getStrategy7TradeStatus: () => request('/strategy7-trade/status'),
+  getStrategy7Strikes: () => request('/strategy7-trade/strikes'),
+  strategy7SetStrikes: (payload) =>
+    request('/strategy7-trade/set-strikes', { method: 'POST', body: JSON.stringify(payload) }),
+  getStrategy7Intraday: (side = 'CE') =>
+    request(`/strategy7-trade/intraday?side=${encodeURIComponent(side)}`),
+  strategy7TradeStart: (config) =>
+    request('/strategy7-trade/start', { method: 'POST', body: JSON.stringify(config) }),
+  strategy7TradeStop: () => request('/strategy7-trade/stop', { method: 'POST' }),
+  strategy7TradeCheck: () => request('/strategy7-trade/check', { method: 'POST' }),
+  strategy7TradeUpdateConfig: (config) =>
+    request('/strategy7-trade/config', { method: 'PUT', body: JSON.stringify(config) }),
+  strategy7UpdateLines: (lines) =>
+    request('/strategy7-trade/lines', { method: 'POST', body: JSON.stringify(lines) }),
+  strategy7TradeHistory: () =>
+    request('/strategy7-trade/history'),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),
