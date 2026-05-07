@@ -108,6 +108,28 @@ SECTOR_MAP: dict[str, str] = {
     # Chemicals / Fertilizers
     "UPL": "Chemicals", "PIIND": "Chemicals", "SRF": "Chemicals",
     "DEEPAKNTR": "Chemicals", "AARTIIND": "Chemicals",
+    # Capital markets / Fintech / Exchanges
+    "GROWW": "Capital Markets", "NSDL": "Capital Markets",
+    "CDSL": "Capital Markets", "BSE": "Capital Markets",
+    "MCX": "Capital Markets", "ANGELONE": "Capital Markets",
+    "CAMS": "Capital Markets", "KFINTECH": "Capital Markets",
+    "POLICYBZR": "Fintech", "PAYTM": "Fintech",
+    # New-age consumer / Internet
+    "ZOMATO": "Consumer Internet", "ETERNAL": "Consumer Internet",
+    "SWIGGY": "Consumer Internet", "NYKAA": "Consumer Internet",
+    "FSNECOM": "Consumer Internet",
+    # Pharma / Healthcare additions
+    "SAILIFE": "Pharma", "MANKIND": "Pharma", "GLENMARK": "Pharma",
+    "BIOCON": "Pharma", "LAURUSLABS": "Pharma", "ALKEM": "Pharma",
+    # Defence / EMS
+    "HAL": "Defence", "BEL": "Defence", "MAZDOCK": "Defence",
+    "BDL": "Defence", "DYNAMATECH": "Defence",
+    "DIXON": "Electronics", "KAYNES": "Electronics", "CYIENTDLM": "Electronics",
+    "SYRMA": "Electronics", "AMBER": "Electronics",
+    # Logistics / Hospitality misc
+    "IRCTC": "Travel", "INDIGO": "Aviation", "INDHOTEL": "Hospitality",
+    # Misc additions seen in user holdings
+    "ELLEN": "Industrials",
 }
 
 

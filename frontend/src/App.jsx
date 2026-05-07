@@ -16,6 +16,7 @@ import Strategy4 from './pages/Strategy4';
 import Strategy5 from './pages/Strategy5';
 import Strategy6 from './pages/Strategy6';
 import PortfolioAnalytics from './pages/PortfolioAnalytics';
+import AnalyticsWorld from './pages/AnalyticsWorld';
 import TradeHistory from './pages/TradeHistory';
 import ManualTrading from './pages/ManualTrading';
 
@@ -33,6 +34,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Routes>
+        <Route path="/portfolio/analytics-world" element={<AnalyticsWorld />} />
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="strategy1" element={<CumulativeVolume />} />

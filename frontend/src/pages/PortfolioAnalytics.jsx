@@ -10,11 +10,12 @@
  * endpoints — see app/routes/portfolio_routes.py for the mirror invariant.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Briefcase, RefreshCw, TrendingUp, TrendingDown, ArrowUpRight,
   ArrowDownRight, PieChart as PieIcon, Plus, Trash2, Pencil,
   Search, X, Target, Bookmark, FlaskConical, AlertCircle, ChevronDown,
-  ChevronUp, Filter, IndianRupee, Layers, Zap,
+  ChevronUp, Filter, IndianRupee, Layers, Zap, Sparkles, ArrowRight,
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend,
@@ -453,6 +454,36 @@ function ResearchPanel({ entries, onCreate, onUpdate, onDelete }) {
   );
 }
 
+/* ─── Analytics World launch button (premium, futuristic) ───── */
+
+function AnalyticsWorldButton() {
+  return (
+    <Link
+      to="/portfolio/analytics-world"
+      className="relative group inline-flex items-center gap-2 pl-3 pr-3.5 py-1.5 rounded-lg text-xs font-semibold
+                 text-white overflow-hidden
+                 bg-gradient-to-r from-indigo-600 via-fuchsia-600 to-cyan-500
+                 shadow-[0_0_18px_rgba(99,102,241,0.45)]
+                 hover:shadow-[0_0_28px_rgba(217,70,239,0.55)]
+                 transition-all duration-300 hover:-translate-y-0.5"
+    >
+      <span
+        aria-hidden
+        className="absolute inset-0 -translate-x-full group-hover:translate-x-full
+                   transition-transform duration-700 ease-out
+                   bg-gradient-to-r from-transparent via-white/25 to-transparent"
+      />
+      <span
+        aria-hidden
+        className="absolute inset-0 rounded-lg ring-1 ring-white/15"
+      />
+      <Sparkles className="w-3.5 h-3.5 relative z-10 animate-pulse" />
+      <span className="relative z-10 tracking-wide">Enter Analytics World</span>
+      <ArrowRight className="w-3.5 h-3.5 relative z-10 transition-transform group-hover:translate-x-0.5" />
+    </Link>
+  );
+}
+
 /* ─── Exit-level modal ──────────────────────────────────────── */
 
 function ExitLevelModal({ holding, onClose, onSave, onDelete }) {
@@ -491,6 +522,110 @@ function ExitLevelModal({ holding, onClose, onSave, onDelete }) {
             </button>
             <button onClick={() => onSave({ exit_level: Number(price), proximity_pct: Number(prox) || 1 })}
               className="px-3 py-1.5 text-xs rounded-md bg-brand-600 hover:bg-brand-700 text-white">
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Sector override modal ─────────────────────────────────── */
+
+function SectorModal({ holding, suggestions = [], onClose, onSave, onClear }) {
+  const [sector, setSector] = useState(
+    holding?.sector && holding.sector !== 'Others' ? holding.sector : ''
+  );
+  if (!holding) return null;
+
+  const symbol = holding.tradingsymbol;
+  const submit = () => {
+    const s = (sector || '').trim();
+    if (!s) return;
+    onSave(symbol, s);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-surface-2 border border-surface-3 rounded-xl p-5 w-full max-w-sm"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-sm font-semibold text-white mb-1">
+          Assign Sector
+        </h3>
+        <p className="text-xs text-gray-500 mb-4">
+          {symbol} · current: <span className="text-gray-300">{holding.sector}</span>
+        </p>
+
+        <label className="text-xs text-gray-400 block">
+          Sector name
+          <input
+            type="text"
+            list="sector-suggestions"
+            autoFocus
+            placeholder="e.g. Banking, IT, Pharma…"
+            value={sector}
+            onChange={(e) => setSector(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            className="mt-1 w-full bg-surface-3 border border-surface-4 rounded-md px-2 py-1.5 text-white text-sm"
+          />
+        </label>
+        <datalist id="sector-suggestions">
+          {suggestions.map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
+
+        {suggestions.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {suggestions.slice(0, 12).map((s) => (
+              <button
+                key={s}
+                onClick={() => setSector(s)}
+                className={cls(
+                  'text-[11px] px-2 py-0.5 rounded border transition',
+                  sector === s
+                    ? 'bg-brand-600/20 border-brand-500/40 text-brand-200'
+                    : 'bg-surface-3 border-surface-4 text-gray-400 hover:bg-surface-4'
+                )}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <p className="text-[11px] text-gray-500 mt-3">
+          Zerodha&apos;s API does not expose sector metadata. We fall back to a
+          built-in map and let you override anything we don&apos;t know about.
+        </p>
+
+        <div className="flex items-center justify-between gap-2 mt-4">
+          {holding.sector && holding.sector !== 'Others' && (
+            <button
+              onClick={() => onClear(symbol)}
+              className="text-xs text-rose-400 hover:text-rose-300"
+            >
+              Clear override
+            </button>
+          )}
+          <div className="ml-auto flex gap-2">
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 text-xs rounded-md bg-surface-3 text-gray-300 hover:bg-surface-4"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={submit}
+              disabled={!sector.trim()}
+              className="px-3 py-1.5 text-xs rounded-md bg-brand-600 hover:bg-brand-700 text-white disabled:opacity-50"
+            >
               Save
             </button>
           </div>
@@ -650,6 +785,7 @@ export default function PortfolioAnalytics() {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-3 text-gray-300 hover:bg-surface-4 disabled:opacity-50">
             <RefreshCw className={cls('w-3 h-3', refreshing && 'animate-spin')} /> Refresh
           </button>
+          <AnalyticsWorldButton />
         </div>
       </div>
 
