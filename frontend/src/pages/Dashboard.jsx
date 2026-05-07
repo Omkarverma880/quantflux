@@ -219,13 +219,14 @@ export default function Dashboard() {
   const [s6, setS6] = useState(null);
   const [s7, setS7] = useState(null);
   const [s8, setS8] = useState(null);
+  const [s9, setS9] = useState(null);
   const [loading, setLoading] = useState(true);
   const [engineLoading, setEngineLoading] = useState(false);
   const [time, setTime] = useState(new Date());
 
   const fetchData = useCallback(async () => {
     try {
-      const [sm, en, st1, st2, st3, st4, st5, st6, st7, st8] = await Promise.all([
+      const [sm, en, st1, st2, st3, st4, st5, st6, st7, st8, st9] = await Promise.all([
         api.getSummary().catch(() => null),
         api.getEngineStatus().catch(() => null),
         api.getStrategy1TradeStatus().catch(() => null),
@@ -236,6 +237,7 @@ export default function Dashboard() {
         api.getStrategy6TradeStatus().catch(() => null),
         api.getStrategy7TradeStatus().catch(() => null),
         api.getStrategy8TradeStatus().catch(() => null),
+        api.getStrategy9TradeStatus().catch(() => null),
       ]);
       if (sm) setSummary(sm);
       if (en) setEngine(en);
@@ -247,6 +249,7 @@ export default function Dashboard() {
       if (st6) setS6(st6);
       if (st7) setS7(st7);
       if (st8) setS8(st8);
+      if (st9) setS9(st9);
     } finally {
       setLoading(false);
     }
@@ -264,6 +267,7 @@ export default function Dashboard() {
       if (d.s6) setS6(d.s6);
       if (d.s7) setS7(d.s7);
       if (d.s8) setS8(d.s8);
+      if (d.s9) setS9(d.s9);
     }
   }, []));
 
@@ -283,8 +287,8 @@ export default function Dashboard() {
   // Build equity curve from trade logs
   const equityCurve = useMemo(() => {
     const allTrades = [];
-    [s1, s2, s3, s4, s5, s6, s7, s8].forEach((s, idx) => {
-      const label = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8'][idx];
+    [s1, s2, s3, s4, s5, s6, s7, s8, s9].forEach((s, idx) => {
+      const label = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9'][idx];
       (s?.trade_log || []).forEach((t) => {
         if (t.pnl !== undefined && t.pnl !== null) {
           allTrades.push({
@@ -308,7 +312,7 @@ export default function Dashboard() {
         strategy: t.strategy,
       };
     });
-  }, [s1, s2, s3, s4, s5, s6, s7, s8]);
+  }, [s1, s2, s3, s4, s5, s6, s7, s8, s9]);
 
   if (loading) return <DashboardSkeleton />;
 
@@ -345,7 +349,8 @@ export default function Dashboard() {
   const s6Pnl = stratPnl(s6);
   const s7Pnl = stratPnl(s7);
   const s8Pnl = stratPnl(s8);
-  const totalStratPnl = s1Pnl + s2Pnl + s3Pnl + s4Pnl + s5Pnl + s6Pnl + s7Pnl + s8Pnl;
+  const s9Pnl = stratPnl(s9);
+  const totalStratPnl = s1Pnl + s2Pnl + s3Pnl + s4Pnl + s5Pnl + s6Pnl + s7Pnl + s8Pnl + s9Pnl;
 
   const totalTrades =
     (s1?.trade_log?.length || 0) +
@@ -355,9 +360,10 @@ export default function Dashboard() {
     (s5?.trade_log?.length || 0) +
     (s6?.trade_log?.length || 0) +
     (s7?.trade_log?.length || 0) +
-    (s8?.trade_log?.length || 0);
+    (s8?.trade_log?.length || 0) +
+    (s9?.trade_log?.length || 0);
 
-  const openPositions = [s1, s2, s3, s4, s5, s6, s7, s8].filter((s) => s?.state === 'POSITION_OPEN').length;
+  const openPositions = [s1, s2, s3, s4, s5, s6, s7, s8, s9].filter((s) => s?.state === 'POSITION_OPEN').length;
 
   const riskBlocked = summary?.risk && !summary.risk.trading_allowed;
 
@@ -464,7 +470,7 @@ export default function Dashboard() {
             <Radio className="w-2.5 h-2.5 text-green-400 animate-pulse" /> Live
           </span>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-9 gap-3">
           <StrategyCard
             label="Gann CV"
             shortName="Strategy 1"
@@ -513,6 +519,12 @@ export default function Dashboard() {
             data={s8}
             onClick={() => navigate('/strategy8-trade')}
           />
+          <StrategyCard
+            label="Line Of Control"
+            shortName="Strategy 9"
+            data={s9}
+            onClick={() => navigate('/strategy9-trade')}
+          />
         </div>
       </div>
 
@@ -550,7 +562,7 @@ export default function Dashboard() {
           <BarChart3 className="w-4 h-4 text-brand-400" />
           <h3 className="text-sm font-semibold text-white">Strategy Comparison</h3>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-9 gap-3">
           {[
             { label: 'Gann CV', short: 'S1', data: s1, pnl: s1Pnl, color: 'brand' },
             { label: 'Option Sell', short: 'S2', data: s2, pnl: s2Pnl, color: 'blue' },
@@ -560,6 +572,7 @@ export default function Dashboard() {
             { label: 'CALL/PUT', short: 'S6', data: s6, pnl: s6Pnl, color: 'brand' },
             { label: 'Strike Lines', short: 'S7', data: s7, pnl: s7Pnl, color: 'brand' },
             { label: 'Reverse Lines', short: 'S8', data: s8, pnl: s8Pnl, color: 'amber' },
+            { label: 'Line Of Control', short: 'S9', data: s9, pnl: s9Pnl, color: 'cyan' },
           ].map((s) => {
             const trades = s.data?.trade_log?.length || 0;
             const wins = (s.data?.trade_log || []).filter((t) => (t.pnl || 0) > 0).length;
@@ -663,7 +676,7 @@ export default function Dashboard() {
             <div className="flex justify-between items-center">
               <span className="text-gray-400">Strategies</span>
               <span className="text-gray-300 font-medium">
-                {[s1, s2, s3, s4, s5, s6, s7, s8].filter((s) => s?.is_active).length} / 8 active
+                {[s1, s2, s3, s4, s5, s6, s7, s8, s9].filter((s) => s?.is_active).length} / 9 active
               </span>
             </div>
             <div className="flex justify-between items-center">

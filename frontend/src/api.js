@@ -230,6 +230,26 @@ export const api = {
   strategy8Backtest: (payload) =>
     request('/strategy8-trade/backtest', { method: 'POST', body: JSON.stringify(payload) }),
 
+  // Strategy 9 — Line Of Control (3-line per side, direct entry)
+  getStrategy9TradeStatus: () => request('/strategy9-trade/status'),
+  getStrategy9Strikes: () => request('/strategy9-trade/strikes'),
+  strategy9SetStrikes: (payload) =>
+    request('/strategy9-trade/set-strikes', { method: 'POST', body: JSON.stringify(payload) }),
+  getStrategy9Intraday: (side = 'CE') =>
+    request(`/strategy9-trade/intraday?side=${encodeURIComponent(side)}`),
+  strategy9TradeStart: (config) =>
+    request('/strategy9-trade/start', { method: 'POST', body: JSON.stringify(config) }),
+  strategy9TradeStop: () => request('/strategy9-trade/stop', { method: 'POST' }),
+  strategy9TradeCheck: () => request('/strategy9-trade/check', { method: 'POST' }),
+  strategy9TradeUpdateConfig: (config) =>
+    request('/strategy9-trade/config', { method: 'PUT', body: JSON.stringify(config) }),
+  strategy9UpdateLines: (lines) =>
+    request('/strategy9-trade/lines', { method: 'POST', body: JSON.stringify(lines) }),
+  strategy9TradeHistory: () =>
+    request('/strategy9-trade/history'),
+  strategy9Backtest: (payload) =>
+    request('/strategy9-trade/backtest', { method: 'POST', body: JSON.stringify(payload) }),
+
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),
   getPortfolioWatchlists: () => request('/portfolio/watchlists'),

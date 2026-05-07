@@ -15,12 +15,13 @@ function fmt(n, d = 2) {
 }
 
 /**
- * Reusable backtest panel for Strategy 7 / 8.
+ * Reusable backtest panel for Strategy 7 / 8 / 9.
  *
  * Props:
- *   strategy        : "S7" | "S8"
+ *   strategy        : "S7" | "S8" | "S9"
  *   strikes         : { ce_strike, ce_token, pe_strike, pe_token }
- *   lines           : { call_line, put_line }
+ *   lines           : { call_line, put_line }                    (S7/S8)
+ *   s9Lines         : { ce: {buy,target,sl}, pe: {buy,target,sl} } (S9)
  *   reverseTokens   : { reverse_ce_token, reverse_pe_token } (S8 only)
  *   manualReverse   : { manual_pe_strike, manual_ce_strike }   (S8 only)
  *   reverseOffset   : int (S8 only)
@@ -31,6 +32,7 @@ export default function BacktestPanel({
   strategy = 'S7',
   strikes = {},
   lines = {},
+  s9Lines = null,
   reverseTokens = {},
   manualReverse = {},
   reverseOffset = 200,
@@ -65,22 +67,43 @@ export default function BacktestPanel({
       setErr('Pick both CE and PE strikes before backtesting.');
       return;
     }
-    if (!(lines.call_line > 0) && !(lines.put_line > 0)) {
+    if (strategy === 'S9') {
+      const has = (s9Lines?.ce?.buy > 0) || (s9Lines?.pe?.buy > 0);
+      if (!has) { setErr('Set at least one BUY line (CE or PE) before backtesting.'); return; }
+    } else if (!(lines.call_line > 0) && !(lines.put_line > 0)) {
       setErr('Set at least one CALL or PUT line before backtesting.');
       return;
     }
     setRunning(true); setErr('');
     try {
-      const payload = {
-        trade_date: date,
-        ce_token: strikes.ce_token, pe_token: strikes.pe_token,
-        ce_strike: strikes.ce_strike, pe_strike: strikes.pe_strike,
-        call_line: Number(lines.call_line) || 0,
-        put_line: Number(lines.put_line) || 0,
-        sl_points: Number(sl), target_points: Number(tgt),
-        lot_size: Number(lot_size), lots: Number(lots),
-        max_trades: Number(maxTrades),
-      };
+      let payload;
+      if (strategy === 'S9') {
+        payload = {
+          trade_date: date,
+          ce_token: strikes.ce_token, pe_token: strikes.pe_token,
+          ce_strike: strikes.ce_strike, pe_strike: strikes.pe_strike,
+          ce_buy_line:    Number(s9Lines?.ce?.buy)    || 0,
+          ce_target_line: Number(s9Lines?.ce?.target) || 0,
+          ce_sl_line:     Number(s9Lines?.ce?.sl)     || 0,
+          pe_buy_line:    Number(s9Lines?.pe?.buy)    || 0,
+          pe_target_line: Number(s9Lines?.pe?.target) || 0,
+          pe_sl_line:     Number(s9Lines?.pe?.sl)     || 0,
+          sl_points: Number(sl), target_points: Number(tgt),
+          lot_size: Number(lot_size), lots: Number(lots),
+          max_trades: Number(maxTrades),
+        };
+      } else {
+        payload = {
+          trade_date: date,
+          ce_token: strikes.ce_token, pe_token: strikes.pe_token,
+          ce_strike: strikes.ce_strike, pe_strike: strikes.pe_strike,
+          call_line: Number(lines.call_line) || 0,
+          put_line: Number(lines.put_line) || 0,
+          sl_points: Number(sl), target_points: Number(tgt),
+          lot_size: Number(lot_size), lots: Number(lots),
+          max_trades: Number(maxTrades),
+        };
+      }
       if (strategy === 'S8') {
         payload.reverse_offset = Number(reverseOffset) || 200;
         payload.manual_pe_strike = Number(manualReverse.manual_pe_strike) || 0;
@@ -137,7 +160,7 @@ export default function BacktestPanel({
         <div className="flex items-center gap-2">
           <Beaker className="w-4 h-4 text-violet-400" />
           <h3 className="text-sm font-semibold text-white">
-            Backtest — {strategy === 'S8' ? 'Reverse Strike Lines' : 'Strike Line Touch'}
+            Backtest — {strategy === 'S8' ? 'Reverse Strike Lines' : strategy === 'S9' ? 'Line Of Control' : 'Strike Line Touch'}
           </h3>
           <span className="text-[10px] text-gray-500 ml-1">
             replays historical minute candles for the selected strikes
@@ -189,8 +212,17 @@ export default function BacktestPanel({
             className="bg-surface-3 border border-surface-3 rounded px-2 py-1 text-white" />
         </label>
         <div className="flex flex-col gap-0.5 text-[11px] text-gray-500 justify-end">
-          <div>CALL line: <span className="text-emerald-400">{fmt(lines.call_line)}</span></div>
-          <div>PUT line: <span className="text-rose-400">{fmt(lines.put_line)}</span></div>
+          {strategy === 'S9' ? (
+            <>
+              <div>CE: <span className="text-emerald-400">B {fmt(s9Lines?.ce?.buy)}</span> · <span className="text-emerald-300">T {fmt(s9Lines?.ce?.target)}</span> · <span className="text-rose-400">SL {fmt(s9Lines?.ce?.sl)}</span></div>
+              <div>PE: <span className="text-rose-400">B {fmt(s9Lines?.pe?.buy)}</span> · <span className="text-emerald-300">T {fmt(s9Lines?.pe?.target)}</span> · <span className="text-rose-400">SL {fmt(s9Lines?.pe?.sl)}</span></div>
+            </>
+          ) : (
+            <>
+              <div>CALL line: <span className="text-emerald-400">{fmt(lines.call_line)}</span></div>
+              <div>PUT line: <span className="text-rose-400">{fmt(lines.put_line)}</span></div>
+            </>
+          )}
         </div>
       </div>
 

@@ -62,7 +62,7 @@ def _resolve_reverse_strike(strategy: str, trigger_side: str, ce_strike: int, pe
 def run_backtest(
     broker,
     *,
-    strategy: str,                 # "S7" | "S8"
+    strategy: str,                 # "S7" | "S8" | "S9"
     trade_date: _date,
     ce_token: int,
     pe_token: int,
@@ -80,6 +80,13 @@ def run_backtest(
     manual_ce_strike: int = 0,
     reverse_ce_token: int = 0,     # token of strike that BUYS happen on (S8 reverse)
     reverse_pe_token: int = 0,
+    # ── S9 Line Of Control (3-line per side) ──
+    ce_buy_line: float = 0,
+    ce_target_line: float = 0,
+    ce_sl_line: float = 0,
+    pe_buy_line: float = 0,
+    pe_target_line: float = 0,
+    pe_sl_line: float = 0,
 ) -> dict:
     if not ce_token or not pe_token:
         return {
@@ -180,12 +187,23 @@ def run_backtest(
 
             exit_price = 0.0
             exit_type = ""
-            if lo <= sl_price:
-                exit_price, exit_type = sl_price, "SL_HIT"
-            elif hi >= tgt_price:
-                exit_price, exit_type = tgt_price, "TARGET_HIT"
-            elif t >= "15:15:00":
-                exit_price, exit_type = cl, "AUTO_SQUAREOFF"
+            if strategy == "S9":
+                # Line-driven exits
+                t_line = ce_target_line if pos_side == "CE" else pe_target_line
+                s_line = ce_sl_line     if pos_side == "CE" else pe_sl_line
+                if s_line > 0 and lo <= s_line:
+                    exit_price, exit_type = s_line, "SL_HIT"
+                elif t_line > 0 and hi >= t_line:
+                    exit_price, exit_type = t_line, "TARGET_HIT"
+                elif t >= "15:15:00":
+                    exit_price, exit_type = cl, "AUTO_SQUAREOFF"
+            else:
+                if lo <= sl_price:
+                    exit_price, exit_type = sl_price, "SL_HIT"
+                elif hi >= tgt_price:
+                    exit_price, exit_type = tgt_price, "TARGET_HIT"
+                elif t >= "15:15:00":
+                    exit_price, exit_type = cl, "AUTO_SQUAREOFF"
 
             if exit_price > 0:
                 pnl = round((exit_price - entry_price) * quantity, 2)
@@ -217,7 +235,13 @@ def run_backtest(
         ce_o = cec["o"]; pe_o = pec["o"]
 
         fire_call = False; fire_put = False; trigger_price = 0.0
-        if strategy == "S8":
+        if strategy == "S9":
+            # Direct entry on touch of the per-side BUY line.
+            if ce_buy_line > 0 and ce_h >= ce_buy_line:
+                fire_call = True; trigger_price = ce_buy_line
+            elif pe_buy_line > 0 and pe_h >= pe_buy_line:
+                fire_put = True; trigger_price = pe_buy_line
+        elif strategy == "S8":
             if call_line > 0 and ce_h >= call_line:
                 fire_call = True; trigger_price = call_line
             elif put_line > 0 and pe_h >= put_line:
@@ -244,13 +268,21 @@ def run_backtest(
                     fill = float((pec if pos_side == "PE" else cec)["o"])
                 entered_strike = target_strike
             else:
+                # S7 / S9 — direct: BUY same side that fired
                 pos_side = "CE" if fire_call else "PE"
                 fill = ce_o if fire_call else pe_o
                 entered_strike = ce_strike if fire_call else pe_strike
 
             entry_price = float(fill)
-            sl_price    = max(0.05, entry_price - sl_points)
-            tgt_price   = entry_price + target_points
+            if strategy == "S9":
+                # Target / SL come from per-side lines; fallbacks to point offsets.
+                t_line = ce_target_line if pos_side == "CE" else pe_target_line
+                s_line = ce_sl_line     if pos_side == "CE" else pe_sl_line
+                tgt_price = t_line if t_line > 0 else (entry_price + target_points)
+                sl_price  = max(0.05, s_line) if s_line > 0 else max(0.05, entry_price - sl_points)
+            else:
+                sl_price    = max(0.05, entry_price - sl_points)
+                tgt_price   = entry_price + target_points
             entry_time  = t
             pos_trigger = trigger_side
             in_position = True
@@ -321,6 +353,15 @@ def run_backtest(
         "max_drawdown": _max_drawdown(equity_curve),
     }
 
+    lines_payload = {"call_line": call_line, "put_line": put_line}
+    if strategy == "S9":
+        lines_payload = {
+            "ce": {"buy": ce_buy_line, "target": ce_target_line, "sl": ce_sl_line},
+            "pe": {"buy": pe_buy_line, "target": pe_target_line, "sl": pe_sl_line},
+            # also expose flat aliases used by the chart engine
+            "call_line": ce_buy_line, "put_line": pe_buy_line,
+        }
+
     return {
         "status": "ok",
         "strategy": strategy,
@@ -329,7 +370,7 @@ def run_backtest(
         "equity_curve": equity_curve,
         "ce_series": ce,
         "pe_series": pe,
-        "lines": {"call_line": call_line, "put_line": put_line},
+        "lines": lines_payload,
         "stats": stats,
         "params": {
             "ce_strike": ce_strike, "pe_strike": pe_strike,
