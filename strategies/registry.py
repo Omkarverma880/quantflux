@@ -14,6 +14,7 @@ from strategies.strategy4_high_low_retest import Strategy4HighLowRetest
 from strategies.strategy5_gann_range import Strategy5GannRange
 from strategies.strategy6_call_put_lines import Strategy6CallPutLines
 from strategies.strategy7_strike_lines import Strategy7StrikeLines
+from strategies.strategy8_reverse import Strategy8Reverse
 
 # ──────────────── Strategy Registry ────────────────
 # Map strategy name → class
@@ -26,6 +27,7 @@ STRATEGY_MAP: dict[str, type] = {
     "strategy5_gann_range": Strategy5GannRange,
     "strategy6_call_put_lines": Strategy6CallPutLines,
     "strategy7_strike_lines": Strategy7StrikeLines,
+    "strategy8_reverse": Strategy8Reverse,
 }
 
 

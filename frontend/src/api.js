@@ -203,6 +203,32 @@ export const api = {
     request('/strategy7-trade/lines', { method: 'POST', body: JSON.stringify(lines) }),
   strategy7TradeHistory: () =>
     request('/strategy7-trade/history'),
+  strategy7Backtest: (payload) =>
+    request('/strategy7-trade/backtest', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Strategy 8 — CE/PE Reverse Line Touch Entry
+  getStrategy8TradeStatus: () => request('/strategy8-trade/status'),
+  getStrategy8Strikes: () => request('/strategy8-trade/strikes'),
+  strategy8SetStrikes: (payload) =>
+    request('/strategy8-trade/set-strikes', { method: 'POST', body: JSON.stringify(payload) }),
+  strategy8SetReverseStrikes: (payload) =>
+    request('/strategy8-trade/set-reverse-strikes', { method: 'POST', body: JSON.stringify(payload) }),
+  strategy8SetReverseMode: (mode) =>
+    request('/strategy8-trade/reverse-mode', { method: 'POST', body: JSON.stringify({ mode }) }),
+  getStrategy8Intraday: (side = 'CE') =>
+    request(`/strategy8-trade/intraday?side=${encodeURIComponent(side)}`),
+  strategy8TradeStart: (config) =>
+    request('/strategy8-trade/start', { method: 'POST', body: JSON.stringify(config) }),
+  strategy8TradeStop: () => request('/strategy8-trade/stop', { method: 'POST' }),
+  strategy8TradeCheck: () => request('/strategy8-trade/check', { method: 'POST' }),
+  strategy8TradeUpdateConfig: (config) =>
+    request('/strategy8-trade/config', { method: 'PUT', body: JSON.stringify(config) }),
+  strategy8UpdateLines: (lines) =>
+    request('/strategy8-trade/lines', { method: 'POST', body: JSON.stringify(lines) }),
+  strategy8TradeHistory: () =>
+    request('/strategy8-trade/history'),
+  strategy8Backtest: (payload) =>
+    request('/strategy8-trade/backtest', { method: 'POST', body: JSON.stringify(payload) }),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),

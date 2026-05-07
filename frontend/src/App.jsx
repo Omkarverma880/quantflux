@@ -16,6 +16,7 @@ import Strategy4 from './pages/Strategy4';
 import Strategy5 from './pages/Strategy5';
 import Strategy6 from './pages/Strategy6';
 import Strategy7 from './pages/Strategy7';
+import Strategy8 from './pages/Strategy8';
 import PortfolioAnalytics from './pages/PortfolioAnalytics';
 import AnalyticsWorld from './pages/AnalyticsWorld';
 import TradeHistory from './pages/TradeHistory';
@@ -46,6 +47,7 @@ export default function App() {
           <Route path="strategy5-trade" element={<Strategy5 />} />
           <Route path="strategy6-trade" element={<Strategy6 />} />
           <Route path="strategy7-trade" element={<Strategy7 />} />
+          <Route path="strategy8-trade" element={<Strategy8 />} />
           <Route path="portfolio" element={<PortfolioAnalytics />} />
           <Route path="strategies" element={<Strategies />} />
           <Route path="orders" element={<Orders />} />
