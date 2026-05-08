@@ -268,9 +268,22 @@ def run_backtest(
                     fill = float((pec if pos_side == "PE" else cec)["o"])
                 entered_strike = target_strike
             else:
-                # S7 / S9 — direct: BUY same side that fired
+                # S7 / S9 — direct: BUY same side that fired.
+                #
+                # Realistic fill model for a line-touch strategy:
+                # the moment LTP reaches the line, a MARKET order is sent
+                # and fills near the line price. So:
+                #   - if the candle OPENED above the line (gap), the
+                #     earliest possible entry is at the open
+                #   - otherwise the LTP rose intra-candle to touch the
+                #     line and we fill ≈ at the line itself.
+                # Using max(open, trigger_line) mirrors this without
+                # peeking at intra-candle ticks.
                 pos_side = "CE" if fire_call else "PE"
-                fill = ce_o if fire_call else pe_o
+                cand_open = ce_o if fire_call else pe_o
+                fill = max(float(cand_open or 0), float(trigger_price or 0))
+                if fill <= 0:
+                    fill = float(cand_open or trigger_price or 0)
                 entered_strike = ce_strike if fire_call else pe_strike
 
             entry_price = float(fill)
