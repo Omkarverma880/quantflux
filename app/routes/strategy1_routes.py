@@ -337,28 +337,35 @@ def _parse_order_time(t) -> Optional[datetime]:
 def _persist_orders_to_db(db: Session, user_id: int, date_str: str, orders: list):
     """Upsert orders into `order_history` keyed by (user_id, order_date, order_id).
 
-    Why upsert: the frontend polls /history and we re-snapshot every call,
-    so the same order_id will recur. We update average_price/status in
-    place so partial fills become COMPLETE without creating duplicates.
+    IMPORTANT: ``order_date`` is derived **per order** from the broker's
+    ``order_timestamp`` so an order placed yesterday but still echoed in
+    today's orderbook (Kite often returns the prior trading day's tail)
+    is filed under its TRUE date — not the server's ``datetime.now()``.
+
+    The ``date_str`` argument is now only used as a fallback when an order
+    has no parseable timestamp.
     """
     if not orders:
         return
     try:
-        order_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        fallback_date = datetime.strptime(date_str, "%Y-%m-%d").date()
     except ValueError:
-        order_date = date.today()
+        fallback_date = date.today()
 
-    # Pre-fetch existing orders for this user/date to avoid N round-trips.
-    existing = {
-        row.order_id: row
+    # Pre-fetch existing rows for this user across ALL dates touched in
+    # this batch so we can update in place. We can't pre-filter by date
+    # any more since each order may belong to a different one.
+    order_ids = [str(o.get("order_id") or "") for o in orders if o.get("order_id")]
+    existing: dict[str, OrderHistory] = {}
+    if order_ids:
         for row in db.execute(
             select(OrderHistory).where(
                 OrderHistory.user_id == user_id,
-                OrderHistory.order_date == order_date,
+                OrderHistory.order_id.in_(order_ids),
             )
-        ).scalars().all()
-        if row.order_id
-    }
+        ).scalars().all():
+            if row.order_id:
+                existing[row.order_id] = row
 
     for o in orders:
         oid = o.get("order_id") or ""
@@ -367,6 +374,7 @@ def _persist_orders_to_db(db: Session, user_id: int, date_str: str, orders: list
         # Prefer the raw kite datetime object (fed in via _normalize_order)
         # over the pre-formatted string for accurate persistence.
         order_time_dt = _parse_order_time(o.get("_raw_time") or o.get("time"))
+        order_date = order_time_dt.date() if order_time_dt else fallback_date
         row = existing.get(oid)
         if row is None:
             row = OrderHistory(
@@ -395,6 +403,10 @@ def _persist_orders_to_db(db: Session, user_id: int, date_str: str, orders: list
             row.quantity = int(o.get("quantity", row.quantity) or row.quantity)
             if order_time_dt:
                 row.order_time = order_time_dt
+                # Heal historical rows that were previously bucketed under
+                # the wrong date by re-anchoring to the true timestamp date.
+                if row.order_date != order_date:
+                    row.order_date = order_date
     try:
         db.commit()
     except Exception as e:

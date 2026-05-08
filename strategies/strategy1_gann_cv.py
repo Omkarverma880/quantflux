@@ -451,6 +451,14 @@ class Strategy1GannCV:
                 self.entry_order["status"] = "COMPLETE"
                 logger.info(f"Paper entry filled at {self.fill_price}")
                 self._on_entry_filled()
+            elif str(resp.status).upper() in ("REJECTED", "CANCELLED"):
+                logger.warning(
+                    "S1 entry %s synchronously — resetting to IDLE for re-arm",
+                    resp.status,
+                )
+                self.entry_order = None
+                self.state = State.IDLE
+                self._save_state()
             else:
                 # state already == ORDER_PLACED
                 self._save_state()

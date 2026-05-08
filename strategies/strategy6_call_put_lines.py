@@ -513,6 +513,26 @@ class Strategy6CallPutLines:
                 self.fill_price = self.option_ltp
                 self.entry_order["status"] = "COMPLETE"
                 self._on_entry_filled()
+            elif str(resp.status).upper() in ("REJECTED", "CANCELLED"):
+                # Broker rejected synchronously (e.g. insufficient funds).
+                # Reset to IDLE immediately so the next line touch can
+                # re-arm — don't sit in ORDER_PLACED for 60s.
+                logger.warning(
+                    "S6 entry %s synchronously — resetting to IDLE for re-arm",
+                    resp.status,
+                )
+                self.entry_order = None
+                self.signal_type = None
+                self.signal = "NO_TRADE"
+                self.scenario = f"Entry {resp.status} — re-arming"
+                self.option_symbol = ""
+                self.option_token = 0
+                self.option_ltp = 0.0
+                self.fill_price = 0.0
+                self.atm_strike = 0
+                self.strike = 0
+                self.state = State.IDLE
+                self._save_state()
             else:
                 self._save_state()
                 logger.info("S6 entry order placed: %s", resp.order_id)
@@ -527,22 +547,34 @@ class Strategy6CallPutLines:
             self.state = State.IDLE
             return
 
-        # Staleness: cancel if unfilled for >60s
+        # Staleness: cancel if unfilled for >30s
         placed_at = self.entry_order.get("timestamp")
         if placed_at:
             try:
                 elapsed = (datetime.now() - datetime.fromisoformat(placed_at)).total_seconds()
-                if elapsed > 60 and self.entry_order.get("status") != "COMPLETE":
-                    logger.info("S6 entry stale (%.0fs) — cancelling", elapsed)
-                    self._cancel_order(self.entry_order)
-                    self.entry_order["status"] = "CANCELLED"
-                    self.state = State.IDLE
-                    self.signal_type = None
-                    self.scenario = "Cancelled — stale order"
-                    self._save_state()
-                    return
             except Exception:
-                pass
+                elapsed = 0
+            if elapsed > 30 and self.entry_order.get("status") != "COMPLETE":
+                logger.info("S6 entry stale (%.0fs) — cancelling", elapsed)
+                # Best-effort cancel; never let an exception here keep us
+                # stuck in ORDER_PLACED.
+                try:
+                    self._cancel_order(self.entry_order)
+                except Exception as exc:
+                    logger.warning("S6 cancel failed (ignoring): %s", exc)
+                self.entry_order = None
+                self.signal_type = None
+                self.signal = "NO_TRADE"
+                self.scenario = "Cancelled — stale order"
+                self.option_symbol = ""
+                self.option_token = 0
+                self.option_ltp = 0.0
+                self.fill_price = 0.0
+                self.atm_strike = 0
+                self.strike = 0
+                self.state = State.IDLE
+                self._save_state()
+                return
 
         if self.entry_order.get("is_paper"):
             return

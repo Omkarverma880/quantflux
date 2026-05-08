@@ -575,6 +575,23 @@ class Strategy9LOC:
                 self.fill_price = self.option_ltp
                 self.entry_order["status"] = "COMPLETE"
                 self._on_entry_filled()
+            elif str(resp.status).upper() in ("REJECTED", "CANCELLED"):
+                logger.warning(
+                    "S9 entry %s synchronously — resetting to IDLE for re-arm",
+                    resp.status,
+                )
+                self.entry_order = None
+                self.signal_type = None
+                self.signal = "NO_TRADE"
+                self.scenario = f"Entry {resp.status} — re-arming"
+                self.option_symbol = ""
+                self.option_token = 0
+                self.option_ltp = 0.0
+                self.fill_price = 0.0
+                self.atm_strike = 0
+                self.strike = 0
+                self.state = State.IDLE
+                self._save_state()
             else:
                 self._save_state()
                 logger.info("S9 entry order placed: %s", resp.order_id)
