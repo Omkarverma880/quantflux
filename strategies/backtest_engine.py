@@ -188,12 +188,14 @@ def run_backtest(
             exit_price = 0.0
             exit_type = ""
             if strategy == "S9":
-                # Line-driven exits
+                # Line-driven exits — but ALWAYS validate direction relative
+                # to entry_price so a "target line" hit below entry is
+                # correctly labelled as a stop-out.
                 t_line = ce_target_line if pos_side == "CE" else pe_target_line
                 s_line = ce_sl_line     if pos_side == "CE" else pe_sl_line
-                if s_line > 0 and lo <= s_line:
+                if s_line > 0 and lo <= s_line and s_line < entry_price:
                     exit_price, exit_type = s_line, "SL_HIT"
-                elif t_line > 0 and hi >= t_line:
+                elif t_line > 0 and hi >= t_line and t_line > entry_price:
                     exit_price, exit_type = t_line, "TARGET_HIT"
                 elif t >= "15:15:00":
                     exit_price, exit_type = cl, "AUTO_SQUAREOFF"
@@ -236,10 +238,28 @@ def run_backtest(
 
         fire_call = False; fire_put = False; trigger_price = 0.0
         if strategy == "S9":
-            # Direct entry on touch of the per-side BUY line.
-            if ce_buy_line > 0 and ce_h >= ce_buy_line:
+            # Strict crossover up through the BUY line — required on BOTH sides
+            # independently. Without this, the engine fires every candle whose
+            # high is above the line (false re-entries on a sustained move that
+            # never re-tests the line).
+            ce_cross = (
+                ce_buy_line > 0 and prev_ce_close > 0
+                and prev_ce_close < ce_buy_line <= ce_h
+            )
+            pe_cross = (
+                pe_buy_line > 0 and prev_pe_close > 0
+                and prev_pe_close < pe_buy_line <= pe_h
+            )
+            if ce_cross and pe_cross:
+                # Both crossed in the same minute — pick the side that opened
+                # closer to its line (lowest expected slippage).
+                if abs(ce_o - ce_buy_line) <= abs(pe_o - pe_buy_line):
+                    fire_call = True; trigger_price = ce_buy_line
+                else:
+                    fire_put = True; trigger_price = pe_buy_line
+            elif ce_cross:
                 fire_call = True; trigger_price = ce_buy_line
-            elif pe_buy_line > 0 and pe_h >= pe_buy_line:
+            elif pe_cross:
                 fire_put = True; trigger_price = pe_buy_line
         elif strategy == "S8":
             if call_line > 0 and ce_h >= call_line:
@@ -293,6 +313,34 @@ def run_backtest(
                 s_line = ce_sl_line     if pos_side == "CE" else pe_sl_line
                 tgt_price = t_line if t_line > 0 else (entry_price + target_points)
                 sl_price  = max(0.05, s_line) if s_line > 0 else max(0.05, entry_price - sl_points)
+
+                # ── Entry validity guards (S9) ──
+                # 1) Gap-up fill: if open is far above the BUY line, the
+                #    "touch" never occurred at a fillable level — reject.
+                # 2) Config sanity: fill ≥ target_line means trade has no
+                #    upside; fill ≤ sl_line means trade is born stopped-out.
+                MAX_ENTRY_GAP = max(2.0, sl_points * 0.2)
+                gap = entry_price - trigger_price
+                cfg_invalid = (
+                    (t_line > 0 and entry_price >= t_line)
+                    or (s_line > 0 and entry_price <= s_line)
+                )
+                if gap > MAX_ENTRY_GAP or cfg_invalid:
+                    # Skip this entry — record a rejection note for the UI.
+                    reason = (
+                        f"gap {gap:.2f} > {MAX_ENTRY_GAP:.2f}"
+                        if gap > MAX_ENTRY_GAP
+                        else "fill outside SL/target band"
+                    )
+                    pos_side = None
+                    pos_trigger = None
+                    entry_price = 0.0
+                    sl_price = 0.0
+                    tgt_price = 0.0
+                    fire_call = False
+                    fire_put = False
+                    prev_ce_close = cec["c"]; prev_pe_close = pec["c"]
+                    continue
             else:
                 sl_price    = max(0.05, entry_price - sl_points)
                 tgt_price   = entry_price + target_points

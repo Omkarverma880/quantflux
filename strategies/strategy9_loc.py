@@ -495,49 +495,65 @@ class Strategy9LOC:
         if self.pe_ltp > 0:
             self.risk.update_price_for_arming(side="PUT", current_price=self.pe_ltp)
 
-        # CE side — direct BUY on touch
-        if ce_armed and self.ce_ltp > 0 and self.ce_ltp >= self.ce_buy_line:
-            ok, reason = self.risk.allow_entry(
-                side="CALL", current_price=self.ce_ltp, line_price=self.ce_buy_line
+        # CE side — strict UP-crossover through BUY line (prev < line <= ltp)
+        if ce_armed and self.ce_ltp > 0:
+            prev_ce = self._prev_ce or self.ce_ltp
+            crossed_up = prev_ce < self.ce_buy_line <= self.ce_ltp
+            equal_touch = (
+                abs(self.ce_ltp - self.ce_buy_line) < 0.05
+                and prev_ce != self.ce_ltp
+                and prev_ce < self.ce_buy_line
             )
-            if not ok:
-                self.scenario = f"CE BUY blocked — {reason}"
-                self.signal = "NO_TRADE"
+            if crossed_up or equal_touch:
+                ok, reason = self.risk.allow_entry(
+                    side="CALL", current_price=self.ce_ltp, line_price=self.ce_buy_line
+                )
+                if not ok:
+                    self.scenario = f"CE BUY blocked — {reason}"
+                    self.signal = "NO_TRADE"
+                    return
+                self.scenario = (
+                    f"CE BUY line {self.ce_buy_line:.2f} crossed on {self.ce_symbol} "
+                    f"({prev_ce:.2f} → {self.ce_ltp:.2f}) → BUY CALL"
+                )
+                self.signal = "BUY_CALL"
+                self.trigger_side = "CALL"
+                self.entry_reason = (
+                    f"CE LTP crossed {prev_ce:.2f} → {self.ce_ltp:.2f} through CE BUY line {self.ce_buy_line:.2f}"
+                )
+                self.last_trigger_at = datetime.now().isoformat()
+                self.last_trigger_side = "CALL"
+                self.last_trigger_price = self.ce_buy_line
+                self._fire_entry("CE")
                 return
-            self.scenario = (
-                f"CE BUY line {self.ce_buy_line:.2f} hit on {self.ce_symbol} "
-                f"({self.ce_ltp:.2f}) → BUY CALL"
-            )
-            self.signal = "BUY_CALL"
-            self.trigger_side = "CALL"
-            self.entry_reason = (
-                f"CE LTP {self.ce_ltp:.2f} ≥ CE BUY line {self.ce_buy_line:.2f}"
-            )
-            self.last_trigger_at = datetime.now().isoformat()
-            self.last_trigger_side = "CALL"
-            self.last_trigger_price = self.ce_buy_line
-            self._fire_entry("CE")
-            return
 
-        # PE side — direct BUY on touch
-        if pe_armed and self.pe_ltp > 0 and self.pe_ltp >= self.pe_buy_line:
-            ok, reason = self.risk.allow_entry(
-                side="PUT", current_price=self.pe_ltp, line_price=self.pe_buy_line
+        # PE side — strict UP-crossover through BUY line (prev < line <= ltp)
+        if pe_armed and self.pe_ltp > 0:
+            prev_pe = self._prev_pe or self.pe_ltp
+            crossed_up = prev_pe < self.pe_buy_line <= self.pe_ltp
+            equal_touch = (
+                abs(self.pe_ltp - self.pe_buy_line) < 0.05
+                and prev_pe != self.pe_ltp
+                and prev_pe < self.pe_buy_line
             )
-            if not ok:
-                self.scenario = f"PE BUY blocked — {reason}"
-                self.signal = "NO_TRADE"
-                return
-            self.scenario = (
-                f"PE BUY line {self.pe_buy_line:.2f} hit on {self.pe_symbol} "
-                f"({self.pe_ltp:.2f}) → BUY PUT"
-            )
-            self.signal = "BUY_PUT"
-            self.trigger_side = "PUT"
-            self.entry_reason = (
-                f"PE LTP {self.pe_ltp:.2f} ≥ PE BUY line {self.pe_buy_line:.2f}"
-            )
-            self.last_trigger_at = datetime.now().isoformat()
+            if crossed_up or equal_touch:
+                ok, reason = self.risk.allow_entry(
+                    side="PUT", current_price=self.pe_ltp, line_price=self.pe_buy_line
+                )
+                if not ok:
+                    self.scenario = f"PE BUY blocked — {reason}"
+                    self.signal = "NO_TRADE"
+                    return
+                self.scenario = (
+                    f"PE BUY line {self.pe_buy_line:.2f} crossed on {self.pe_symbol} "
+                    f"({prev_pe:.2f} → {self.pe_ltp:.2f}) → BUY PUT"
+                )
+                self.signal = "BUY_PUT"
+                self.trigger_side = "PUT"
+                self.entry_reason = (
+                    f"PE LTP crossed {prev_pe:.2f} → {self.pe_ltp:.2f} through PE BUY line {self.pe_buy_line:.2f}"
+                )
+                self.last_trigger_at = datetime.now().isoformat()
             self.last_trigger_side = "PUT"
             self.last_trigger_price = self.pe_buy_line
             self._fire_entry("PE")
@@ -558,11 +574,51 @@ class Strategy9LOC:
         if side == "CE":
             symbol, token, strike = self.ce_symbol, self.ce_token, self.ce_strike
             ref_ltp = self.ce_ltp
+            buy_line = self.ce_buy_line
+            tgt_line = self.ce_target_line
+            sl_line  = self.ce_sl_line
         else:
             symbol, token, strike = self.pe_symbol, self.pe_token, self.pe_strike
             ref_ltp = self.pe_ltp
+            buy_line = self.pe_buy_line
+            tgt_line = self.pe_target_line
+            sl_line  = self.pe_sl_line
         if not symbol:
             logger.error("S9 cannot fire — option symbol missing for %s", side)
+            return
+
+        # ── Pre-trade validity guards ──
+        # 1) Gap-up rejection: don't fire if LTP is already far above the BUY
+        #    line (the "touch" already happened — entering now means paying a
+        #    premium that violates the user's max_entry_slippage tolerance).
+        gap = float(ref_ltp or 0) - float(buy_line or 0)
+        if buy_line > 0 and gap > self.max_entry_slippage:
+            self.scenario = (
+                f"{side} entry skipped — gap {gap:.2f} > max slippage "
+                f"{self.max_entry_slippage:.2f}"
+            )
+            self.signal = "NO_TRADE"
+            self.trigger_side = None
+            logger.warning(
+                "S9 %s entry rejected: LTP %.2f vs BUY %.2f gap %.2f > max %.2f",
+                side, ref_ltp, buy_line, gap, self.max_entry_slippage,
+            )
+            return
+        # 2) Config sanity: fill ≥ target_line means no upside; fill ≤ sl_line
+        #    means trade is born stopped-out.
+        if tgt_line > 0 and ref_ltp >= tgt_line:
+            self.scenario = (
+                f"{side} entry skipped — LTP {ref_ltp:.2f} \u2265 target line {tgt_line:.2f}"
+            )
+            self.signal = "NO_TRADE"
+            self.trigger_side = None
+            return
+        if sl_line > 0 and ref_ltp <= sl_line:
+            self.scenario = (
+                f"{side} entry skipped — LTP {ref_ltp:.2f} \u2264 SL line {sl_line:.2f}"
+            )
+            self.signal = "NO_TRADE"
+            self.trigger_side = None
             return
 
         self.signal_type = side
