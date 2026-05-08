@@ -248,14 +248,32 @@ async def get_trade_history(user_id: int = Depends(login_required), db: Session 
     # 2) Read full history back from DB
     history = _load_order_history_from_db(db, user_id)
 
-    # 3) Merge legacy JSON-file rows for any dates not already in DB
-    #    (so historical data captured before this change isn't lost).
+    # 3) Merge legacy JSON-file rows for any dates not already in DB,
+    #    AND drop any individual order_ids that already exist in the DB
+    #    (prevents the same order showing up under both its real date
+    #    and a mis-bucketed date during the heal transition).
     legacy = _load_order_history_legacy()
     if legacy:
         existing_dates = {d.get("date") for d in history}
+        existing_oids = {
+            o.get("order_id")
+            for day in history
+            for o in (day.get("orders") or [])
+            if o.get("order_id")
+        }
         for day in legacy:
-            if day.get("date") and day["date"] not in existing_dates:
-                history.append(day)
+            d = day.get("date")
+            if not d:
+                continue
+            if d in existing_dates:
+                continue
+            # Filter out duplicates by order_id before appending.
+            filtered = [
+                o for o in (day.get("orders") or [])
+                if o.get("order_id") not in existing_oids
+            ]
+            if filtered:
+                history.append({"date": d, "orders": filtered})
 
     history.sort(key=lambda d: d.get("date", ""), reverse=True)
     return history
@@ -414,8 +432,40 @@ def _persist_orders_to_db(db: Session, user_id: int, date_str: str, orders: list
         logger.error(f"Failed to persist orders to DB: {e}")
 
 
+def _heal_order_dates(db: Session, user_id: int) -> int:
+    """One-time-style sweep: re-anchor any row whose ``order_date`` does
+    not match the date portion of its ``order_time``.
+
+    The earlier persistence code bucketed every order under
+    ``datetime.now().date()`` regardless of the broker timestamp, which
+    caused yesterday's orderbook tail to appear under "Today". Once a
+    row is mis-bucketed it never comes back through Kite's
+    ``get_orders()`` feed (Kite only returns today's tail), so the
+    upsert path can't heal it. This sweep fixes them directly.
+    """
+    rows = db.execute(
+        select(OrderHistory).where(OrderHistory.user_id == user_id)
+    ).scalars().all()
+    fixed = 0
+    for r in rows:
+        if r.order_time and r.order_date and r.order_time.date() != r.order_date:
+            r.order_date = r.order_time.date()
+            fixed += 1
+    if fixed:
+        try:
+            db.commit()
+            logger.info(f"order_history heal: re-anchored {fixed} rows for user {user_id}")
+        except Exception as exc:
+            db.rollback()
+            logger.error(f"order_history heal commit failed: {exc}")
+    return fixed
+
+
 def _load_order_history_from_db(db: Session, user_id: int) -> list:
     """Return [{date, orders: [...]}] grouped by order_date for this user."""
+    # Heal any historical mis-bucketed rows before grouping.
+    _heal_order_dates(db, user_id)
+
     rows = db.execute(
         select(OrderHistory)
         .where(OrderHistory.user_id == user_id)
