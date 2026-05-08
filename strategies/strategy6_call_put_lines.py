@@ -40,6 +40,7 @@ from core.broker import (
     Exchange, OrderSide, OrderType, ProductType,
 )
 from core.logger import get_logger
+from core.risk_controller import RiskController
 
 logger = get_logger("strategy6.call_put_lines")
 
@@ -125,6 +126,9 @@ class Strategy6CallPutLines:
         self._trades_today: int = 0
         self.trade_log: list[dict] = []
         self.last_check_at: Optional[datetime] = None
+
+        # ── Risk / re-entry controller ──
+        self.risk = RiskController()
 
     # ── Derived ───────────────────────────────────────
     @property
@@ -388,6 +392,10 @@ class Strategy6CallPutLines:
         prev = self._prev_spot or self.spot_price
         spot = self.spot_price
 
+        # Tick-level fresh-crossover arming
+        self.risk.update_price_for_arming(side="CALL", current_price=spot)
+        self.risk.update_price_for_arming(side="PUT", current_price=spot)
+
         # CALL line touch: detect a crossing UP through call_line OR an
         # equal-touch tick. Crossing-only avoids false fires when a line
         # is moved through the current spot — set_lines() re-anchors
@@ -396,6 +404,13 @@ class Strategy6CallPutLines:
             crossed_up = prev < self.call_line <= spot
             equal_touch = abs(spot - self.call_line) < 0.05 and prev != spot
             if crossed_up or equal_touch:
+                ok, reason = self.risk.allow_entry(
+                    side="CALL", current_price=spot, line_price=self.call_line
+                )
+                if not ok:
+                    self.scenario = f"CALL touch blocked — {reason}"
+                    self.signal = "NO_TRADE"
+                    return
                 self.scenario = f"CALL line {self.call_line:.2f} touched"
                 self.signal = "BUY_CALL"
                 self.entry_reason = (
@@ -408,6 +423,13 @@ class Strategy6CallPutLines:
             crossed_down = prev > self.put_line >= spot
             equal_touch = abs(spot - self.put_line) < 0.05 and prev != spot
             if crossed_down or equal_touch:
+                ok, reason = self.risk.allow_entry(
+                    side="PUT", current_price=spot, line_price=self.put_line
+                )
+                if not ok:
+                    self.scenario = f"PUT touch blocked — {reason}"
+                    self.signal = "NO_TRADE"
+                    return
                 self.scenario = f"PUT line {self.put_line:.2f} touched"
                 self.signal = "BUY_PUT"
                 self.entry_reason = (
@@ -643,6 +665,7 @@ class Strategy6CallPutLines:
         }
         self.state = State.POSITION_OPEN
         self._trades_today += 1
+        self.risk.record_entry(side="CALL" if self.signal_type == "CE" else "PUT")
         self._save_state()
         logger.info(
             "S6 position open. Entry=%.2f SL=%.2f TGT=%.2f",
@@ -906,6 +929,18 @@ class Strategy6CallPutLines:
         pnl = (exit_price - self.fill_price) * self.quantity
         if exit_type == "SL_HIT":
             pnl = -abs(pnl)
+        # Risk ledger — must run BEFORE state reset
+        try:
+            side = "CALL" if self.signal_type == "CE" else "PUT"
+            line_price = self.call_line if side == "CALL" else self.put_line
+            self.risk.record_exit(
+                exit_type=exit_type,
+                side=side,
+                line_price=float(line_price or 0),
+                pnl=round(pnl, 2),
+            )
+        except Exception as exc:
+            logger.warning("S6 risk.record_exit failed: %s", exc)
         trade = {
             "date": (self._trading_date or date.today()).isoformat(),
             "signal": self.signal_type,
@@ -1007,6 +1042,7 @@ class Strategy6CallPutLines:
             "target_shadow": self.target_shadow,
             "trades_today": self._trades_today,
             "trade_log": self.trade_log[-50:],
+            "risk": self.risk.serialize(),
             "config": {
                 "sl_points": self.sl_points,
                 "target_points": self.target_points,
@@ -1096,6 +1132,7 @@ class Strategy6CallPutLines:
             self.target_shadow = bool(data.get("target_shadow", True))
             self._trades_today = int(data.get("trades_today", 0) or 0)
             self.trade_log = list(data.get("trade_log", []))
+            self.risk.restore(data.get("risk") or {})
             return True
         except Exception as exc:
             logger.warning("S6 restore_state apply failed: %s", exc)
@@ -1160,4 +1197,5 @@ class Strategy6CallPutLines:
             "trades_today": self._trades_today,
             "trade_log": self.trade_log[-20:],
             "last_check_at": self.last_check_at.isoformat() if self.last_check_at else None,
+            "risk": self.risk.status_payload(),
         }

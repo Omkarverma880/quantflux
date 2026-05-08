@@ -34,6 +34,7 @@ from core.broker import (
     Exchange, OrderSide, OrderType, ProductType,
 )
 from core.logger import get_logger
+from core.risk_controller import RiskController
 
 logger = get_logger("strategy7.strike_lines")
 
@@ -123,6 +124,9 @@ class Strategy7StrikeLines:
         self._trades_today: int = 0
         self.trade_log: list[dict] = []
         self.last_check_at: Optional[datetime] = None
+
+        # ── Risk / re-entry controller ──
+        self.risk = RiskController()
 
     # ── Derived ───────────────────────────────────────
     @property
@@ -453,6 +457,12 @@ class Strategy7StrikeLines:
             self.scenario = "Max trades reached"
             return
 
+        # Tick-level fresh-crossover arming
+        if self.ce_ltp > 0:
+            self.risk.update_price_for_arming(side="CALL", current_price=self.ce_ltp)
+        if self.pe_ltp > 0:
+            self.risk.update_price_for_arming(side="PUT", current_price=self.pe_ltp)
+
         # CALL touch on CE strike
         if self.call_line > 0 and self.ce_ltp > 0 and self.ce_strike > 0:
             prev = self._prev_ce or self.ce_ltp
@@ -461,6 +471,13 @@ class Strategy7StrikeLines:
             crossed_dn = prev > self.call_line >= cur
             equal_touch = abs(cur - self.call_line) < 0.05 and prev != cur
             if crossed_up or crossed_dn or equal_touch:
+                ok, reason = self.risk.allow_entry(
+                    side="CALL", current_price=cur, line_price=self.call_line
+                )
+                if not ok:
+                    self.scenario = f"CALL touch blocked — {reason}"
+                    self.signal = "NO_TRADE"
+                    return
                 self.scenario = f"CALL line {self.call_line:.2f} touched on {self.ce_symbol}"
                 self.signal = "BUY_CALL"
                 self.entry_reason = (
@@ -477,6 +494,13 @@ class Strategy7StrikeLines:
             crossed_dn = prev > self.put_line >= cur
             equal_touch = abs(cur - self.put_line) < 0.05 and prev != cur
             if crossed_up or crossed_dn or equal_touch:
+                ok, reason = self.risk.allow_entry(
+                    side="PUT", current_price=cur, line_price=self.put_line
+                )
+                if not ok:
+                    self.scenario = f"PUT touch blocked — {reason}"
+                    self.signal = "NO_TRADE"
+                    return
                 self.scenario = f"PUT line {self.put_line:.2f} touched on {self.pe_symbol}"
                 self.signal = "BUY_PUT"
                 self.entry_reason = (
@@ -620,6 +644,7 @@ class Strategy7StrikeLines:
             "price": self.target_price, "order_id": None,
         }
         self.state = State.POSITION_OPEN
+        self.risk.record_entry(side="CALL" if self.signal_type == "CE" else "PUT")
         self._save_state()
         logger.info(
             "S7 entry filled: %s @ %.2f | SL %.2f | TGT %.2f",
@@ -757,6 +782,15 @@ class Strategy7StrikeLines:
                 logger.error("S7 market exit failed: %s", exc)
 
         pnl = round((exit_price - self.fill_price) * self.quantity, 2)
+        try:
+            side = "CALL" if self.signal_type == "CE" else "PUT"
+            line_price = self.call_line if side == "CALL" else self.put_line
+            self.risk.record_exit(
+                exit_type=exit_type, side=side,
+                line_price=float(line_price or 0), pnl=pnl,
+            )
+        except Exception as exc:
+            logger.warning("S7 risk.record_exit failed: %s", exc)
         trade = {
             "date": (self._trading_date or date.today()).isoformat(),
             "signal": self.signal_type,
@@ -879,6 +913,7 @@ class Strategy7StrikeLines:
                 "target_order": self.target_order,
                 "sl_shadow": self.sl_shadow, "target_shadow": self.target_shadow,
                 "trades_today": self._trades_today, "trade_log": self.trade_log,
+                "risk": self.risk.serialize(),
             }, indent=2, default=str))
         except Exception as exc:
             logger.error("S7 state save failed: %s", exc)
@@ -923,6 +958,7 @@ class Strategy7StrikeLines:
             self.target_shadow = bool(data.get("target_shadow", True))
             self._trades_today = int(data.get("trades_today") or 0)
             self.trade_log = list(data.get("trade_log") or [])
+            self.risk.restore(data.get("risk") or {})
             return True
         except Exception as exc:
             logger.warning("S7 state restore failed: %s", exc)
@@ -1002,4 +1038,5 @@ class Strategy7StrikeLines:
             "trades_today": self._trades_today,
             "trade_log": self.trade_log[-20:],
             "last_check_at": self.last_check_at.isoformat() if self.last_check_at else None,
+            "risk": self.risk.status_payload(),
         }

@@ -42,6 +42,7 @@ from core.broker import (
     Exchange, OrderSide, OrderType, ProductType,
 )
 from core.logger import get_logger
+from core.risk_controller import RiskController
 
 logger = get_logger("strategy9.loc")
 
@@ -140,6 +141,9 @@ class Strategy9LOC:
         self._trades_today: int = 0
         self.trade_log: list[dict] = []
         self.last_check_at: Optional[datetime] = None
+
+        # ── Risk / re-entry controller ──
+        self.risk = RiskController()
 
     # ── Derived ───────────────────────────────────────
     @property
@@ -485,8 +489,21 @@ class Strategy9LOC:
             self.scenario = "Max trades reached"
             return
 
+        # Tick-level fresh-crossover arming
+        if self.ce_ltp > 0:
+            self.risk.update_price_for_arming(side="CALL", current_price=self.ce_ltp)
+        if self.pe_ltp > 0:
+            self.risk.update_price_for_arming(side="PUT", current_price=self.pe_ltp)
+
         # CE side — direct BUY on touch
         if ce_armed and self.ce_ltp > 0 and self.ce_ltp >= self.ce_buy_line:
+            ok, reason = self.risk.allow_entry(
+                side="CALL", current_price=self.ce_ltp, line_price=self.ce_buy_line
+            )
+            if not ok:
+                self.scenario = f"CE BUY blocked — {reason}"
+                self.signal = "NO_TRADE"
+                return
             self.scenario = (
                 f"CE BUY line {self.ce_buy_line:.2f} hit on {self.ce_symbol} "
                 f"({self.ce_ltp:.2f}) → BUY CALL"
@@ -504,6 +521,13 @@ class Strategy9LOC:
 
         # PE side — direct BUY on touch
         if pe_armed and self.pe_ltp > 0 and self.pe_ltp >= self.pe_buy_line:
+            ok, reason = self.risk.allow_entry(
+                side="PUT", current_price=self.pe_ltp, line_price=self.pe_buy_line
+            )
+            if not ok:
+                self.scenario = f"PE BUY blocked — {reason}"
+                self.signal = "NO_TRADE"
+                return
             self.scenario = (
                 f"PE BUY line {self.pe_buy_line:.2f} hit on {self.pe_symbol} "
                 f"({self.pe_ltp:.2f}) → BUY PUT"
@@ -661,6 +685,7 @@ class Strategy9LOC:
         self.sl_order = {"status": "MONITOR", "is_paper": False, "price": self.sl_price, "order_id": None}
         self.target_order = {"status": "MONITOR", "is_paper": False, "price": self.target_price, "order_id": None}
         self.state = State.POSITION_OPEN
+        self.risk.record_entry(side=self.trigger_side or "")
         self._save_state()
         logger.info(
             "S9 entry filled: %s @ %.2f | TGT line %.2f | SL line %.2f",
@@ -731,6 +756,19 @@ class Strategy9LOC:
             logger.error("S9 exit order failed: %s", exc)
 
         pnl = round((exit_price - self.fill_price) * self.quantity, 2)
+        try:
+            line_price = (
+                self.ce_buy_line if self.trigger_side == "CALL"
+                else self.pe_buy_line
+            )
+            self.risk.record_exit(
+                exit_type=exit_type,
+                side=self.trigger_side or "",
+                line_price=float(line_price or 0),
+                pnl=pnl,
+            )
+        except Exception as exc:
+            logger.warning("S9 risk.record_exit failed: %s", exc)
         trade = {
             "date": (self._trading_date or date.today()).isoformat(),
             "signal": self.signal_type,
@@ -846,6 +884,7 @@ class Strategy9LOC:
                 "last_exit_at": self.last_exit_at, "last_exit_type": self.last_exit_type,
                 "last_exit_price": self.last_exit_price,
                 "trades_today": self._trades_today, "trade_log": self.trade_log,
+                "risk": self.risk.serialize(),
             }, indent=2, default=str))
         except Exception as exc:
             logger.error("S9 state save failed: %s", exc)
@@ -900,6 +939,7 @@ class Strategy9LOC:
             self.last_exit_price = float(data.get("last_exit_price") or 0)
             self._trades_today = int(data.get("trades_today") or 0)
             self.trade_log = list(data.get("trade_log") or [])
+            self.risk.restore(data.get("risk") or {})
             return True
         except Exception as exc:
             logger.warning("S9 state restore failed: %s", exc)
@@ -983,4 +1023,5 @@ class Strategy9LOC:
             "trades_today": self._trades_today,
             "trade_log": self.trade_log[-20:],
             "last_check_at": self.last_check_at.isoformat() if self.last_check_at else None,
+            "risk": self.risk.status_payload(),
         }

@@ -36,6 +36,7 @@ from core.broker import (
     Exchange, OrderSide, OrderType, ProductType,
 )
 from core.logger import get_logger
+from core.risk_controller import RiskController
 
 logger = get_logger("strategy8.reverse")
 
@@ -146,6 +147,9 @@ class Strategy8Reverse:
         self._trades_today: int = 0
         self.trade_log: list[dict] = []
         self.last_check_at: Optional[datetime] = None
+
+        # ── Risk / re-entry controller (shared engine) ──
+        self.risk = RiskController()
 
     # ── Derived ───────────────────────────────────────
     @property
@@ -547,9 +551,22 @@ class Strategy8Reverse:
             self.scenario = "Max trades reached"
             return
 
+        # Tick-level update of fresh-crossover arming for both sides
+        if self.ce_ltp > 0:
+            self.risk.update_price_for_arming(side="CALL", current_price=self.ce_ltp)
+        if self.pe_ltp > 0:
+            self.risk.update_price_for_arming(side="PUT", current_price=self.pe_ltp)
+
         # CASE-1: CE LTP >= CALL line  →  BUY PUT (reverse)
         if self.call_line > 0 and self.ce_ltp > 0 and self.ce_strike > 0:
             if self.ce_ltp >= self.call_line:
+                ok, reason = self.risk.allow_entry(
+                    side="CALL", current_price=self.ce_ltp, line_price=self.call_line
+                )
+                if not ok:
+                    self.scenario = f"CALL touch blocked — {reason}"
+                    self.signal = "NO_TRADE"
+                    return
                 self.scenario = (
                     f"CALL line {self.call_line:.2f} hit on {self.ce_symbol} "
                     f"({self.ce_ltp:.2f}) → REVERSE BUY PUT"
@@ -568,6 +585,13 @@ class Strategy8Reverse:
         # CASE-2: PE LTP >= PUT line  →  BUY CALL (reverse)
         if self.put_line > 0 and self.pe_ltp > 0 and self.pe_strike > 0:
             if self.pe_ltp >= self.put_line:
+                ok, reason = self.risk.allow_entry(
+                    side="PUT", current_price=self.pe_ltp, line_price=self.put_line
+                )
+                if not ok:
+                    self.scenario = f"PUT touch blocked — {reason}"
+                    self.signal = "NO_TRADE"
+                    return
                 self.scenario = (
                     f"PUT line {self.put_line:.2f} hit on {self.pe_symbol} "
                     f"({self.pe_ltp:.2f}) → REVERSE BUY CALL"
@@ -711,6 +735,7 @@ class Strategy8Reverse:
         self.sl_order = {"status": "SHADOW", "is_paper": False, "price": self.sl_price, "order_id": None}
         self.target_order = {"status": "SHADOW", "is_paper": False, "price": self.target_price, "order_id": None}
         self.state = State.POSITION_OPEN
+        self.risk.record_entry(side=self.trigger_side or "")
         self._save_state()
         logger.info(
             "S8 REVERSE entry filled: %s @ %.2f | SL %.2f | TGT %.2f",
@@ -834,6 +859,18 @@ class Strategy8Reverse:
                 logger.error("S8 market exit failed: %s", exc)
 
         pnl = round((exit_price - self.fill_price) * self.quantity, 2)
+        # Risk ledger — must run BEFORE _reset_to_idle so the next
+        # tick's _scan_for_touch sees the updated mode/cooldown.
+        try:
+            line_price = self.call_line if self.trigger_side == "CALL" else self.put_line
+            self.risk.record_exit(
+                exit_type=exit_type,
+                side=self.trigger_side or "",
+                line_price=float(line_price or 0),
+                pnl=pnl,
+            )
+        except Exception as exc:
+            logger.warning("S8 risk.record_exit failed: %s", exc)
         trade = {
             "date": (self._trading_date or date.today()).isoformat(),
             "signal": self.signal_type,
@@ -960,6 +997,7 @@ class Strategy8Reverse:
                 "last_trigger_at": self.last_trigger_at, "last_trigger_side": self.last_trigger_side,
                 "last_trigger_price": self.last_trigger_price,
                 "trades_today": self._trades_today, "trade_log": self.trade_log,
+                "risk": self.risk.serialize(),
             }, indent=2, default=str))
         except Exception as exc:
             logger.error("S8 state save failed: %s", exc)
@@ -1016,6 +1054,7 @@ class Strategy8Reverse:
             self.last_trigger_price = float(data.get("last_trigger_price") or 0)
             self._trades_today = int(data.get("trades_today") or 0)
             self.trade_log = list(data.get("trade_log") or [])
+            self.risk.restore(data.get("risk") or {})
             return True
         except Exception as exc:
             logger.warning("S8 state restore failed: %s", exc)
@@ -1108,4 +1147,5 @@ class Strategy8Reverse:
             "trades_today": self._trades_today,
             "trade_log": self.trade_log[-20:],
             "last_check_at": self.last_check_at.isoformat() if self.last_check_at else None,
+            "risk": self.risk.status_payload(),
         }

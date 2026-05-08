@@ -285,6 +285,17 @@ export const api = {
   getSettings: () => request('/settings/'),
   updateSettings: (data) =>
     request('/settings/', { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Risk / re-entry control (Strategy 6/7/8/9)
+  getRiskStatus: (strategyNum) => request(`/strategy${strategyNum}-trade/risk`),
+  updateRiskConfig: (strategyNum, cfg) =>
+    request(`/strategy${strategyNum}-trade/risk/config`, { method: 'POST', body: JSON.stringify(cfg) }),
+  resumeRisk: (strategyNum) =>
+    request(`/strategy${strategyNum}-trade/risk/resume`, { method: 'POST' }),
+  pauseRisk: (strategyNum) =>
+    request(`/strategy${strategyNum}-trade/risk/pause`, { method: 'POST' }),
+  resetRiskCounters: (strategyNum) =>
+    request(`/strategy${strategyNum}-trade/risk/reset`, { method: 'POST' }),
 };
 
 export function useWebSocket(onMessage) {

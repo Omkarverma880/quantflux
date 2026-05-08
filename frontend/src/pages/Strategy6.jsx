@@ -9,6 +9,7 @@ import {
   CheckCircle2, XCircle, Clock, AlertCircle, Info, Trash2,
 } from 'lucide-react';
 import { api } from '../api';
+import RiskPanel from '../components/RiskPanel';
 
 const REFRESH_MS = 1_000;
 const SPOT_HISTORY_LIMIT = 500;
@@ -795,6 +796,8 @@ export default function Strategy6() {
           </div>
         </Card>
       )}
+
+      <RiskPanel strategyNum={6} risk={status?.risk} onChange={fetchStatus} />
     </div>
   );
 }

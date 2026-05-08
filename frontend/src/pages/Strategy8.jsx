@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import BacktestPanel from '../components/BacktestPanel';
+import RiskPanel from '../components/RiskPanel';
 
 const REFRESH_MS = 1_000;
 
@@ -839,6 +840,9 @@ export default function Strategy8() {
           </div>
         )}
       </Card>
+
+      {/* Risk & Re-entry Control */}
+      <RiskPanel strategyNum={8} risk={status?.risk} onChange={fetchStatus} />
 
       {/* Backtest */}
       <BacktestPanel

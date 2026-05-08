@@ -297,3 +297,66 @@ async def run_strategy_backtest(payload: BacktestRequest, user_id: int = Depends
     except Exception as exc:
         logger.error("S7 backtest failed: %s", exc)
         return {"status": "error", "message": str(exc)}
+
+
+
+# ── Risk / re-entry control ─────────────────────────
+
+class RiskConfigPayload(BaseModel):
+    allow_reentry_after_target: bool | None = None
+    allow_reentry_after_sl: bool | None = None
+    require_manual_confirmation_after_sl: bool | None = None
+    auto_pause_after_sl: bool | None = None
+    max_reentries_per_day: int | None = None
+    max_sl_hits_per_day: int | None = None
+    max_consecutive_losses: int | None = None
+    entry_cooldown_seconds: int | None = None
+    require_fresh_crossover: bool | None = None
+    fresh_crossover_distance: float | None = None
+
+
+@router.get("/risk")
+async def get_risk_status(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    strat = _get_strategy(broker, user_id)
+    return {"status": "ok", "risk": strat.risk.status_payload()}
+
+
+@router.post("/risk/config")
+async def update_risk_config(payload: RiskConfigPayload, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    strat = _get_strategy(broker, user_id)
+    strat.risk.update_config(**payload.model_dump(exclude_none=True))
+    try: strat._save_state()
+    except Exception: pass
+    return {"status": "ok", "risk": strat.risk.status_payload()}
+
+
+@router.post("/risk/resume")
+async def resume_after_sl(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    strat = _get_strategy(broker, user_id)
+    strat.risk.confirm_resume()
+    try: strat._save_state()
+    except Exception: pass
+    return {"status": "ok", "risk": strat.risk.status_payload()}
+
+
+@router.post("/risk/pause")
+async def pause_strategy_risk(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    strat = _get_strategy(broker, user_id)
+    strat.risk.pause()
+    try: strat._save_state()
+    except Exception: pass
+    return {"status": "ok", "risk": strat.risk.status_payload()}
+
+
+@router.post("/risk/reset")
+async def reset_risk_counters(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    strat = _get_strategy(broker, user_id)
+    strat.risk.reset_counters()
+    try: strat._save_state()
+    except Exception: pass
+    return {"status": "ok", "risk": strat.risk.status_payload()}
