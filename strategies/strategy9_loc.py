@@ -627,20 +627,39 @@ class Strategy9LOC:
         self.option_symbol = symbol
         self.option_token = int(token)
         self.option_ltp = float(ref_ltp or 0)
+        # Remember the user's BUY line for this fire — used as the slippage
+        # reference both for capping the LIMIT price and for post-fill checks.
+        self._entry_buy_line = float(buy_line or 0)
         self.entry_time = datetime.now().strftime("%H:%M:%S")
         self._place_entry_order()
 
     def _place_entry_order(self):
         prev_state = self.state
         self.state = State.ORDER_PLACED
+        # Hard price cap = user's BUY line + max_entry_slippage. A LIMIT order
+        # at this price guarantees the broker can never fill us higher than
+        # what the user explicitly tolerated. If liquidity at/below the cap
+        # disappears, the order simply doesn't fill (and is cancelled as stale
+        # by _check_entry_fill after 60s) — far better than overpaying.
+        buy_line = float(getattr(self, "_entry_buy_line", 0) or 0)
+        slippage = max(0.0, float(self.max_entry_slippage or 0))
+        if buy_line > 0 and slippage > 0:
+            limit_price = round(buy_line + slippage, 2)
+            order_type = OrderType.LIMIT
+        else:
+            # Safety fallback only if the user explicitly cleared slippage —
+            # then behave as before (MARKET, post-fill check still applies).
+            limit_price = 0.0
+            order_type = OrderType.MARKET
         try:
             req = OrderRequest(
                 tradingsymbol=self.option_symbol,
                 exchange=Exchange.NFO,
                 side=OrderSide.BUY,
                 quantity=self.quantity,
-                order_type=OrderType.MARKET,
+                order_type=order_type,
                 product=ProductType.MIS,
+                price=limit_price,
                 tag="S9ENTRY",
             )
             resp = self.broker.place_order(req)
@@ -649,6 +668,8 @@ class Strategy9LOC:
                 "status": resp.status,
                 "is_paper": resp.is_paper,
                 "price": self.option_ltp,
+                "buy_line": buy_line,
+                "limit_price": limit_price,
                 "timestamp": datetime.now().isoformat(),
             }
             if resp.is_paper and resp.status == "COMPLETE":
@@ -710,14 +731,25 @@ class Strategy9LOC:
                     if status == "COMPLETE":
                         self.fill_price = float(o.get("average_price", self.option_ltp))
                         self.entry_order["status"] = "COMPLETE"
-                        ref = float(self.option_ltp or 0)
+                        # Slippage is measured against the user's BUY line
+                        # (the intended entry), NOT the LTP at trigger time.
+                        # Anything filled more than max_entry_slippage above
+                        # the BUY line is auto-flattened — defends against
+                        # MARKET-style fills on legacy orders or partial-fill
+                        # quirks even though entry is now a capped LIMIT.
+                        ref = float(
+                            self.entry_order.get("buy_line")
+                            or getattr(self, "_entry_buy_line", 0)
+                            or self.option_ltp
+                            or 0
+                        )
                         slip = self.fill_price - ref
                         if (
                             ref > 0 and self.max_entry_slippage > 0
                             and slip > self.max_entry_slippage
                         ):
                             logger.warning(
-                                "S9 entry slippage breach: ref=%.2f fill=%.2f slip=%.2f > max=%.2f",
+                                "S9 entry slippage breach: buy_line=%.2f fill=%.2f slip=%.2f > max=%.2f",
                                 ref, self.fill_price, slip, self.max_entry_slippage,
                             )
                             self._slippage_flatten(ref, slip)
