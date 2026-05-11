@@ -31,7 +31,11 @@ class Strategy9Config(BaseModel):
     lots: int = 1
     strike_interval: int = 50
     max_trades_per_day: int = 3
-    max_entry_slippage: float = 8
+    # Proximity windows (option-price points) for shadow→real promotion.
+    sl_proximity: float = 5
+    target_proximity: float = 5
+    # Deprecated — kept only so old saved configs don't fail validation.
+    max_entry_slippage: float = 0
     index_name: str = "NIFTY"
     # Six lines
     ce_buy_line: float = 0

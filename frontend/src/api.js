@@ -74,6 +74,7 @@ export const api = {
   placeOrder: (order) => request('/trading/order', { method: 'POST', body: JSON.stringify(order) }),
   cancelOrder: (orderId) => request(`/trading/order/cancel/${orderId}`, { method: 'POST' }),
   modifyOrder: (data) => request('/trading/order/modify', { method: 'PUT', body: JSON.stringify(data) }),
+  exitAllPositions: () => request('/trading/exit_all', { method: 'POST' }),
 
   // Strategies
   getStrategies: () => request('/strategies/'),

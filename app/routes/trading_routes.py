@@ -238,3 +238,83 @@ async def modify_order(body: ModifyOrderRequest, user_id: int = Depends(login_re
     except Exception as e:
         logger.error(f"Modify order failed: {e}")
         return {"status": "error", "error": str(e)}
+
+
+@router.post("/exit_all")
+async def exit_all_positions(
+    user_id: int = Depends(login_required), db: Session = Depends(get_db),
+):
+    """Instant kill-switch: cancel every open/trigger-pending order and
+    square-off every non-zero position at MARKET. Returns a per-action
+    summary. Used by the dashboard's Instant Exit button."""
+    broker = get_user_broker(db, user_id)
+    cancelled: list[str] = []
+    cancel_errors: list[dict] = []
+    squared_off: list[dict] = []
+    squareoff_errors: list[dict] = []
+
+    # 1) Cancel every open / trigger-pending order first so they don't fight
+    #    the square-off (e.g. resting LIMIT exits, SL-M legs).
+    try:
+        orders = broker.get_orders()
+    except Exception as exc:
+        logger.error("exit_all: get_orders failed: %s", exc)
+        orders = []
+    for o in orders:
+        status = str(o.get("status", "")).upper()
+        if status not in ("OPEN", "TRIGGER PENDING", "MODIFY VALIDATION PENDING", "MODIFY PENDING"):
+            continue
+        oid = str(o.get("order_id") or "")
+        if not oid:
+            continue
+        try:
+            broker.cancel_order(oid)
+            cancelled.append(oid)
+        except Exception as exc:
+            cancel_errors.append({"order_id": oid, "error": str(exc)})
+
+    # 2) Square-off every non-zero position at MARKET.
+    try:
+        positions = broker.get_positions()
+    except Exception as exc:
+        logger.error("exit_all: get_positions failed: %s", exc)
+        positions = []
+    for p in positions:
+        qty = int(getattr(p, "quantity", 0) or 0)
+        if qty == 0:
+            continue
+        try:
+            req = OrderRequest(
+                tradingsymbol=p.tradingsymbol,
+                exchange=Exchange(p.exchange),
+                side=OrderSide.SELL if qty > 0 else OrderSide.BUY,
+                quantity=abs(qty),
+                order_type=OrderType.MARKET,
+                product=ProductType(p.product),
+                tag="EXITALL",
+            )
+            resp = broker.place_order(req)
+            squared_off.append({
+                "tradingsymbol": p.tradingsymbol,
+                "quantity": qty,
+                "order_id": getattr(resp, "order_id", None),
+            })
+        except Exception as exc:
+            squareoff_errors.append({
+                "tradingsymbol": p.tradingsymbol,
+                "quantity": qty,
+                "error": str(exc),
+            })
+
+    logger.warning(
+        "EXIT ALL by user_id=%s: cancelled=%d squared_off=%d cancel_err=%d sq_err=%d",
+        user_id, len(cancelled), len(squared_off),
+        len(cancel_errors), len(squareoff_errors),
+    )
+    return {
+        "status": "ok",
+        "cancelled_orders": cancelled,
+        "cancel_errors": cancel_errors,
+        "squared_off": squared_off,
+        "squareoff_errors": squareoff_errors,
+    }

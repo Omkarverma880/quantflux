@@ -513,14 +513,29 @@ class Strategy6CallPutLines:
     def _place_entry_order(self):
         prev_state = self.state
         self.state = State.ORDER_PLACED
+        # LIMIT BUY pegged to the option LTP captured at the moment the
+        # index crossed the line. Guarantees the broker never fills above
+        # what we saw — gap-up moves simply rest unfilled (and get
+        # stale-cancelled by the existing 60s logic).
+        entry_cap = round(float(self.option_ltp or 0), 2)
+        if entry_cap > 0:
+            order_type = OrderType.LIMIT
+            limit_price = entry_cap
+        else:
+            # No LTP yet — last-resort fallback to MARKET, otherwise we'd
+            # never fire. Should be extremely rare because _fire_entry
+            # fetches LTP synchronously before calling us.
+            order_type = OrderType.MARKET
+            limit_price = 0.0
         try:
             req = OrderRequest(
                 tradingsymbol=self.option_symbol,
                 exchange=Exchange.NFO,
                 side=OrderSide.BUY,
                 quantity=self.quantity,
-                order_type=OrderType.MARKET,
+                order_type=order_type,
                 product=ProductType.MIS,
+                price=limit_price,
                 tag="S6ENTRY",
             )
             resp = self.broker.place_order(req)
@@ -608,19 +623,9 @@ class Strategy6CallPutLines:
                     if status == "COMPLETE":
                         self.fill_price = float(o.get("average_price", self.option_ltp))
                         self.entry_order["status"] = "COMPLETE"
-                        ref = float(self.option_ltp or 0)
-                        slip = self.fill_price - ref
-                        if (
-                            ref > 0
-                            and self.max_entry_slippage > 0
-                            and slip > self.max_entry_slippage
-                        ):
-                            logger.warning(
-                                "S6 entry slippage breach: ref=%.2f fill=%.2f slip=%.2f > max=%.2f — flattening",
-                                ref, self.fill_price, slip, self.max_entry_slippage,
-                            )
-                            self._slippage_flatten(ref, slip)
-                            return
+                        # Slippage check removed — entry is now a LIMIT order
+                        # pegged to option_ltp, so the exchange itself caps
+                        # the fill price. Nothing further to enforce here.
                         self._on_entry_filled()
                     elif status in ("CANCELLED", "REJECTED"):
                         logger.warning(
@@ -775,16 +780,9 @@ class Strategy6CallPutLines:
                 self.target_shadow = True
             self.sl_shadow = False
             try:
-                if ltp <= self.sl_price:
-                    self.broker.place_order(OrderRequest(
-                        tradingsymbol=self.option_symbol,
-                        exchange=Exchange.NFO, side=OrderSide.SELL,
-                        quantity=self.quantity, order_type=OrderType.MARKET,
-                        product=ProductType.MIS, tag="S6SL",
-                    ))
-                    logger.warning("S6 SL breach — MARKET sell @ ltp=%.2f", ltp)
-                    self._complete_trade("SL_HIT", ltp)
-                    return
+                # Trust the SL-M order — even if LTP is already at/below the
+                # trigger, the broker will execute it on the next tick. No
+                # need for a redundant MARKET sell that risks double-firing.
                 resp = self.broker.place_order(OrderRequest(
                     tradingsymbol=self.option_symbol,
                     exchange=Exchange.NFO, side=OrderSide.SELL,
@@ -814,16 +812,9 @@ class Strategy6CallPutLines:
                 self.sl_shadow = True
             self.target_shadow = False
             try:
-                if ltp >= self.target_price:
-                    self.broker.place_order(OrderRequest(
-                        tradingsymbol=self.option_symbol,
-                        exchange=Exchange.NFO, side=OrderSide.SELL,
-                        quantity=self.quantity, order_type=OrderType.MARKET,
-                        product=ProductType.MIS, tag="S6TGT",
-                    ))
-                    logger.warning("S6 TGT breach — MARKET sell @ ltp=%.2f", ltp)
-                    self._complete_trade("TARGET_HIT", ltp)
-                    return
+                # Trust the LIMIT order — if LTP is already ≥ target, the
+                # exchange will fill on the next matching bid. No redundant
+                # MARKET sell needed.
                 resp = self.broker.place_order(OrderRequest(
                     tradingsymbol=self.option_symbol,
                     exchange=Exchange.NFO, side=OrderSide.SELL,

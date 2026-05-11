@@ -72,7 +72,12 @@ class Strategy9LOC:
         self.lots               = max(1, int(config.get("lots", 1)))
         self.strike_interval    = int(config.get("strike_interval", 50))
         self.max_trades_per_day = max(1, int(config.get("max_trades_per_day", 3)))
-        self.max_entry_slippage = float(config.get("max_entry_slippage", 8))
+        # Shadow→real promotion windows (option-price points). Match the
+        # behaviour used by strategies 5 and 6: SL / target are tracked
+        # internally until LTP comes within `proximity` of the line, then a
+        # real exchange order is placed.
+        self.sl_proximity       = float(config.get("sl_proximity", 5))
+        self.target_proximity   = float(config.get("target_proximity", 5))
         self.index_name         = str(config.get("index_name", "NIFTY")).upper()
 
         # ── Six user-drawn lines (option-price levels) ──
@@ -127,6 +132,10 @@ class Strategy9LOC:
         self.entry_order:  Optional[dict] = None
         self.sl_order:     Optional[dict] = None
         self.target_order: Optional[dict] = None
+        # Shadow flags — True means the leg is tracked internally only.
+        # Flips to False once a real SL-M / LIMIT order is on the exchange.
+        self.sl_shadow:     bool = True
+        self.target_shadow: bool = True
 
         # ── Visualisation hooks ──
         self.last_trigger_at: Optional[str] = None
@@ -170,9 +179,12 @@ class Strategy9LOC:
         logger.info("Strategy 9 stopped")
 
     def apply_config(self, config: dict, save: bool = True) -> None:
-        for k in ("max_entry_slippage",):
+        for k in ("sl_proximity", "target_proximity"):
             if k in config:
-                setattr(self, k, float(config.get(k) or 0) or getattr(self, k))
+                try:
+                    setattr(self, k, float(config.get(k) or 0))
+                except (TypeError, ValueError):
+                    pass
         for k in ("lot_size", "strike_interval", "max_trades_per_day"):
             if k in config:
                 setattr(self, k, int(config.get(k) or 0) or getattr(self, k))
@@ -334,6 +346,8 @@ class Strategy9LOC:
         self.entry_order = None
         self.sl_order = None
         self.target_order = None
+        self.sl_shadow = True
+        self.target_shadow = True
         self._prev_ce = 0.0
         self._prev_pe = 0.0
         self._trades_today = 0
@@ -588,24 +602,14 @@ class Strategy9LOC:
             return
 
         # ── Pre-trade validity guards ──
-        # 1) Gap-up rejection: don't fire if LTP is already far above the BUY
-        #    line (the "touch" already happened — entering now means paying a
-        #    premium that violates the user's max_entry_slippage tolerance).
-        gap = float(ref_ltp or 0) - float(buy_line or 0)
-        if buy_line > 0 and gap > self.max_entry_slippage:
-            self.scenario = (
-                f"{side} entry skipped — gap {gap:.2f} > max slippage "
-                f"{self.max_entry_slippage:.2f}"
-            )
-            self.signal = "NO_TRADE"
-            self.trigger_side = None
-            logger.warning(
-                "S9 %s entry rejected: LTP %.2f vs BUY %.2f gap %.2f > max %.2f",
-                side, ref_ltp, buy_line, gap, self.max_entry_slippage,
-            )
-            return
-        # 2) Config sanity: fill ≥ target_line means no upside; fill ≤ sl_line
-        #    means trade is born stopped-out.
+        # No "gap-up" rejection any more. The entry is sent as a LIMIT order
+        # pegged to the user's BUY line itself — the broker physically cannot
+        # fill above it, so a gap-up simply results in the order resting
+        # unfilled (and getting stale-cancelled). That is the user's stated
+        # intent: "fill anywhere at-or-below my BUY line, never above".
+        #
+        # Sanity guards: if LTP is already at/past the target or at/below SL
+        # the trade is born stopped-out / has no upside, so skip it.
         if tgt_line > 0 and ref_ltp >= tgt_line:
             self.scenario = (
                 f"{side} entry skipped — LTP {ref_ltp:.2f} \u2265 target line {tgt_line:.2f}"
@@ -627,8 +631,8 @@ class Strategy9LOC:
         self.option_symbol = symbol
         self.option_token = int(token)
         self.option_ltp = float(ref_ltp or 0)
-        # Remember the user's BUY line for this fire — used as the slippage
-        # reference both for capping the LIMIT price and for post-fill checks.
+        # Remember the user's BUY line for this fire — it is also the LIMIT
+        # price cap used by _place_entry_order.
         self._entry_buy_line = float(buy_line or 0)
         self.entry_time = datetime.now().strftime("%H:%M:%S")
         self._place_entry_order()
@@ -636,19 +640,20 @@ class Strategy9LOC:
     def _place_entry_order(self):
         prev_state = self.state
         self.state = State.ORDER_PLACED
-        # Hard price cap = user's BUY line + max_entry_slippage. A LIMIT order
-        # at this price guarantees the broker can never fill us higher than
-        # what the user explicitly tolerated. If liquidity at/below the cap
-        # disappears, the order simply doesn't fill (and is cancelled as stale
-        # by _check_entry_fill after 60s) — far better than overpaying.
+        # LIMIT BUY at the user's BUY line EXACTLY. For an option BUY, the
+        # broker's matching engine will fill at the lowest available ask
+        # that is ≤ the limit price — so a fill can ONLY happen at or below
+        # the line. If the market gaps above, the order rests unfilled and
+        # is stale-cancelled (the user's explicit preference: "miss the
+        # trade, never overpay"). max_entry_slippage is gone — the LIMIT
+        # price IS the slippage guard, enforced by the exchange itself.
         buy_line = float(getattr(self, "_entry_buy_line", 0) or 0)
-        slippage = max(0.0, float(self.max_entry_slippage or 0))
-        if buy_line > 0 and slippage > 0:
-            limit_price = round(buy_line + slippage, 2)
+        if buy_line > 0:
+            limit_price = round(buy_line, 2)
             order_type = OrderType.LIMIT
         else:
-            # Safety fallback only if the user explicitly cleared slippage —
-            # then behave as before (MARKET, post-fill check still applies).
+            # Defensive fallback — should not happen because _fire_entry only
+            # runs when buy_line > 0, but keep MARKET as a last-resort path.
             limit_price = 0.0
             order_type = OrderType.MARKET
         try:
@@ -710,7 +715,11 @@ class Strategy9LOC:
         if placed_at:
             try:
                 elapsed = (datetime.now() - datetime.fromisoformat(placed_at)).total_seconds()
-                if elapsed > 60 and self.entry_order.get("status") != "COMPLETE":
+                # Tight 10s window: a touch-line entry that doesn't fill almost
+                # immediately means price has moved away from the BUY line and
+                # the setup is no longer valid. Don't let stale orders sit and
+                # fill 30+ seconds later at a much worse price.
+                if elapsed > 10 and self.entry_order.get("status") != "COMPLETE":
                     logger.info("S9 entry stale (%.0fs) — cancelling", elapsed)
                     self._cancel_order(self.entry_order)
                     self.entry_order["status"] = "CANCELLED"
@@ -731,29 +740,8 @@ class Strategy9LOC:
                     if status == "COMPLETE":
                         self.fill_price = float(o.get("average_price", self.option_ltp))
                         self.entry_order["status"] = "COMPLETE"
-                        # Slippage is measured against the user's BUY line
-                        # (the intended entry), NOT the LTP at trigger time.
-                        # Anything filled more than max_entry_slippage above
-                        # the BUY line is auto-flattened — defends against
-                        # MARKET-style fills on legacy orders or partial-fill
-                        # quirks even though entry is now a capped LIMIT.
-                        ref = float(
-                            self.entry_order.get("buy_line")
-                            or getattr(self, "_entry_buy_line", 0)
-                            or self.option_ltp
-                            or 0
-                        )
-                        slip = self.fill_price - ref
-                        if (
-                            ref > 0 and self.max_entry_slippage > 0
-                            and slip > self.max_entry_slippage
-                        ):
-                            logger.warning(
-                                "S9 entry slippage breach: buy_line=%.2f fill=%.2f slip=%.2f > max=%.2f",
-                                ref, self.fill_price, slip, self.max_entry_slippage,
-                            )
-                            self._slippage_flatten(ref, slip)
-                            return
+                        # No slippage check needed — the LIMIT order at the
+                        # BUY line guarantees fill_price ≤ buy_line.
                         self._on_entry_filled()
                     elif status in ("CANCELLED", "REJECTED"):
                         logger.warning("S9 entry %s — re-arm", status)
@@ -770,13 +758,20 @@ class Strategy9LOC:
         else:
             self.target_price = self.pe_target_line if self.pe_target_line > 0 else self.fill_price * 1.5
             self.sl_price     = max(0.05, self.pe_sl_line) if self.pe_sl_line > 0 else max(0.05, self.fill_price * 0.7)
+        # Start with both legs in SHADOW mode — no resting exchange orders
+        # yet. They are promoted to real SL-M / LIMIT orders only when LTP
+        # comes within sl_proximity / target_proximity of the line. This
+        # mirrors strategies 5 and 6 and lets the user drag the lines freely
+        # while far from price.
+        self.sl_shadow = True
+        self.target_shadow = True
         self.sl_order = {"status": "MONITOR", "is_paper": False, "price": self.sl_price, "order_id": None}
         self.target_order = {"status": "MONITOR", "is_paper": False, "price": self.target_price, "order_id": None}
         self.state = State.POSITION_OPEN
         self.risk.record_entry(side=self.trigger_side or "")
         self._save_state()
         logger.info(
-            "S9 entry filled: %s @ %.2f | TGT line %.2f | SL line %.2f",
+            "S9 entry filled: %s @ %.2f | TGT %.2f (shadow) | SL %.2f (shadow)",
             self.option_symbol, self.fill_price, self.target_price, self.sl_price,
         )
 
@@ -814,6 +809,76 @@ class Strategy9LOC:
         if ltp <= 0:
             return
 
+        # ── Live-drag handling ──
+        # If a real exchange order is already resting and the user has since
+        # dragged the corresponding line to a new value, cancel the resting
+        # order and revert to shadow. The proximity-promotion block below
+        # will re-place at the new price on the very next tick that qualifies.
+        if (not self.sl_shadow and self.sl_order
+                and self.sl_order.get("order_id")
+                and abs(float(self.sl_order.get("price", 0)) - self.sl_price) > 0.04):
+            logger.info(
+                "S9 SL line moved %.2f → %.2f — cancelling resting order to re-promote",
+                float(self.sl_order.get("price", 0)), self.sl_price,
+            )
+            self._cancel_order(self.sl_order)
+            self.sl_order = {"status": "MONITOR", "is_paper": False,
+                             "price": self.sl_price, "order_id": None}
+            self.sl_shadow = True
+        if (not self.target_shadow and self.target_order
+                and self.target_order.get("order_id")
+                and abs(float(self.target_order.get("price", 0)) - self.target_price) > 0.04):
+            logger.info(
+                "S9 TGT line moved %.2f → %.2f — cancelling resting order to re-promote",
+                float(self.target_order.get("price", 0)), self.target_price,
+            )
+            self._cancel_order(self.target_order)
+            self.target_order = {"status": "MONITOR", "is_paper": False,
+                                 "price": self.target_price, "order_id": None}
+            self.target_shadow = True
+
+        # ── If a real exchange order is already resting, watch it ──
+        # If SL-M or TGT-LIMIT was promoted to the exchange, the broker will
+        # execute it autonomously. Poll order status and react.
+        if (not self.sl_shadow and self.sl_order and self.sl_order.get("order_id")) or \
+           (not self.target_shadow and self.target_order and self.target_order.get("order_id")):
+            try:
+                orders = self.broker.get_orders()
+            except Exception:
+                orders = []
+            for o in orders:
+                oid = str(o.get("order_id", ""))
+                status = o.get("status", "")
+                if (
+                    not self.sl_shadow and self.sl_order
+                    and oid == str(self.sl_order.get("order_id"))
+                ):
+                    if status == "COMPLETE":
+                        self._cancel_order(self.target_order)
+                        self._exit_position("SL_HIT", self.sl_price, already_filled=True,
+                                           fill_price=float(o.get("average_price", self.sl_price)))
+                        return
+                    if status in ("CANCELLED", "REJECTED"):
+                        logger.warning("S9 SL order %s on exchange (%s) — reverting to shadow",
+                                       oid, status)
+                        self.sl_order = None
+                        self.sl_shadow = True
+                if (
+                    not self.target_shadow and self.target_order
+                    and oid == str(self.target_order.get("order_id"))
+                ):
+                    if status == "COMPLETE":
+                        self._cancel_order(self.sl_order)
+                        self._exit_position("TARGET_HIT", self.target_price, already_filled=True,
+                                           fill_price=float(o.get("average_price", self.target_price)))
+                        return
+                    if status in ("CANCELLED", "REJECTED"):
+                        logger.warning("S9 TGT order %s on exchange (%s) — reverting to shadow",
+                                       oid, status)
+                        self.target_order = None
+                        self.target_shadow = True
+
+        # ── Hard breach: LTP already past the line → MARKET exit ──
         # SL takes precedence on a same-tick conflict.
         if self.sl_price > 0 and ltp <= self.sl_price:
             self._exit_position("SL_HIT", ltp)
@@ -822,26 +887,102 @@ class Strategy9LOC:
             self._exit_position("TARGET_HIT", ltp)
             return
 
-    def _exit_position(self, exit_type: str, exit_price: float):
-        try:
-            req = OrderRequest(
-                tradingsymbol=self.option_symbol, exchange=Exchange.NFO,
-                side=OrderSide.SELL, quantity=self.quantity,
-                order_type=OrderType.MARKET, product=ProductType.MIS,
-                tag=f"S9{'SL' if exit_type=='SL_HIT' else 'TGT' if exit_type=='TARGET_HIT' else 'SQOFF'}",
+        # ── Proximity promotion: shadow → real exchange order ──
+        # SL leg
+        if self.sl_shadow and self.sl_price > 0 and ltp <= (self.sl_price + self.sl_proximity):
+            logger.info(
+                "S9 SL proximity hit: ltp=%.2f sl=%.2f prox=%.2f — promoting",
+                ltp, self.sl_price, self.sl_proximity,
             )
-            resp = self.broker.place_order(req)
-            ord_dict = {
-                "order_id": resp.order_id, "status": resp.status,
-                "is_paper": resp.is_paper, "price": exit_price,
-                "timestamp": datetime.now().isoformat(),
-            }
-            if exit_type == "SL_HIT":
-                self.sl_order = ord_dict
-            else:
-                self.target_order = ord_dict
-        except Exception as exc:
-            logger.error("S9 exit order failed: %s", exc)
+            # When one leg goes real, the other reverts to shadow so we don't
+            # leave a stale resting order on the exchange while the line might
+            # still move under the user's drag.
+            if not self.target_shadow and self.target_order:
+                self._cancel_order(self.target_order)
+                self.target_order = {"status": "MONITOR", "is_paper": False,
+                                     "price": self.target_price, "order_id": None}
+                self.target_shadow = True
+            self.sl_shadow = False
+            try:
+                resp = self.broker.place_order(OrderRequest(
+                    tradingsymbol=self.option_symbol,
+                    exchange=Exchange.NFO, side=OrderSide.SELL,
+                    quantity=self.quantity, order_type=OrderType.SL_M,
+                    product=ProductType.MIS, trigger_price=self.sl_price, tag="S9SL",
+                ))
+                self.sl_order = {
+                    "order_id": resp.order_id, "status": "OPEN",
+                    "is_paper": getattr(resp, "is_paper", False),
+                    "price": self.sl_price,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                logger.info("S9 SL-M order placed on exchange: %s", resp.order_id)
+                self._save_state()
+            except Exception as exc:
+                logger.error("S9 SL placement failed: %s", exc)
+                self.sl_shadow = True
+
+        # Target leg
+        if self.target_shadow and self.target_price > 0 and ltp >= (self.target_price - self.target_proximity):
+            logger.info(
+                "S9 TGT proximity hit: ltp=%.2f tgt=%.2f prox=%.2f — promoting",
+                ltp, self.target_price, self.target_proximity,
+            )
+            if not self.sl_shadow and self.sl_order:
+                self._cancel_order(self.sl_order)
+                self.sl_order = {"status": "MONITOR", "is_paper": False,
+                                 "price": self.sl_price, "order_id": None}
+                self.sl_shadow = True
+            self.target_shadow = False
+            try:
+                resp = self.broker.place_order(OrderRequest(
+                    tradingsymbol=self.option_symbol,
+                    exchange=Exchange.NFO, side=OrderSide.SELL,
+                    quantity=self.quantity, order_type=OrderType.LIMIT,
+                    product=ProductType.MIS, price=self.target_price, tag="S9TGT",
+                ))
+                self.target_order = {
+                    "order_id": resp.order_id, "status": "OPEN",
+                    "is_paper": getattr(resp, "is_paper", False),
+                    "price": self.target_price,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                logger.info("S9 TGT LIMIT order placed on exchange: %s", resp.order_id)
+                self._save_state()
+            except Exception as exc:
+                logger.error("S9 target placement failed: %s", exc)
+                self.target_shadow = True
+
+    def _exit_position(self, exit_type: str, exit_price: float,
+                       already_filled: bool = False, fill_price: float = 0.0):
+        # If the exchange already executed our promoted SL-M / LIMIT, skip
+        # sending another MARKET order — just book the trade.
+        if not already_filled:
+            try:
+                # Cancel any still-resting promoted leg before sending the
+                # MARKET flatten so we don't double-sell.
+                self._cancel_order(self.sl_order)
+                self._cancel_order(self.target_order)
+                req = OrderRequest(
+                    tradingsymbol=self.option_symbol, exchange=Exchange.NFO,
+                    side=OrderSide.SELL, quantity=self.quantity,
+                    order_type=OrderType.MARKET, product=ProductType.MIS,
+                    tag=f"S9{'SL' if exit_type=='SL_HIT' else 'TGT' if exit_type=='TARGET_HIT' else 'SQOFF'}",
+                )
+                resp = self.broker.place_order(req)
+                ord_dict = {
+                    "order_id": resp.order_id, "status": resp.status,
+                    "is_paper": resp.is_paper, "price": exit_price,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                if exit_type == "SL_HIT":
+                    self.sl_order = ord_dict
+                else:
+                    self.target_order = ord_dict
+            except Exception as exc:
+                logger.error("S9 exit order failed: %s", exc)
+        else:
+            exit_price = fill_price or exit_price
 
         pnl = round((exit_price - self.fill_price) * self.quantity, 2)
         try:
@@ -895,6 +1036,9 @@ class Strategy9LOC:
         self._save_state()
 
     def _slippage_flatten(self, ref: float, slip: float):
+        """Retained for backward compatibility / state-file callers.
+        No longer used in the live path — entry slippage is now structurally
+        impossible because entry is a LIMIT order at the user's BUY line."""
         try:
             req = OrderRequest(
                 tradingsymbol=self.option_symbol, exchange=Exchange.NFO,
@@ -938,6 +1082,8 @@ class Strategy9LOC:
         self.entry_order = None
         self.sl_order = None
         self.target_order = None
+        self.sl_shadow = True
+        self.target_shadow = True
         self._save_state()
 
     # ── Persistence ──────────────────────────────────
@@ -967,6 +1113,9 @@ class Strategy9LOC:
                 "current_ltp": self.current_ltp,
                 "entry_order": self.entry_order, "sl_order": self.sl_order,
                 "target_order": self.target_order,
+                "sl_shadow": self.sl_shadow, "target_shadow": self.target_shadow,
+                "sl_proximity": self.sl_proximity,
+                "target_proximity": self.target_proximity,
                 "last_trigger_at": self.last_trigger_at, "last_trigger_side": self.last_trigger_side,
                 "last_trigger_price": self.last_trigger_price,
                 "last_exit_at": self.last_exit_at, "last_exit_type": self.last_exit_type,
@@ -1019,6 +1168,12 @@ class Strategy9LOC:
             self.entry_order = data.get("entry_order")
             self.sl_order = data.get("sl_order")
             self.target_order = data.get("target_order")
+            # Default to shadow=True on restore so any stale persisted real
+            # order is cancelled & re-promoted on the next qualifying tick.
+            self.sl_shadow = bool(data.get("sl_shadow", True))
+            self.target_shadow = bool(data.get("target_shadow", True))
+            self.sl_proximity = float(data.get("sl_proximity") or self.sl_proximity)
+            self.target_proximity = float(data.get("target_proximity") or self.target_proximity)
             self.last_trigger_at = data.get("last_trigger_at")
             self.last_trigger_side = data.get("last_trigger_side")
             self.last_trigger_price = float(data.get("last_trigger_price") or 0)

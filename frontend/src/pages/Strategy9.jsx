@@ -307,7 +307,7 @@ export default function Strategy9() {
     sl_points: 30, target_points: 60,
     lot_size: 65, lots: 1, strike_interval: 50,
     sl_proximity: 5, target_proximity: 5,
-    max_trades_per_day: 3, max_entry_slippage: 8,
+    max_trades_per_day: 3,
     index_name: 'NIFTY',
   });
   const configSeededRef = useRef(false);
@@ -550,7 +550,6 @@ export default function Strategy9() {
             ['Strike interval', 'strike_interval'],
             ['SL proximity', 'sl_proximity'], ['Target proximity', 'target_proximity'],
             ['Max trades / day', 'max_trades_per_day'],
-            ['Max entry slippage', 'max_entry_slippage'],
           ].map(([label, key]) => (
             <label key={key} className="flex flex-col gap-1">
               <span className="text-gray-400">{label}</span>

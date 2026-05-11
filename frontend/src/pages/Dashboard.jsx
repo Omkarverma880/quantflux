@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, useWebSocket } from '../api';
+import { useToast } from '../ToastContext';
 import { DashboardSkeleton } from '../components/ErrorBoundary';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -26,6 +27,7 @@ import {
   Activity,
   ChevronRight,
   Radio,
+  AlertOctagon,
 } from 'lucide-react';
 
 /* ── Helpers ───────────────────────────────────── */
@@ -95,12 +97,11 @@ function StrategyCard({ label, shortName, data, onClick }) {
           </div>
         </div>
 
-        {/* Body */}
+        {/* Body: two-row, two-column compact grid so long option symbols
+            don't overflow alongside numerics. */}
         {trade.option_symbol ? (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-surface-3/60">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-2 pt-3 border-t border-surface-3/60">
             <Stat label="Option" value={trade.option_symbol} mono truncate />
-            <Stat label="Entry" value={`₹${(trade.fill_price || trade.gann_entry_price || trade.entry_price || 0).toFixed(1)}`} mono />
-            <Stat label="LTP" value={trade.current_ltp > 0 ? `₹${trade.current_ltp.toFixed(1)}` : '—'} mono />
             <Stat
               label={isOpen ? 'Unrealized' : 'Last P&L'}
               value={
@@ -112,6 +113,8 @@ function StrategyCard({ label, shortName, data, onClick }) {
               color={isOpen ? (pnl >= 0 ? 'text-green-400' : 'text-red-400')
                            : lastPnl !== null ? (lastPnl >= 0 ? 'text-green-400' : 'text-red-400') : 'text-gray-500'}
             />
+            <Stat label="Entry" value={`₹${(trade.fill_price || trade.gann_entry_price || trade.entry_price || 0).toFixed(1)}`} mono />
+            <Stat label="LTP" value={trade.current_ltp > 0 ? `₹${trade.current_ltp.toFixed(1)}` : '—'} mono />
           </div>
         ) : (
           <div className="pt-3 border-t border-surface-3/60 flex items-center justify-between">
@@ -202,6 +205,68 @@ function MetricCard({ icon: Icon, label, value, sub, color = 'brand', valueClass
       <p className={`text-xl font-bold mono ${valueClass || 'text-white'}`}>{value}</p>
       {sub && <p className="text-[10px] text-gray-600 mt-1">{sub}</p>}
     </div>
+  );
+}
+
+/* ── Instant kill-switch tile ──────────────────── */
+
+function ExitAllTile() {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const handleExit = async () => {
+    if (busy) return;
+    if (!window.confirm(
+      'EXIT ALL POSITIONS?\n\n' +
+      'This cancels every open order and squares off every active ' +
+      'position at MARKET. This cannot be undone.'
+    )) return;
+    setBusy(true);
+    try {
+      const r = await api.exitAllPositions();
+      const c = r?.cancelled_orders?.length || 0;
+      const s = r?.squared_off?.length || 0;
+      const ce = r?.cancel_errors?.length || 0;
+      const se = r?.squareoff_errors?.length || 0;
+      if (ce || se) {
+        toast.error(`Exit All: ${s} squared / ${c} cancelled. ${ce + se} error(s) — check logs.`);
+      } else if (s === 0 && c === 0) {
+        toast.info('Nothing to exit — no open orders or positions.');
+      } else {
+        toast.success(`Exit All complete: ${s} squared off, ${c} order(s) cancelled.`);
+      }
+      window.dispatchEvent(new Event('positions:refresh'));
+      window.dispatchEvent(new Event('orders:refresh'));
+    } catch (e) {
+      toast.error(`Exit All failed: ${e?.message || e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleExit}
+      disabled={busy}
+      className="group bg-gradient-to-br from-red-600/15 to-red-500/5 bg-surface-1
+                 border border-red-500/30 hover:border-red-400/60
+                 rounded-xl p-4 text-left transition-all
+                 hover:shadow-lg hover:shadow-red-900/20
+                 disabled:opacity-60 disabled:cursor-not-allowed"
+    >
+      <div className="flex items-center gap-2 mb-2.5">
+        <AlertOctagon className={`w-4 h-4 text-red-400 ${busy ? 'animate-pulse' : 'group-hover:animate-pulse'}`} />
+        <span className="text-[11px] text-red-300/80 uppercase tracking-wider font-medium">
+          Kill Switch
+        </span>
+      </div>
+      <p className="text-xl font-bold mono text-red-400">
+        {busy ? 'EXITING…' : 'EXIT ALL'}
+      </p>
+      <p className="text-[10px] text-gray-500 mt-1">
+        Cancel orders & square-off at MARKET
+      </p>
+    </button>
   );
 }
 
@@ -451,14 +516,7 @@ export default function Dashboard() {
           sub={`${openPositions} strategy open`}
           color="blue"
         />
-        <MetricCard
-          icon={riskBlocked ? ShieldAlert : ShieldCheck}
-          label="Risk"
-          value={riskBlocked ? 'BLOCKED' : 'CLEAR'}
-          sub={`${summary?.risk?.trade_count || 0}/${summary?.risk?.max_trades_limit || 0} trades`}
-          color={riskBlocked ? 'red' : 'green'}
-          valueClass={riskBlocked ? 'text-red-400' : 'text-green-400'}
-        />
+        <ExitAllTile />
       </div>
 
       {/* ── Strategy cards ──────────────────────── */}
