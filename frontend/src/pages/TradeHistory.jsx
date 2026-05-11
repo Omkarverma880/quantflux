@@ -11,16 +11,18 @@ import {
   IndianRupee,
 } from 'lucide-react';
 
-/* Derive strategy label from the order tag */
+/* Derive strategy label from the order tag.
+ *
+ * Strategy modules tag orders as S{N}ENTRY / S{N}SL / S{N}TGT / S{N}SLIP /
+ * S{N}EXIT etc. The manual-trading and exit-all paths use MANUAL / EXITALL.
+ * Anything else is treated as Manual (legacy or external orders). */
 const getStrategyLabel = (tag) => {
   if (!tag) return 'Manual';
-  const t = tag.toUpperCase();
-  if (t.startsWith('S1')) return 'Strategy 1';
-  if (t.startsWith('S2')) return 'Strategy 2';
-  if (t.startsWith('S3')) return 'Strategy 3';
-  if (t.startsWith('S4')) return 'Strategy 4';
-  if (t.startsWith('S5')) return 'Strategy 5';
-  if (t.startsWith('S6')) return 'Strategy 6';
+  const t = String(tag).toUpperCase();
+  // Match S<digit>... at the start of the tag — covers S1..S9 entry/SL/TGT/SLIP/EXIT.
+  const m = t.match(/^S(\d)/);
+  if (m) return `Strategy ${m[1]}`;
+  if (t.startsWith('EXITALL')) return 'Exit All';
   if (t.startsWith('MANUAL')) return 'Manual';
   return 'Manual';
 };
@@ -33,6 +35,10 @@ const strategyBadge = (label) => {
     case 'Strategy 4': return 'bg-rose-600/20 text-rose-400 border border-rose-500/30';
     case 'Strategy 5': return 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30';
     case 'Strategy 6': return 'bg-blue-600/20 text-blue-400 border border-blue-500/30';
+    case 'Strategy 7': return 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30';
+    case 'Strategy 8': return 'bg-pink-600/20 text-pink-400 border border-pink-500/30';
+    case 'Strategy 9': return 'bg-teal-600/20 text-teal-400 border border-teal-500/30';
+    case 'Exit All':   return 'bg-red-600/20 text-red-400 border border-red-500/30';
     default:           return 'bg-gray-600/20 text-gray-400 border border-gray-500/30';
   }
 };

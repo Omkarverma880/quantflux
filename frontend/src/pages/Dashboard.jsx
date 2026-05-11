@@ -338,15 +338,30 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchData();
-    // Slower fallback poll (30s) since WebSocket handles real-time
+    // Fast summary poll keeps Day P&L / Positions / Margin in sync with
+    // broker state every 5s; strategy details come over WebSocket.
+    const summaryPoll = setInterval(async () => {
+      try {
+        const sm = await api.getSummary();
+        if (sm) setSummary(sm);
+      } catch { /* ignore transient failures */ }
+    }, 5000);
+    // Slower full refetch (30s) catches anything we missed.
     const interval = setInterval(fetchData, 30000);
     const clock = setInterval(() => setTime(new Date()), 1000);
     // Re-fetch immediately when Zerodha login completes
     const onConnected = () => fetchData();
     const onDisconnected = () => { setSummary(null); fetchData(); };
+    const onPositionsRefresh = () => fetchData();
     window.addEventListener('zerodha_connected', onConnected);
     window.addEventListener('zerodha_disconnected', onDisconnected);
-    return () => { clearInterval(interval); clearInterval(clock); window.removeEventListener('zerodha_connected', onConnected); window.removeEventListener('zerodha_disconnected', onDisconnected); };
+    window.addEventListener('positions:refresh', onPositionsRefresh);
+    return () => {
+      clearInterval(interval); clearInterval(summaryPoll); clearInterval(clock);
+      window.removeEventListener('zerodha_connected', onConnected);
+      window.removeEventListener('zerodha_disconnected', onDisconnected);
+      window.removeEventListener('positions:refresh', onPositionsRefresh);
+    };
   }, [fetchData]);
 
   // Build equity curve from trade logs
@@ -528,7 +543,7 @@ export default function Dashboard() {
             <Radio className="w-2.5 h-2.5 text-green-400 animate-pulse" /> Live
           </span>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-9 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           <StrategyCard
             label="Gann CV"
             shortName="Strategy 1"
@@ -620,7 +635,7 @@ export default function Dashboard() {
           <BarChart3 className="w-4 h-4 text-brand-400" />
           <h3 className="text-sm font-semibold text-white">Strategy Comparison</h3>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-9 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {[
             { label: 'Gann CV', short: 'S1', data: s1, pnl: s1Pnl, color: 'brand' },
             { label: 'Option Sell', short: 'S2', data: s2, pnl: s2Pnl, color: 'blue' },
