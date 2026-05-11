@@ -346,6 +346,21 @@ function ManualOrderForm({ onOrderAction }) {
     }
   }, [form.trade_amount, form.price, spotPrice, lotSize]);
 
+  // Keep order_type in sync with entry price: blank price = MARKET, any price = LIMIT.
+  // SL / SL-M are left untouched so the user can still pick them explicitly.
+  useEffect(() => {
+    const hasPrice = parseFloat(form.price) > 0;
+    setForm((current) => {
+      if (hasPrice && current.order_type === 'MARKET') {
+        return { ...current, order_type: 'LIMIT' };
+      }
+      if (!hasPrice && current.order_type === 'LIMIT') {
+        return { ...current, order_type: 'MARKET' };
+      }
+      return current;
+    });
+  }, [form.price]);
+
   const handleSubmit = async (event) => {
     event.preventDefault();
 
@@ -374,6 +389,15 @@ function ManualOrderForm({ onOrderAction }) {
       // Remove frontend-only keys that backend doesn't need
       delete payload.enable_trailing_sl;
       delete payload.trade_amount;
+
+      // Final safeguard: an entry price means LIMIT, blank means MARKET.
+      // This guarantees the broker never receives MARKET with a stray price
+      // (and never receives LIMIT with no price) regardless of dropdown state.
+      if (payload.price > 0 && payload.order_type === 'MARKET') {
+        payload.order_type = 'LIMIT';
+      } else if (payload.price <= 0 && payload.order_type === 'LIMIT') {
+        payload.order_type = 'MARKET';
+      }
 
       if (!payload.tradingsymbol && (!payload.index_name || !payload.strike_price || !payload.option_type)) {
         throw new Error('Select an index, option type and strike, or enter a trading symbol');
