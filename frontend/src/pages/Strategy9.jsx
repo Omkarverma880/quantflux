@@ -408,7 +408,10 @@ export default function Strategy9() {
       const payload = side === 'CE'
         ? { ce: { strike: s.strike, tradingsymbol: s.ce_symbol, token: s.ce_token } }
         : { pe: { strike: s.strike, tradingsymbol: s.pe_symbol, token: s.pe_token } };
-      await api.strategy9SetStrikes(payload);
+      const res = await api.strategy9SetStrikes(payload);
+      if (res?.status === 'error') {
+        throw new Error(res.message || 'set_strikes returned error');
+      }
       if (side === 'CE') setCeSeries([]); else setPeSeries([]);
       await fetchStatus();
     } catch (e) { alert(`Failed to set strike: ${e.message || e}`); }
