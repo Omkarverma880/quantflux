@@ -20,11 +20,23 @@ async function request(path, options = {}) {
     throw new Error('Session expired');
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
+    // Try JSON first; if that fails, fall back to plain text (Railway proxy
+    // sometimes returns an HTML/text 500 page that res.json() can't parse).
+    let err = null;
+    try {
+      err = await res.json();
+    } catch {
+      try {
+        const txt = await res.text();
+        err = { error: txt && txt.length < 500 ? txt : null };
+      } catch {
+        err = {};
+      }
+    }
     // FastAPI/Pydantic returns `detail` as a list of {loc, msg, type}.
     // Flatten it to a readable string instead of "[object Object]".
-    let msg = err.error;
-    if (!msg && err.detail) {
+    let msg = err?.error || err?.message;
+    if (!msg && err?.detail) {
       if (Array.isArray(err.detail)) {
         msg = err.detail
           .map((d) => `${(d.loc || []).slice(-1)[0] || 'field'}: ${d.msg || d.type || 'invalid'}`)
@@ -35,7 +47,10 @@ async function request(path, options = {}) {
         msg = JSON.stringify(err.detail);
       }
     }
-    throw new Error(msg || res.statusText);
+    // Never throw a bare "Error" — always include the status code so the
+    // user (and us) can tell HTTP 500 from HTTP 404 from a CORS reject.
+    const finalMsg = msg || res.statusText || `HTTP ${res.status}`;
+    throw new Error(finalMsg);
   }
   return res.json();
 }
