@@ -174,9 +174,13 @@ async def list_strikes(user_id: int = Depends(login_required), db: Session = Dep
 
 @router.post("/set-strikes")
 async def set_strikes(payload: StrikesUpdate, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
-    """Select one or both monitored strikes. Tolerates partial payloads
-    and surfaces real backend errors instead of bare 500s."""
-    try:
+    """Select one or both monitored strikes. Runs in a worker thread with a
+    hard timeout so a slow Zerodha instruments-fetch can never make the
+    Railway proxy report 'Application failed to respond'."""
+    import asyncio
+    import traceback
+
+    def _do_set_strikes() -> dict:
         broker = get_user_broker(db, user_id)
         strat = _get_strategy(broker, user_id)
         ce_dict = payload.ce.model_dump() if payload.ce else None
@@ -188,9 +192,16 @@ async def set_strikes(payload: StrikesUpdate, user_id: int = Depends(login_requi
             "pe_strike": result["pe_strike"], "pe_symbol": result["pe_symbol"], "pe_token": strat.pe_token,
         })
         _save_config(cfg)
+        return result
+
+    try:
+        # Hard 20s cap — well under Railway's 30s proxy timeout.
+        result = await asyncio.wait_for(asyncio.to_thread(_do_set_strikes), timeout=20.0)
         return {"status": "ok", **result}
+    except asyncio.TimeoutError:
+        logger.error("S9 set_strikes TIMED OUT for user %s", user_id)
+        return {"status": "error", "message": "set_strikes timed out (>20s) — backend was busy fetching instruments. Retry."}
     except Exception as exc:
-        import traceback
         logger.error("S9 set_strikes failed for user %s: %s\n%s",
                      user_id, exc, traceback.format_exc())
         return {"status": "error", "message": f"{type(exc).__name__}: {exc}"}

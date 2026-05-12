@@ -268,22 +268,40 @@ class Strategy9LOC:
     def set_strikes(self, ce: Optional[dict], pe: Optional[dict]) -> dict:
         if ce is not None:
             new_strike = int(ce.get("strike") or 0)
-            if new_strike != self.ce_strike:
+            new_symbol = str(ce.get("tradingsymbol") or "")
+            new_token  = int(ce.get("token") or 0)
+            if new_strike != self.ce_strike or (new_symbol and new_symbol != self.ce_symbol):
                 self.ce_strike = new_strike
-                self.ce_symbol = str(ce.get("tradingsymbol") or "")
-                self.ce_token  = int(ce.get("token") or 0)
+                if new_symbol:
+                    self.ce_symbol = new_symbol
+                if new_token:
+                    self.ce_token = new_token
                 self.ce_ltp = 0.0
                 self._prev_ce = 0.0
         if pe is not None:
             new_strike = int(pe.get("strike") or 0)
-            if new_strike != self.pe_strike:
+            new_symbol = str(pe.get("tradingsymbol") or "")
+            new_token  = int(pe.get("token") or 0)
+            if new_strike != self.pe_strike or (new_symbol and new_symbol != self.pe_symbol):
                 self.pe_strike = new_strike
-                self.pe_symbol = str(pe.get("tradingsymbol") or "")
-                self.pe_token  = int(pe.get("token") or 0)
+                if new_symbol:
+                    self.pe_symbol = new_symbol
+                if new_token:
+                    self.pe_token = new_token
                 self.pe_ltp = 0.0
                 self._prev_pe = 0.0
-        self._resolve_missing_strike_symbols()
-        self._save_state()
+        # Only run the (potentially slow) instruments lookup if the frontend
+        # didn't already supply a symbol — typical case is symbol+token are
+        # both present, so this is a no-op fast path.
+        if (self.ce_strike and not self.ce_symbol) or (self.pe_strike and not self.pe_symbol):
+            try:
+                self._resolve_missing_strike_symbols()
+            except Exception as exc:
+                logger.warning("S9 strike symbol resolve failed: %s", exc)
+        try:
+            self._save_state()
+        except Exception as exc:
+            logger.warning("S9 set_strikes save_state failed: %s", exc)
         return {
             "ce_strike": self.ce_strike, "ce_symbol": self.ce_symbol,
             "pe_strike": self.pe_strike, "pe_symbol": self.pe_symbol,
