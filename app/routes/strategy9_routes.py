@@ -173,34 +173,28 @@ async def list_strikes(user_id: int = Depends(login_required), db: Session = Dep
 
 
 @router.post("/set-strikes")
-async def set_strikes(payload: StrikesUpdate, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
-    """Select one or both monitored strikes. Runs in a worker thread with a
-    hard timeout so a slow Zerodha instruments-fetch can never make the
-    Railway proxy report 'Application failed to respond'."""
-    import asyncio
+def set_strikes(payload: StrikesUpdate, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Select one or both monitored strikes. Synchronous endpoint — FastAPI
+    runs it in its threadpool, so it never blocks the event loop. Returns
+    a structured error rather than raising, so the proxy can't time out
+    and the frontend can show the real cause."""
     import traceback
-
-    def _do_set_strikes() -> dict:
+    try:
         broker = get_user_broker(db, user_id)
         strat = _get_strategy(broker, user_id)
         ce_dict = payload.ce.model_dump() if payload.ce else None
         pe_dict = payload.pe.model_dump() if payload.pe else None
         result = strat.set_strikes(ce_dict, pe_dict)
-        cfg = _load_config()
-        cfg.update({
-            "ce_strike": result["ce_strike"], "ce_symbol": result["ce_symbol"], "ce_token": strat.ce_token,
-            "pe_strike": result["pe_strike"], "pe_symbol": result["pe_symbol"], "pe_token": strat.pe_token,
-        })
-        _save_config(cfg)
-        return result
-
-    try:
-        # Hard 20s cap — well under Railway's 30s proxy timeout.
-        result = await asyncio.wait_for(asyncio.to_thread(_do_set_strikes), timeout=20.0)
+        try:
+            cfg = _load_config()
+            cfg.update({
+                "ce_strike": result["ce_strike"], "ce_symbol": result["ce_symbol"], "ce_token": strat.ce_token,
+                "pe_strike": result["pe_strike"], "pe_symbol": result["pe_symbol"], "pe_token": strat.pe_token,
+            })
+            _save_config(cfg)
+        except Exception as cfg_exc:
+            logger.warning("S9 set_strikes config persist failed (non-fatal): %s", cfg_exc)
         return {"status": "ok", **result}
-    except asyncio.TimeoutError:
-        logger.error("S9 set_strikes TIMED OUT for user %s", user_id)
-        return {"status": "error", "message": "set_strikes timed out (>20s) — backend was busy fetching instruments. Retry."}
     except Exception as exc:
         logger.error("S9 set_strikes failed for user %s: %s\n%s",
                      user_id, exc, traceback.format_exc())
