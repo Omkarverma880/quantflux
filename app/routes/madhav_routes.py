@@ -284,33 +284,45 @@ def _normalise(q: str) -> str:
 
 _INTENTS: list[tuple[re.Pattern, str]] = [
     # "how many strategies", "list strategies", "what strategies", plain "strategies".
-    # Use \w* after the stem so it matches both 'strategy' and 'strategies'
-    # without needing a trailing word-boundary (which would fail mid-word).
+    # \w* after a stem lets it match both singular and plural / participle forms
+    # without the broken \b-after-letter problem.
     (re.compile(r"(how\s*many\s*strateg\w*|list\s*(of\s*)?strateg\w*|all\s*strateg\w*|"
                 r"total\s*strateg\w*|which\s*strateg\w*|what\s*(are\s*)?(the\s*)?strateg\w*|"
-                r"available\s*strateg\w*|strateg\w*\s*list|^\s*strateg\w*\s*$|"
-                r"^\s*strateg\w*\s*\?+\s*$)"),
+                r"available\s*strateg\w*|strateg\w*\s*list|^\s*strateg\w*\s*\??\s*$)"),
      "strategies_list"),
-    (re.compile(r"\b(strategy\s*1|gann\s*cv|first\s*strategy)\b"), "strategy1"),
-    (re.compile(r"\b(strategy\s*2|option\s*sell|second\s*strategy)\b"), "strategy2"),
-    (re.compile(r"\b(strategy\s*3|cv\s*vwap|third\s*strategy)\b"), "strategy3"),
-    (re.compile(r"\b(strategy\s*4|high\s*low\s*retest|fourth\s*strategy)\b"), "strategy4"),
-    (re.compile(r"\b(strategy\s*5|gann\s*range|fifth\s*strategy)\b"), "strategy5"),
-    (re.compile(r"\b(strategy\s*6|call\s*put\s*lines?|sixth\s*strategy)\b"), "strategy6"),
-    (re.compile(r"\b(strategy\s*7|strike\s*lines?|seventh\s*strategy)\b"), "strategy7"),
-    (re.compile(r"\b(strategy\s*8|reverse|mean\s*revers|eighth\s*strategy)\b"), "strategy8"),
-    (re.compile(r"\b(strategy\s*9|loc|last\s*hour|ninth\s*strategy)\b"), "strategy9"),
-    (re.compile(r"\b(kill\s*switch|instant\s*exit|exit\s*all)\b"), "kill_switch"),
-    (re.compile(r"\b(auto\s*square\s*off|15[:\s]?15|3[:\s]?15\s*pm?|hard\s*fence)\b"), "auto_squareoff"),
-    (re.compile(r"\b(p\s*&?\s*l\s*fence|pnl\s*fence|lock\s*profit|max\s*loss)\b"), "pnl_fence"),
-    (re.compile(r"\b(loss\s*control|day\s*loss|max\s*day\s*loss)\b"), "loss_control"),
-    (re.compile(r"\b(manual\s*trad|modify\s*order|attach\s*sl|set\s*sl|set\s*tgt|set\s*target)\b"), "manual_trading"),
-    (re.compile(r"\b(who\s*are\s*you|what\s*are\s*you|about\s*madhav|who\s*is\s*madhav)\b"), "madhav"),
-    (re.compile(r"\b(dashboard)\b"), "dashboard"),
-    (re.compile(r"\b(setting|configure|env\s*var)\b"), "settings"),
-    (re.compile(r"\b(how\s*(does\s*)?(this\s*)?(app|application|platform|system|quantflux)\s*work|"
-                r"explain\s*(this\s*)?(app|application|platform|system|quantflux)|"
-                r"overview|architecture)\b"),
+    (re.compile(r"(strategy\s*1\b|gann\s*cv|first\s*strategy)"), "strategy1"),
+    (re.compile(r"(strategy\s*2\b|option\s*sell\w*|second\s*strategy)"), "strategy2"),
+    (re.compile(r"(strategy\s*3\b|cv\s*vwap|third\s*strategy)"), "strategy3"),
+    (re.compile(r"(strategy\s*4\b|high\s*low\s*retest|fourth\s*strategy)"), "strategy4"),
+    (re.compile(r"(strategy\s*5\b|gann\s*range|fifth\s*strategy)"), "strategy5"),
+    (re.compile(r"(strategy\s*6\b|call\s*put\s*line\w*|sixth\s*strategy)"), "strategy6"),
+    (re.compile(r"(strategy\s*7\b|strike\s*line\w*|seventh\s*strategy)"), "strategy7"),
+    (re.compile(r"(strategy\s*8\b|reverse|mean\s*revers\w*|eighth\s*strategy)"), "strategy8"),
+    (re.compile(r"(strategy\s*9\b|\bloc\b|last\s*hour|ninth\s*strategy)"), "strategy9"),
+    (re.compile(r"(kill\s*switch|instant\s*exit|exit\s*all)"), "kill_switch"),
+    (re.compile(r"(auto\s*square\s*off|15[:\s]?15|3[:\s]?15\s*pm?|hard\s*fence)"),
+     "auto_squareoff"),
+    (re.compile(r"(p\s*&?\s*l\s*fence|pnl\s*fence|lock\s*profit|max\s*loss)"),
+     "pnl_fence"),
+    (re.compile(r"(loss\s*control|day\s*loss|max\s*day\s*loss)"), "loss_control"),
+    # Manual trading + order modify + attach SL/TGT. Each clause allows extra
+    # filler words ("an", "the", "my") between verb and object.
+    (re.compile(r"(manual\s*trad\w*|"
+                r"modif\w*\s+(an?\s+|the\s+|my\s+)?order\w*|"
+                r"cancel\s+(an?\s+|the\s+|my\s+)?order\w*|"
+                r"attach\s*(an?\s+)?(sl|tgt|target|stop\s*loss)|"
+                r"set\s*(an?\s+|the\s+)?(sl|tgt|target|stop\s*loss)|"
+                r"add\s*(an?\s+|the\s+)?(sl|tgt|target|stop\s*loss)|"
+                r"sl\s*(/|or|and)\s*tgt|sl\s*tgt|after\s*fill)"),
+     "manual_trading"),
+    (re.compile(r"(who\s*are\s*you|what\s*are\s*you|about\s*madhav|who\s*is\s*madhav|"
+                r"your\s*name)"),
+     "madhav"),
+    (re.compile(r"(dashboard\w*)"), "dashboard"),
+    (re.compile(r"(setting\w*|configure|env\s*var)"), "settings"),
+    (re.compile(r"(how\s*(does\s*)?(this\s*|the\s*|your\s*)?(app|application|platform|system|quantflux)\s*work|"
+                r"explain\s*(this\s*|the\s*|your\s*)?(app|application|platform|system|quantflux)|"
+                r"overview|architecture)"),
      "app_overview"),
 ]
 
