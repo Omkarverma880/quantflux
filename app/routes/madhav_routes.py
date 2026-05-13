@@ -283,9 +283,11 @@ def _normalise(q: str) -> str:
 
 
 _INTENTS: list[tuple[re.Pattern, str]] = [
+    # "how many strategies", "list strategies", plain "strategies"
     (re.compile(r"\b(how\s*many\s*strateg|list\s*(of\s*)?strateg|all\s*strateg|"
-                r"total\s*strateg|which\s*strateg|what\s*strateg(ies|y)?\s*(are|do)|"
-                r"available\s*strateg|strateg(y|ies)\s*list)\b"), "strategies_list"),
+                r"total\s*strateg|which\s*strateg|what\s*(are\s*)?(the\s*)?strateg|"
+                r"available\s*strateg|strateg(y|ies)\s*list|^\s*strateg(y|ies)\s*$)\b"),
+     "strategies_list"),
     (re.compile(r"\b(strategy\s*1|gann\s*cv|first\s*strategy)\b"), "strategy1"),
     (re.compile(r"\b(strategy\s*2|option\s*sell|second\s*strategy)\b"), "strategy2"),
     (re.compile(r"\b(strategy\s*3|cv\s*vwap|third\s*strategy)\b"), "strategy3"),
@@ -447,6 +449,24 @@ def _humanise(md: str) -> str:
     return text.strip()
 
 
+# Suggestion chips shown in the chat UI — user can click to ask.
+SUGGESTIONS: list[dict] = [
+    {"label": "How many strategies?",        "q": "how many strategies are there"},
+    {"label": "Explain Strategy 1",          "q": "explain strategy 1"},
+    {"label": "Explain Strategy 3",          "q": "explain strategy 3"},
+    {"label": "What is the kill switch?",    "q": "what is the kill switch"},
+    {"label": "Auto-squareoff at 15:15",     "q": "explain auto squareoff"},
+    {"label": "Advanced P&L Fence",          "q": "explain pnl fence"},
+    {"label": "Day-Loss Control",            "q": "explain loss control"},
+    {"label": "Manual trading flow",         "q": "explain manual trading"},
+    {"label": "Modify an order",             "q": "how do I modify an order"},
+    {"label": "Attach SL / TGT after fill",  "q": "how to attach SL or target after fill"},
+    {"label": "Dashboard overview",          "q": "explain the dashboard"},
+    {"label": "How does the app work?",      "q": "how does the application work"},
+    {"label": "Who are you?",                "q": "who are you"},
+]
+
+
 # ── routes ───────────────────────────────────────────────────────────────
 
 class AskPayload(BaseModel):
@@ -459,8 +479,12 @@ async def ask(payload: AskPayload, _user_id: int = Depends(login_required)):
     q = (payload.question or "").strip()
     if not q:
         return {
-            "answer": "Hi, I'm **Madhav** 👋 — ask me anything about QuantFlux.",
+            "answer": (
+                "Hi, I'm **Madhav** 👋 — your QuantFlux assistant.\n\n"
+                "Tap any suggestion below, or type your own question."
+            ),
             "sources": [],
+            "suggestions": SUGGESTIONS,
         }
 
     # 1) Curated intent match — always preferred.
@@ -471,16 +495,17 @@ async def ask(payload: AskPayload, _user_id: int = Depends(login_required)):
             "answer": f"**{t['title']}**\n\n{t['answer']}",
             "sources": [{"title": t["title"], "label": "Madhav",
                          "source": "curated", "snippet": t["answer"][:280]}],
+            "suggestions": [],
         }
 
     # 2) Doc fallback.
     qtok = set(_tokenize(q)) - _STOPWORDS
     if not qtok:
         return {
-            "answer": ("Could you rephrase that with a bit more detail? "
-                       "Try keywords like *strategy 3*, *kill switch*, "
-                       "*loss control*, *manual trading*."),
+            "answer": ("I didn't quite catch that. Try one of these or rephrase "
+                       "with a bit more detail:"),
             "sources": [],
+            "suggestions": SUGGESTIONS,
         }
 
     index = _load_index()
@@ -495,11 +520,11 @@ async def ask(payload: AskPayload, _user_id: int = Depends(login_required)):
     if not top:
         return {
             "answer": (
-                "I couldn't find that in the QuantFlux docs. Try keywords "
-                "like *kill switch*, *strategy 1*, *auto squareoff*, "
-                "*risk fence* or *manual trading*."
+                "I couldn't find that in the QuantFlux docs. Pick one of "
+                "these common questions, or rephrase yours:"
             ),
             "sources": [],
+            "suggestions": SUGGESTIONS,
         }
 
     best = top[0][1]
@@ -510,7 +535,13 @@ async def ask(payload: AskPayload, _user_id: int = Depends(login_required)):
          "snippet": _humanise(s["body"])[:280]}
         for _, s in top
     ]
-    return {"answer": answer, "sources": sources}
+    return {"answer": answer, "sources": sources, "suggestions": []}
+
+
+@router.get("/topics")
+async def topics(_user_id: int = Depends(login_required)):
+    """Return the FAQ suggestion chips for the chat UI."""
+    return {"suggestions": SUGGESTIONS}
 
 
 @router.post("/reload")

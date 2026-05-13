@@ -1,18 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { MessageCircle, X, Send, Sparkles } from 'lucide-react';
+import { X, Send, Sparkles } from 'lucide-react';
 import { api } from '../api';
 
 /**
  * Madhav — floating help chatbot.
  * Bottom-right "ask_me" icon → expands into a chat panel.
- * Backend: POST /api/madhav/ask
+ * Backend: POST /api/madhav/ask, GET /api/madhav/topics
  */
 export default function MadhavChatbot() {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [topics, setTopics] = useState([]);
   const [messages, setMessages] = useState([
-    { role: 'bot', text: "Hi, I'm **Madhav** 👋  I know everything about QuantFlux — ask me about strategies, manual trading, kill switch, risk fences, anything." },
+    {
+      role: 'bot',
+      text: "Hi, I'm **Madhav** 👋 — your QuantFlux assistant.\n\nTap any suggestion below, or type your own question.",
+      suggestions: [],
+    },
   ]);
   const scrollRef = useRef(null);
 
@@ -22,8 +27,28 @@ export default function MadhavChatbot() {
     }
   }, [messages, open]);
 
-  const send = async () => {
-    const q = input.trim();
+  // Pre-load FAQ chips the first time the panel is opened.
+  useEffect(() => {
+    if (!open || topics.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.madhavTopics();
+        if (cancelled) return;
+        const s = r?.suggestions || [];
+        setTopics(s);
+        setMessages((m) => {
+          if (!m.length) return m;
+          const first = m[0];
+          if (first.role !== 'bot' || (first.suggestions && first.suggestions.length)) return m;
+          return [{ ...first, suggestions: s }, ...m.slice(1)];
+        });
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [open, topics.length]);
+
+  const ask = async (q) => {
     if (!q || busy) return;
     setMessages((m) => [...m, { role: 'user', text: q }]);
     setInput('');
@@ -34,13 +59,20 @@ export default function MadhavChatbot() {
         role: 'bot',
         text: r.answer || "I couldn't find that.",
         sources: r.sources || [],
+        suggestions: r.suggestions || [],
       }]);
     } catch (e) {
-      setMessages((m) => [...m, { role: 'bot', text: `Error: ${e.message}` }]);
+      setMessages((m) => [...m, {
+        role: 'bot',
+        text: `Error: ${e.message}`,
+        suggestions: topics,
+      }]);
     } finally {
       setBusy(false);
     }
   };
+
+  const send = () => ask(input.trim());
 
   const onKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -48,6 +80,16 @@ export default function MadhavChatbot() {
       send();
     }
   };
+
+  const renderText = (text) => (
+    <div dangerouslySetInnerHTML={{
+      __html: (text || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+        .replace(/`([^`]+)`/g, '<code class="bg-black/30 px-1 rounded">$1</code>')
+        .replace(/\n/g, '<br/>'),
+    }} />
+  );
 
   return (
     <>
@@ -67,7 +109,7 @@ export default function MadhavChatbot() {
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-5 right-5 z-50 w-[360px] sm:w-[420px] max-w-[95vw] h-[560px] max-h-[85vh] bg-surface-1 border border-surface-3 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="fixed bottom-5 right-5 z-50 w-[380px] sm:w-[440px] max-w-[95vw] h-[600px] max-h-[85vh] bg-surface-1 border border-surface-3 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
           {/* header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-surface-3 bg-gradient-to-r from-brand-600/20 to-transparent">
             <div className="flex items-center gap-2">
@@ -87,29 +129,40 @@ export default function MadhavChatbot() {
           {/* messages */}
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 text-sm">
             {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[88%] px-3 py-2 rounded-xl whitespace-pre-wrap leading-snug ${
-                  m.role === 'user'
-                    ? 'bg-brand-600 text-white'
-                    : 'bg-surface-2 border border-surface-3 text-gray-200'
-                }`}>
-                  {/* render very simple markdown bold + line breaks */}
-                  <div dangerouslySetInnerHTML={{
-                    __html: (m.text || '')
-                      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-                      .replace(/`([^`]+)`/g, '<code class="bg-black/30 px-1 rounded">$1</code>')
-                      .replace(/\n/g, '<br/>'),
-                  }} />
-                  {m.sources && m.sources.length ? (
-                    <div className="mt-2 pt-2 border-t border-surface-3 text-[10px] text-gray-500">
-                      Sources:&nbsp;
-                      {m.sources.map((s, k) => (
-                        <span key={k} className="mr-2">• {s.label} → {s.title}</span>
-                      ))}
-                    </div>
-                  ) : null}
+              <div key={i}>
+                <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[88%] px-3 py-2 rounded-xl whitespace-pre-wrap leading-snug ${
+                    m.role === 'user'
+                      ? 'bg-brand-600 text-white'
+                      : 'bg-surface-2 border border-surface-3 text-gray-200'
+                  }`}>
+                    {renderText(m.text)}
+                    {m.sources && m.sources.length ? (
+                      <div className="mt-2 pt-2 border-t border-surface-3 text-[10px] text-gray-500">
+                        <span>Source:&nbsp;</span>
+                        {m.sources.slice(0, 3).map((s, k) => (
+                          <span key={k} className="mr-2">• {s.label}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
+
+                {/* Suggestion chips — clickable */}
+                {m.role === 'bot' && m.suggestions && m.suggestions.length ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5 justify-start">
+                    {m.suggestions.map((s, k) => (
+                      <button
+                        key={k}
+                        onClick={() => ask(s.q)}
+                        disabled={busy}
+                        className="text-[11px] px-2.5 py-1 rounded-full bg-brand-500/15 border border-brand-500/40 text-brand-300 hover:bg-brand-500/25 hover:text-white transition disabled:opacity-50"
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ))}
             {busy ? (

@@ -101,6 +101,7 @@ export const api = {
   // Madhav chatbot
   madhavAsk: (question) => request('/madhav/ask', { method: 'POST', body: JSON.stringify({ question }) }),
   madhavReload: () => request('/madhav/reload', { method: 'POST' }),
+  madhavTopics: () => request('/madhav/topics'),
 
   // Strategies
   getStrategies: () => request('/strategies/'),
