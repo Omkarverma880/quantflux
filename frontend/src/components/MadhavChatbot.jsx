@@ -122,14 +122,15 @@ export default function MadhavChatbot() {
           </div>
 
           {/* input */}
-          <div className="p-2 border-t border-surface-3 flex gap-2">
+          <div className="p-2 border-t border-surface-3 flex gap-2 bg-surface-1">
             <textarea
               rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKey}
               placeholder="Ask anything about QuantFlux…"
-              className="flex-1 input text-xs resize-none py-2"
+              className="flex-1 input-field text-xs resize-none py-2 text-white placeholder-gray-500"
+              style={{ minHeight: '38px', maxHeight: '120px' }}
             />
             <button onClick={send} disabled={busy || !input.trim()}
                     className="px-3 rounded-lg bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-50">
