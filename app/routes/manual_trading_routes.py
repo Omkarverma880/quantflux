@@ -492,79 +492,101 @@ async def _verify_fill_and_register(
     move_sl_to_cost: bool,
     user_id: int,
 ):
-    """Poll order status to get actual fill price, then register with monitor."""
+    """Poll order status until the entry order(s) reach a TERMINAL state.
+
+    Only registers the SL/Target monitor once at least some quantity is
+    confirmed COMPLETE.  This prevents the monitor from firing an exit
+    while the entry is still OPEN — which previously pushed a SELL order
+    that got rejected because no underlying position existed.
+
+    The poll continues for the remainder of the trading session so slow-
+    to-fill LIMIT orders are handled.  ``fallback_entry_price`` is no
+    longer used to register the monitor — only confirmed fills are.
+    """
     from core.database import get_db_session
 
-    filled_price = 0.0
-    filled_qty = 0
-    max_polls = 15  # 15 x 1s = 15 seconds max wait
+    POLL_INTERVAL_S = 2
+    MAX_POLLS = 10800  # ~6 hours
 
-    for attempt in range(max_polls):
-        await asyncio.sleep(1)
+    pending_ids = {str(oid) for oid in order_ids}
+    filled_value = 0.0
+    filled_qty = 0
+    poll_count = 0
+    log_throttle = 0
+
+    while pending_ids and poll_count < MAX_POLLS:
+        poll_count += 1
+        await asyncio.sleep(POLL_INTERVAL_S)
+
+        # Stop polling outside market hours.
+        now_t = datetime.now().time()
+        if now_t < dtime(9, 15) or now_t > dtime(15, 30):
+            logger.info(
+                "Stopping fill verification for %s — outside market hours "
+                "(pending: %s)",
+                tradingsymbol, ",".join(pending_ids),
+            )
+            break
+
         db = get_db_session()
         try:
             broker = get_user_broker(db, user_id)
             all_orders = broker.get_orders()
-            total_filled_value = 0.0
-            total_filled_qty = 0
-            all_done = True
+            by_id = {str(o.get("order_id")): o for o in all_orders}
 
-            for oid in order_ids:
-                for o in all_orders:
-                    if str(o.get("order_id")) == str(oid):
-                        status = o.get("status", "")
-                        avg = float(o.get("average_price", 0) or 0)
-                        fq = int(o.get("filled_quantity", 0) or 0)
-                        if status == "COMPLETE" and avg > 0 and fq > 0:
-                            total_filled_value += avg * fq
-                            total_filled_qty += fq
-                        elif status in ("REJECTED", "CANCELLED"):
-                            logger.warning(
-                                "Order %s was %s — skipping SL/TGT registration",
-                                oid, status,
-                            )
-                            return
-                        else:
-                            all_done = False
-                        break
+            for oid in list(pending_ids):
+                o = by_id.get(oid)
+                if not o:
+                    continue
+                status = o.get("status", "")
+                avg = float(o.get("average_price", 0) or 0)
+                fq = int(o.get("filled_quantity", 0) or 0)
 
-            if all_done and total_filled_qty > 0:
-                filled_price = round(total_filled_value / total_filled_qty, 2)
-                filled_qty = total_filled_qty
-                break
+                if status == "COMPLETE" and fq > 0 and avg > 0:
+                    filled_value += avg * fq
+                    filled_qty += fq
+                    pending_ids.discard(oid)
+                elif status in ("REJECTED", "CANCELLED"):
+                    logger.warning(
+                        "Entry order %s for %s ended with status %s "
+                        "(filled_qty=%d) — removing from pending set",
+                        oid, tradingsymbol, status, fq,
+                    )
+                    if fq > 0 and avg > 0:
+                        filled_value += avg * fq
+                        filled_qty += fq
+                    pending_ids.discard(oid)
         except Exception as exc:
-            logger.warning("Fill verification poll %d failed: %s", attempt + 1, exc)
+            log_throttle += 1
+            if log_throttle % 10 == 1:
+                logger.warning(
+                    "Fill verification poll for %s failed: %s",
+                    tradingsymbol, exc,
+                )
         finally:
             db.close()
 
-    # Fallback: if we couldn't confirm fill, use LTP or user-supplied price
-    entry_price = filled_price
-    quantity = filled_qty or requested_quantity
-
-    if entry_price <= 0:
-        entry_price = fallback_entry_price
-
-    if entry_price <= 0:
-        db = get_db_session()
-        try:
-            broker = get_user_broker(db, user_id)
-            instrument_key = f"{exchange}:{tradingsymbol}"
-            ltp_data = broker.kite.ltp([instrument_key])
-            entry_price = ltp_data[instrument_key]["last_price"]
-        except Exception:
-            pass
-        finally:
-            db.close()
-
-    if entry_price <= 0:
-        logger.error(
-            "Cannot determine entry price for %s — SL/TGT monitor NOT registered",
-            tradingsymbol,
+    if filled_qty <= 0:
+        logger.warning(
+            "Entry for %s never filled (order_ids=%s) — SL/TGT monitor "
+            "NOT registered.  (fallback price was %.2f, ignored)",
+            tradingsymbol, order_ids, fallback_entry_price,
         )
         return
 
+    entry_price = round(filled_value / filled_qty, 2)
+    quantity = filled_qty
+
+    if quantity < requested_quantity:
+        logger.warning(
+            "Partial fill for %s: filled=%d / requested=%d. Registering "
+            "monitor for filled qty only.",
+            tradingsymbol, quantity, requested_quantity,
+        )
+
     logger.info(
-        "Fill verified for %s: entry=%.2f qty=%d (requested=%d)",
+        "Fill confirmed for %s: entry=%.2f qty=%d (requested=%d) — "
+        "registering SL/TGT monitor",
         tradingsymbol, entry_price, quantity, requested_quantity,
     )
 
@@ -588,31 +610,65 @@ async def _verify_fill_and_register(
 
 @router.get("/positions")
 async def get_manual_positions(_auth=Depends(require_zerodha_auth)):
-    broker = get_user_broker(_auth["db"], _auth["user_id"])
-    try:
-        positions = broker.get_positions()
-        active_positions = [p for p in positions if getattr(p, "quantity", 0) != 0]
+    """Return active positions.
 
-        # Fetch fresh LTP for all active positions to compute real-time P&L
-        if active_positions:
-            instruments = [
-                f"{p.exchange}:{p.tradingsymbol}" for p in active_positions
-            ]
+    Resilient: transient broker errors (e.g. intermittent "Invalid token"
+    coming back from Kite under load) are NOT propagated as HTTP 500 — that
+    caused the front-end to clear the table and flash the red banner every
+    few seconds.  Instead we return ``positions: []`` with a ``warning``
+    field so the UI can keep showing the previous snapshot.
+    """
+    db = _auth["db"]
+    user_id = _auth["user_id"]
+
+    last_error: Exception | None = None
+    positions = None
+    for attempt in range(2):  # one retry on transient failure
+        try:
+            broker = get_user_broker(db, user_id)
+            positions = broker.get_positions()
+            break
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Manual positions fetch attempt %d failed: %s", attempt + 1, exc
+            )
+            # Force a fresh kite handle on retry (handles stale token cache)
             try:
-                ltp_data = broker.kite.ltp(instruments)
-                for p in active_positions:
-                    key = f"{p.exchange}:{p.tradingsymbol}"
-                    if key in ltp_data:
-                        p.last_price = ltp_data[key]["last_price"]
-                        # Recalculate unrealised P&L from live LTP
-                        p.pnl = round((p.last_price - p.average_price) * p.quantity, 2)
-            except Exception as ltp_err:
-                logger.warning("LTP fetch for positions failed: %s", ltp_err)
+                from core.broker import _user_brokers  # type: ignore
+                _user_brokers.pop(user_id, None)
+            except Exception:
+                pass
+            await asyncio.sleep(0.3)
 
-        return {"positions": [_serialize(p) for p in active_positions]}
-    except Exception as error:
-        logger.exception("Get manual positions error")
-        raise HTTPException(status_code=500, detail=str(error)) from error
+    if positions is None:
+        # Don't 500 — let the UI keep its previous snapshot.
+        return {
+            "positions": [],
+            "warning": f"Broker temporarily unavailable: {last_error}",
+        }
+
+    active_positions = [p for p in positions if getattr(p, "quantity", 0) != 0]
+
+    # Fetch fresh LTP for all active positions to compute real-time P&L.
+    # Failure here must NEVER break the response.
+    if active_positions:
+        instruments = [
+            f"{p.exchange}:{p.tradingsymbol}" for p in active_positions
+        ]
+        try:
+            broker = get_user_broker(db, user_id)
+            ltp_data = broker.kite.ltp(instruments)
+            for p in active_positions:
+                key = f"{p.exchange}:{p.tradingsymbol}"
+                if key in ltp_data:
+                    p.last_price = ltp_data[key]["last_price"]
+                    # Recalculate unrealised P&L from live LTP
+                    p.pnl = round((p.last_price - p.average_price) * p.quantity, 2)
+        except Exception as ltp_err:
+            logger.warning("LTP fetch for positions failed: %s", ltp_err)
+
+    return {"positions": [_serialize(p) for p in active_positions]}
 
 
 @router.post("/squareoff")
@@ -1007,6 +1063,48 @@ class _ManualTradeMonitor:
                 reason = "SL" if sl_hit else "TARGET"
                 logger.info("Manual %s hit for %s at LTP=%.2f | SL=%.2f TGT=%.2f",
                             reason, sym, ltp, trade["sl_price"], trade["tgt_price"])
+
+                # ── Defence-in-depth: verify a real position exists in the
+                # broker account before pushing an exit order.  This stops
+                # the monitor from sending exits for entries that never
+                # actually filled (Kite would reject them anyway, but
+                # cleaner to skip + unregister).
+                try:
+                    live_positions = broker.get_positions()
+                except Exception as exc:
+                    logger.warning(
+                        "Could not fetch positions to validate exit for %s: "
+                        "%s — proceeding with exit attempt anyway",
+                        sym, exc,
+                    )
+                    live_positions = None
+
+                if live_positions is not None:
+                    pos = next(
+                        (p for p in live_positions if p.tradingsymbol == sym),
+                        None,
+                    )
+                    pos_qty = abs(getattr(pos, "quantity", 0)) if pos else 0
+                    if pos_qty == 0:
+                        logger.warning(
+                            "Skipping %s exit for %s — no open position "
+                            "found (entry likely never filled).  "
+                            "Unregistering monitor.",
+                            reason, sym,
+                        )
+                        trade["status"] = f"SKIPPED_{reason}_NO_POSITION"
+                        to_remove.append(sym)
+                        continue
+                    # Cap exit qty to what we actually hold so we never
+                    # over-sell on partial fills.
+                    if pos_qty < trade["quantity"]:
+                        logger.warning(
+                            "%s position qty (%d) < monitored qty (%d) — "
+                            "exiting only what's held",
+                            sym, pos_qty, trade["quantity"],
+                        )
+                        trade["quantity"] = pos_qty
+
                 exit_placed = False
                 for retry in range(MAX_EXIT_RETRIES):
                     try:

@@ -618,10 +618,16 @@ function ManualActivePositions({ onAction }) {
   const [updatedAt, setUpdatedAt] = useState(null);
   const [monitorInfo, setMonitorInfo] = useState({});
   const initialLoadDone = useRef(false);
+  const inFlight = useRef(false);
+  const consecutiveErrors = useRef(0);
+  const hasEverLoaded = useRef(false);
 
   const fetchPositions = async () => {
+    // Prevent overlapping requests — major cause of flickering when the
+    // 5s interval fires while the previous call is still pending.
+    if (inFlight.current) return;
+    inFlight.current = true;
     if (!initialLoadDone.current) setLoading(true);
-    setError('');
     try {
       const [posData, monData] = await Promise.all([
         requestManual('/positions'),
@@ -630,11 +636,28 @@ function ManualActivePositions({ onAction }) {
       setPositions(posData.positions || []);
       setMonitorInfo(monData.active_trades || {});
       setUpdatedAt(new Date());
+      hasEverLoaded.current = true;
+      consecutiveErrors.current = 0;
+      // Backend may return a soft warning (e.g. broker hiccup) — don't
+      // surface it as a destructive error if we already have data.
+      if (posData.warning && !(posData.positions || []).length && !positions.length) {
+        setError(posData.warning);
+      } else {
+        setError('');
+      }
     } catch (fetchError) {
-      setError(fetchError.message);
+      consecutiveErrors.current += 1;
+      // Suppress transient errors: only show banner after 3 consecutive
+      // failures or if we never managed to load anything.
+      if (!hasEverLoaded.current || consecutiveErrors.current >= 3) {
+        setError(fetchError.message);
+      }
+      // IMPORTANT: do NOT clear `positions` on error — keep showing the
+      // last good snapshot so the table doesn't blink in/out of view.
     } finally {
       setLoading(false);
       initialLoadDone.current = true;
+      inFlight.current = false;
     }
   };
 
@@ -681,11 +704,11 @@ function ManualActivePositions({ onAction }) {
         </button>
       </div>
 
-      {loading ? <EmptyState icon={PackageOpen} title="Loading positions" subtitle="Fetching live position data" /> : null}
+      {loading && !positions.length ? <EmptyState icon={PackageOpen} title="Loading positions" subtitle="Fetching live position data" /> : null}
       {!loading && error ? <StatusMessage tone="error">Error loading positions: {error}</StatusMessage> : null}
       {!loading && !error && !positions.length ? <EmptyState icon={PackageOpen} title="No active positions" subtitle="Open positions will appear here" /> : null}
 
-      {!loading && !error && !!positions.length ? (
+      {!loading && !!positions.length ? (
         <div className="overflow-x-auto rounded-xl border border-surface-3">
           <table className="min-w-full text-sm">
             <thead className="bg-surface-2 text-gray-400">
@@ -756,18 +779,29 @@ function ManualOpenOrders({ onAction }) {
   const [error, setError] = useState('');
   const [cancelId, setCancelId] = useState(null);
   const initialLoadDone = useRef(false);
+  const inFlight = useRef(false);
+  const consecutiveErrors = useRef(0);
+  const hasEverLoaded = useRef(false);
 
   const fetchOrders = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     if (!initialLoadDone.current) setLoading(true);
-    setError('');
     try {
       const data = await requestManual('/open_orders');
       setOrders(data.open_orders || []);
+      hasEverLoaded.current = true;
+      consecutiveErrors.current = 0;
+      setError('');
     } catch (fetchError) {
-      setError(fetchError.message);
+      consecutiveErrors.current += 1;
+      if (!hasEverLoaded.current || consecutiveErrors.current >= 3) {
+        setError(fetchError.message);
+      }
     } finally {
       setLoading(false);
       initialLoadDone.current = true;
+      inFlight.current = false;
     }
   };
 
