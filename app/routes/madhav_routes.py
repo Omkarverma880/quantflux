@@ -283,10 +283,13 @@ def _normalise(q: str) -> str:
 
 
 _INTENTS: list[tuple[re.Pattern, str]] = [
-    # "how many strategies", "list strategies", plain "strategies"
-    (re.compile(r"\b(how\s*many\s*strateg|list\s*(of\s*)?strateg|all\s*strateg|"
-                r"total\s*strateg|which\s*strateg|what\s*(are\s*)?(the\s*)?strateg|"
-                r"available\s*strateg|strateg(y|ies)\s*list|^\s*strateg(y|ies)\s*$)\b"),
+    # "how many strategies", "list strategies", "what strategies", plain "strategies".
+    # Use \w* after the stem so it matches both 'strategy' and 'strategies'
+    # without needing a trailing word-boundary (which would fail mid-word).
+    (re.compile(r"(how\s*many\s*strateg\w*|list\s*(of\s*)?strateg\w*|all\s*strateg\w*|"
+                r"total\s*strateg\w*|which\s*strateg\w*|what\s*(are\s*)?(the\s*)?strateg\w*|"
+                r"available\s*strateg\w*|strateg\w*\s*list|^\s*strateg\w*\s*$|"
+                r"^\s*strateg\w*\s*\?+\s*$)"),
      "strategies_list"),
     (re.compile(r"\b(strategy\s*1|gann\s*cv|first\s*strategy)\b"), "strategy1"),
     (re.compile(r"\b(strategy\s*2|option\s*sell|second\s*strategy)\b"), "strategy2"),
