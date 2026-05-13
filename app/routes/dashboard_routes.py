@@ -2,6 +2,7 @@
 Dashboard data API routes.
 Aggregated data for the main dashboard view.
 """
+import asyncio
 from datetime import datetime, time as dtime
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -62,28 +63,35 @@ async def dashboard_summary(user_id: int = Depends(login_required), db: Session 
             logger.warning("dashboard: margins fetch failed: %s", exc)
             warnings.append(f"margins: {exc}")
 
-        # Retry positions once with cache evict on transient failure.
+        # Retry positions up to 2x with cache evict + small backoff on
+        # transient failure (matches the resilient pattern used by
+        # /api/manual/positions so the two views stay in sync).
         positions = None
-        for attempt in (0, 1):
+        last_pos_err: Exception | None = None
+        for attempt in range(2):
             try:
                 positions = broker.get_positions()
                 break
             except Exception as exc:
-                logger.warning("dashboard: positions fetch attempt %d failed: %s",
-                               attempt, exc)
-                if attempt == 0:
-                    try:
-                        from core.broker import _user_brokers
-                        _user_brokers.pop(user_id, None)
-                        broker = get_user_broker(db, user_id)
-                    except Exception:
-                        positions = []
-                        warnings.append(f"positions: {exc}")
-                        break
-                else:
-                    positions = []
-                    warnings.append(f"positions: {exc}")
-        positions = positions or []
+                last_pos_err = exc
+                logger.warning(
+                    "dashboard: positions fetch attempt %d failed: %s",
+                    attempt + 1, exc,
+                )
+                # Force-refresh broker handle (handles stale token cache)
+                try:
+                    from core.broker import _user_brokers
+                    _user_brokers.pop(user_id, None)
+                    broker = get_user_broker(db, user_id)
+                except Exception as exc2:
+                    logger.warning(
+                        "dashboard: broker re-init failed: %s", exc2,
+                    )
+                await asyncio.sleep(0.3)
+        if positions is None:
+            positions = []
+            if last_pos_err is not None:
+                warnings.append(f"positions: {last_pos_err}")
         active_positions = [p for p in positions if (p.quantity or 0) != 0]
         positions_count = len(active_positions)
         # Sum PnL only for live (non-zero) legs to avoid stale closed-leg noise.
