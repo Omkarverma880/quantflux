@@ -94,8 +94,34 @@ async def dashboard_summary(user_id: int = Depends(login_required), db: Session 
                 warnings.append(f"positions: {last_pos_err}")
         active_positions = [p for p in positions if (p.quantity or 0) != 0]
         positions_count = len(active_positions)
-        # Sum PnL only for live (non-zero) legs to avoid stale closed-leg noise.
-        total_pnl = sum((p.pnl or 0) for p in active_positions)
+        # Day P&L must include CLOSED legs too (qty==0 but with realised PnL
+        # from same-day round-trips). Filtering those out would under-report
+        # the day's realised gains and disagree with Trade History.
+        total_pnl = sum((p.pnl or 0) for p in positions)
+
+        # Also pick up same-day CNC buys that Kite may report under
+        # holdings (t1_quantity > 0) rather than day-positions. This keeps
+        # Dashboard Day P&L aligned with the Zerodha web "Total P&L" figure.
+        try:
+            raw_holdings = broker.kite.holdings() or []
+            seen = {(p.tradingsymbol, p.exchange) for p in positions}
+            for h in raw_holdings:
+                try:
+                    t1 = int(h.get("t1_quantity", 0) or 0)
+                except Exception:
+                    t1 = 0
+                if t1 <= 0:
+                    continue
+                key = (h.get("tradingsymbol"), h.get("exchange"))
+                if key in seen:
+                    continue  # already counted via day-positions
+                last_px = float(h.get("last_price") or 0)
+                avg_px = float(h.get("average_price") or 0)
+                total_pnl += (last_px - avg_px) * t1
+                positions_count += 1
+        except Exception as exc:
+            logger.warning("dashboard: holdings T+0 sweep failed: %s", exc)
+            warnings.append(f"holdings_t1: {exc}")
 
         try:
             orders = broker.get_orders()

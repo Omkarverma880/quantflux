@@ -34,6 +34,25 @@ ROOT = Path(__file__).resolve().parent.parent.parent  # project root
 # ────────────────────────────────────────────────────────────────────────
 
 TOPICS: dict[str, dict] = {
+    "strategies_list": {
+        "title": "Strategies in QuantFlux",
+        "answer": (
+            "QuantFlux ships with **9 trading strategies** plus 1 non-trading "
+            "helper (Cumulative Volume).  Here's the lineup:\n\n"
+            "1. **Strategy 1 — Gann CV** — Gann levels + cumulative-volume threshold.\n"
+            "2. **Strategy 2 — Option Selling** — OTM call/put sells with SL in premium.\n"
+            "3. **Strategy 3 — CV + VWAP + EMA + ADX** — four-filter trend trade.\n"
+            "4. **Strategy 4 — High/Low Retest** — opening-range retest breakout.\n"
+            "5. **Strategy 5 — Gann Range** — Gann-level crossover with CV confirmation.\n"
+            "6. **Strategy 6 — Call/Put Lines** — OI / premium-derived line reactions.\n"
+            "7. **Strategy 7 — Strike Lines** — pivot/strike-line reactions.\n"
+            "8. **Strategy 8 — Reverse** — mean-reversion fades of extremes.\n"
+            "9. **Strategy 9 — LOC** — last-hour compression breakout.\n\n"
+            "Each strategy has its own page under **Strategies** in the sidebar, "
+            "its own config, and exits through the 15:15 hard fence.  Ask me "
+            "*'explain strategy 3'* (or any number) for details on one."
+        ),
+    },
     "strategy1": {
         "title": "Strategy 1 — Gann + Cumulative Volume",
         "answer": (
@@ -264,6 +283,9 @@ def _normalise(q: str) -> str:
 
 
 _INTENTS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\b(how\s*many\s*strateg|list\s*(of\s*)?strateg|all\s*strateg|"
+                r"total\s*strateg|which\s*strateg|what\s*strateg(ies|y)?\s*(are|do)|"
+                r"available\s*strateg|strateg(y|ies)\s*list)\b"), "strategies_list"),
     (re.compile(r"\b(strategy\s*1|gann\s*cv|first\s*strategy)\b"), "strategy1"),
     (re.compile(r"\b(strategy\s*2|option\s*sell|second\s*strategy)\b"), "strategy2"),
     (re.compile(r"\b(strategy\s*3|cv\s*vwap|third\s*strategy)\b"), "strategy3"),
