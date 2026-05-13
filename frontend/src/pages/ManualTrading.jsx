@@ -50,6 +50,217 @@ async function requestManual(path, options = {}) {
   return response.json();
 }
 
+/* ── Reusable modal shell + ModifyOrderModal + SlTgtModal ───────────────── */
+
+function ModalShell({ title, onClose, children, footer }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+         onClick={onClose}>
+      <div className="bg-surface-1 border border-surface-3 rounded-xl w-full max-w-md shadow-2xl"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-surface-3">
+          <h3 className="text-sm font-semibold text-white">{title}</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none">×</button>
+        </div>
+        <div className="p-4 space-y-3 text-sm">{children}</div>
+        {footer ? <div className="px-4 py-3 border-t border-surface-3 flex justify-end gap-2">{footer}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function ModifyOrderModal({ order, onClose, onSuccess }) {
+  const [price, setPrice] = useState(Number(order.price || 0));
+  const [quantity, setQuantity] = useState(Number(order.quantity || 0));
+  const [triggerPrice, setTriggerPrice] = useState(Number(order.trigger_price || 0));
+  const [orderType, setOrderType] = useState(order.order_type || 'LIMIT');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const submit = async () => {
+    setBusy(true); setErr('');
+    try {
+      await requestManual('/order/modify', {
+        method: 'POST',
+        body: JSON.stringify({
+          order_id: order.order_id,
+          price: Number(price) || null,
+          quantity: Number(quantity) || null,
+          trigger_price: Number(triggerPrice) || null,
+          order_type: orderType || null,
+        }),
+      });
+      onSuccess();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <ModalShell
+      title={`Modify ${order.tradingsymbol}`}
+      onClose={onClose}
+      footer={(
+        <>
+          <button onClick={onClose} className="btn-ghost px-3 py-1.5 text-xs">Cancel</button>
+          <button onClick={submit} disabled={busy}
+                  className="px-3 py-1.5 rounded-lg bg-blue-500 text-white text-xs font-medium hover:bg-blue-600 disabled:opacity-50">
+            {busy ? 'Updating...' : 'Update Order'}
+          </button>
+        </>
+      )}
+    >
+      <div className="text-xs text-gray-500 mono">Order ID: {order.order_id}</div>
+      <label className="block">
+        <span className="text-xs text-gray-400">Order Type</span>
+        <select value={orderType} onChange={(e) => setOrderType(e.target.value)}
+                className="input mt-1 w-full">
+          <option value="LIMIT">LIMIT</option>
+          <option value="MARKET">MARKET</option>
+          <option value="SL">SL</option>
+          <option value="SL-M">SL-M</option>
+        </select>
+      </label>
+      <label className="block">
+        <span className="text-xs text-gray-400">Price</span>
+        <input type="number" step="0.05" value={price}
+               onChange={(e) => setPrice(e.target.value)} className="input mt-1 w-full mono" />
+      </label>
+      <label className="block">
+        <span className="text-xs text-gray-400">Trigger Price (for SL / SL-M)</span>
+        <input type="number" step="0.05" value={triggerPrice}
+               onChange={(e) => setTriggerPrice(e.target.value)} className="input mt-1 w-full mono" />
+      </label>
+      <label className="block">
+        <span className="text-xs text-gray-400">Quantity</span>
+        <input type="number" step="1" value={quantity}
+               onChange={(e) => setQuantity(e.target.value)} className="input mt-1 w-full mono" />
+      </label>
+      {err ? <div className="text-xs text-red-400">{err}</div> : null}
+    </ModalShell>
+  );
+}
+
+function SlTgtModal({ tradingsymbol, exchange, quantity, side, entryPrice, product,
+                     existing, onClose, onSuccess }) {
+  const [slType, setSlType] = useState('POINTS');
+  const [stopLoss, setStopLoss] = useState(existing?.initial_sl && entryPrice
+                                           ? Math.abs(entryPrice - existing.initial_sl).toFixed(2)
+                                           : '');
+  const [tgtType, setTgtType] = useState('POINTS');
+  const [target, setTarget] = useState(existing?.tgt_price && entryPrice
+                                       ? Math.abs(existing.tgt_price - entryPrice).toFixed(2)
+                                       : '');
+  const [trailingType, setTrailingType] = useState('POINTS');
+  const [trailing, setTrailing] = useState(existing?.trailing_points || '');
+  const [moveSlToCost, setMoveSlToCost] = useState(!!existing?.move_sl_to_cost);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const submit = async () => {
+    const sl = Number(stopLoss) || 0;
+    const tg = Number(target) || 0;
+    const tr = Number(trailing) || 0;
+    if (sl <= 0 && tg <= 0 && tr <= 0) {
+      setErr('Provide at least one of SL / Target / Trailing');
+      return;
+    }
+    setBusy(true); setErr('');
+    try {
+      await requestManual('/monitor/attach', {
+        method: 'POST',
+        body: JSON.stringify({
+          tradingsymbol,
+          exchange: exchange || '',
+          side: side || '',
+          quantity: Number(quantity) || 0,
+          entry_price: Number(entryPrice) || 0,
+          product: product || 'MIS',
+          sl_type: slType,
+          stop_loss: sl,
+          target_type: tgtType,
+          target: tg,
+          trailing_type: trailingType,
+          trailing: tr,
+          move_sl_to_cost: moveSlToCost,
+        }),
+      });
+      onSuccess();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <ModalShell
+      title={`${existing ? 'Edit' : 'Set'} SL / Target — ${tradingsymbol}`}
+      onClose={onClose}
+      footer={(
+        <>
+          <button onClick={onClose} className="btn-ghost px-3 py-1.5 text-xs">Cancel</button>
+          <button onClick={submit} disabled={busy}
+                  className="px-3 py-1.5 rounded-lg bg-yellow-500 text-black text-xs font-semibold hover:bg-yellow-400 disabled:opacity-50">
+            {busy ? 'Saving...' : existing ? 'Update' : 'Attach'}
+          </button>
+        </>
+      )}
+    >
+      <div className="text-xs text-gray-500 grid grid-cols-2 gap-2">
+        <div>Side: <span className="text-gray-300 mono">{side}</span></div>
+        <div>Qty: <span className="text-gray-300 mono">{quantity}</span></div>
+        {entryPrice ? <div className="col-span-2">Entry: <span className="text-gray-300 mono">{Number(entryPrice).toFixed(2)}</span></div> : null}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className="text-xs text-gray-400">SL Type</span>
+          <select value={slType} onChange={(e) => setSlType(e.target.value)} className="input mt-1 w-full">
+            <option value="POINTS">POINTS</option>
+            <option value="PERCENT">PERCENT</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs text-gray-400">Stop Loss</span>
+          <input type="number" step="0.05" value={stopLoss}
+                 onChange={(e) => setStopLoss(e.target.value)} className="input mt-1 w-full mono" />
+        </label>
+
+        <label className="block">
+          <span className="text-xs text-gray-400">TGT Type</span>
+          <select value={tgtType} onChange={(e) => setTgtType(e.target.value)} className="input mt-1 w-full">
+            <option value="POINTS">POINTS</option>
+            <option value="PERCENT">PERCENT</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs text-gray-400">Target</span>
+          <input type="number" step="0.05" value={target}
+                 onChange={(e) => setTarget(e.target.value)} className="input mt-1 w-full mono" />
+        </label>
+
+        <label className="block">
+          <span className="text-xs text-gray-400">Trailing Type</span>
+          <select value={trailingType} onChange={(e) => setTrailingType(e.target.value)} className="input mt-1 w-full">
+            <option value="POINTS">POINTS</option>
+            <option value="PERCENT">PERCENT</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs text-gray-400">Trailing</span>
+          <input type="number" step="0.05" value={trailing}
+                 onChange={(e) => setTrailing(e.target.value)} className="input mt-1 w-full mono" />
+        </label>
+      </div>
+
+      <label className="flex items-center gap-2 text-xs text-gray-300">
+        <input type="checkbox" checked={moveSlToCost}
+               onChange={(e) => setMoveSlToCost(e.target.checked)} />
+        Move SL to cost once trade goes profitable
+      </label>
+
+      {err ? <div className="text-xs text-red-400">{err}</div> : null}
+    </ModalShell>
+  );
+}
+
 function Panel({ icon: Icon, title, action, children, className = '' }) {
   return (
     <section className={`card space-y-4 ${className}`}>
@@ -617,6 +828,7 @@ function ManualActivePositions({ onAction }) {
   const [squareoffId, setSquareoffId] = useState(null);
   const [updatedAt, setUpdatedAt] = useState(null);
   const [monitorInfo, setMonitorInfo] = useState({});
+  const [slTgtTarget, setSlTgtTarget] = useState(null);
   const initialLoadDone = useRef(false);
   const inFlight = useRef(false);
   const consecutiveErrors = useRef(0);
@@ -754,13 +966,22 @@ function ManualActivePositions({ onAction }) {
                       )}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <button
-                        onClick={() => handleSquareoff(position.tradingsymbol)}
-                        disabled={squareoffId === position.tradingsymbol}
-                        className="px-3 py-1.5 rounded-lg bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25 disabled:opacity-50"
-                      >
-                        {squareoffId === position.tradingsymbol ? 'Squaring...' : 'Square Off'}
-                      </button>
+                      <div className="inline-flex gap-1.5 justify-center">
+                        <button
+                          onClick={() => setSlTgtTarget(position)}
+                          className="px-2.5 py-1 rounded-lg bg-yellow-500/15 text-yellow-300 border border-yellow-500/20 hover:bg-yellow-500/25 text-xs"
+                          title={mon ? 'Edit SL / Target' : 'Add SL / Target'}
+                        >
+                          {mon ? 'Edit SL/TGT' : 'Set SL/TGT'}
+                        </button>
+                        <button
+                          onClick={() => handleSquareoff(position.tradingsymbol)}
+                          disabled={squareoffId === position.tradingsymbol}
+                          className="px-2.5 py-1 rounded-lg bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25 disabled:opacity-50 text-xs"
+                        >
+                          {squareoffId === position.tradingsymbol ? 'Squaring...' : 'Square Off'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -768,6 +989,20 @@ function ManualActivePositions({ onAction }) {
             </tbody>
           </table>
         </div>
+      ) : null}
+
+      {slTgtTarget ? (
+        <SlTgtModal
+          tradingsymbol={slTgtTarget.tradingsymbol}
+          exchange={slTgtTarget.exchange}
+          quantity={Math.abs(Number(slTgtTarget.quantity || 0))}
+          side={Number(slTgtTarget.quantity || 0) >= 0 ? 'BUY' : 'SELL'}
+          entryPrice={Number(slTgtTarget.average_price || 0)}
+          product={slTgtTarget.product || 'MIS'}
+          existing={monitorInfo[slTgtTarget.tradingsymbol] || null}
+          onClose={() => setSlTgtTarget(null)}
+          onSuccess={() => { setSlTgtTarget(null); fetchPositions(); }}
+        />
       ) : null}
     </div>
   );
@@ -778,6 +1013,8 @@ function ManualOpenOrders({ onAction }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [cancelId, setCancelId] = useState(null);
+  const [modifyOrder, setModifyOrder] = useState(null); // order obj for modal
+  const [slTgtOrder, setSlTgtOrder] = useState(null);   // order obj for SL/TGT modal
   const initialLoadDone = useRef(false);
   const inFlight = useRef(false);
   const consecutiveErrors = useRef(0);
@@ -860,31 +1097,81 @@ function ManualOpenOrders({ onAction }) {
                 <th className="px-4 py-3 text-left font-medium">Order ID</th>
                 <th className="px-4 py-3 text-left font-medium">Symbol</th>
                 <th className="px-4 py-3 text-right font-medium">Qty</th>
+                <th className="px-4 py-3 text-right font-medium">Type</th>
+                <th className="px-4 py-3 text-right font-medium">Price</th>
+                <th className="px-4 py-3 text-right font-medium">Trigger</th>
                 <th className="px-4 py-3 text-right font-medium">Status</th>
-                <th className="px-4 py-3 text-center font-medium">Action</th>
+                <th className="px-4 py-3 text-center font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {orders.map((order) => (
-                <tr key={order.order_id} className="border-t border-surface-3 bg-surface-1/60">
-                  <td className="px-4 py-3 text-gray-300 mono text-xs">{order.order_id}</td>
-                  <td className="px-4 py-3 text-gray-200">{order.tradingsymbol}</td>
-                  <td className="px-4 py-3 text-right text-gray-300">{order.quantity}</td>
-                  <td className="px-4 py-3 text-right text-yellow-400">{order.status}</td>
-                  <td className="px-4 py-3 text-center">
-                    <button
-                      onClick={() => handleCancel(order.order_id)}
-                      disabled={cancelId === order.order_id}
-                      className="px-3 py-1.5 rounded-lg bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25 disabled:opacity-50"
-                    >
-                      {cancelId === order.order_id ? 'Cancelling...' : 'Cancel'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {orders.map((order) => {
+                const status = String(order.status || '').toUpperCase();
+                const canModify = ['OPEN', 'TRIGGER PENDING', 'MODIFY PENDING'].includes(status);
+                return (
+                  <tr key={order.order_id} className="border-t border-surface-3 bg-surface-1/60">
+                    <td className="px-4 py-3 text-gray-300 mono text-xs">{order.order_id}</td>
+                    <td className="px-4 py-3 text-gray-200">{order.tradingsymbol}</td>
+                    <td className="px-4 py-3 text-right text-gray-300">{order.quantity}</td>
+                    <td className="px-4 py-3 text-right text-gray-400 text-xs">{order.order_type || '—'}</td>
+                    <td className="px-4 py-3 text-right text-gray-200 mono">
+                      {order.price > 0 ? Number(order.price).toFixed(2) : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-400 mono">
+                      {order.trigger_price > 0 ? Number(order.trigger_price).toFixed(2) : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right text-yellow-400">{order.status}</td>
+                    <td className="px-4 py-3 text-center">
+                      <div className="inline-flex gap-1.5">
+                        <button
+                          onClick={() => setModifyOrder(order)}
+                          disabled={!canModify}
+                          className="px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-500/20 hover:bg-blue-500/25 disabled:opacity-40 text-xs"
+                          title={canModify ? 'Modify price / qty / trigger' : 'Cannot modify in this state'}
+                        >
+                          Modify
+                        </button>
+                        <button
+                          onClick={() => setSlTgtOrder(order)}
+                          className="px-2.5 py-1 rounded-lg bg-yellow-500/15 text-yellow-300 border border-yellow-500/20 hover:bg-yellow-500/25 text-xs"
+                          title="Add or change SL / Target after fill"
+                        >
+                          SL/TGT
+                        </button>
+                        <button
+                          onClick={() => handleCancel(order.order_id)}
+                          disabled={cancelId === order.order_id}
+                          className="px-2.5 py-1 rounded-lg bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25 disabled:opacity-50 text-xs"
+                        >
+                          {cancelId === order.order_id ? '...' : 'Cancel'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
+      ) : null}
+
+      {modifyOrder ? (
+        <ModifyOrderModal
+          order={modifyOrder}
+          onClose={() => setModifyOrder(null)}
+          onSuccess={() => { setModifyOrder(null); fetchOrders(); onAction(); }}
+        />
+      ) : null}
+      {slTgtOrder ? (
+        <SlTgtModal
+          tradingsymbol={slTgtOrder.tradingsymbol}
+          exchange={slTgtOrder.exchange}
+          quantity={slTgtOrder.quantity}
+          side={slTgtOrder.transaction_type || slTgtOrder.side || 'BUY'}
+          product={slTgtOrder.product || 'MIS'}
+          onClose={() => setSlTgtOrder(null)}
+          onSuccess={() => { setSlTgtOrder(null); window.dispatchEvent(new Event('refreshManualPositions')); }}
+        />
       ) : null}
     </div>
   );

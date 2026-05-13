@@ -36,6 +36,8 @@ from app.routes.strategy9_routes import router as s9_router
 from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
+from app.routes.risk_routes import router as risk_router
+from app.routes.madhav_routes import router as madhav_router
 from core.logger import get_logger
 
 logger = get_logger("server")
@@ -253,6 +255,24 @@ async def lifespan(app: FastAPI):
     # Start background loop (it self-delays 30s before first run)
     task = asyncio.create_task(_strategy_background_loop())
 
+    # Risk-fence watcher (P&L lock + day-loss control)
+    try:
+        from core.risk_fence import watcher_loop as _risk_watcher
+        risk_task = asyncio.create_task(_risk_watcher(5))
+        print("[LIFESPAN] Risk-fence watcher started.", flush=True)
+    except Exception as exc:
+        risk_task = None
+        print(f"[LIFESPAN] Risk-fence watcher failed: {exc}", flush=True)
+
+    # Hard auto-squareoff fence (15:15 IST default)
+    try:
+        from core.auto_squareoff import fence_loop as _aso_loop, CUTOFF
+        aso_task = asyncio.create_task(_aso_loop(30))
+        print(f"[LIFESPAN] Auto-squareoff fence armed for {CUTOFF.strftime('%H:%M')} IST.", flush=True)
+    except Exception as exc:
+        aso_task = None
+        print(f"[LIFESPAN] Auto-squareoff fence failed: {exc}", flush=True)
+
     # Resume the manual-trading SL/Target monitor for any persisted trades.
     # Without this, monitored positions are unprotected after a server
     # restart until the next /monitor/status poll — unacceptable on Railway.
@@ -270,11 +290,14 @@ async def lifespan(app: FastAPI):
 
     print("[LIFESPAN] Server ready.", flush=True)
     yield
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    for t in (task, locals().get('risk_task'), locals().get('aso_task')):
+        if t is None:
+            continue
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
     print("[LIFESPAN] Server shut down.", flush=True)
 
 
@@ -321,6 +344,8 @@ app.include_router(s9_router, prefix="/api/strategy9-trade", tags=["Strategy9-Li
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
+app.include_router(risk_router, prefix="/api/risk", tags=["RiskFence"])
+app.include_router(madhav_router, prefix="/api/madhav", tags=["Madhav"])
 
 # ── Boot ID — changes every server restart → frontend forces re-login ──
 _BOOT_ID = uuid.uuid4().hex

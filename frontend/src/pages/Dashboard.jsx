@@ -272,6 +272,201 @@ function ExitAllTile() {
 
 /* ── MAIN ────────────────────────────────────── */
 
+/* ── Risk Fence: P&L lock + Day-loss control + Auto-squareoff status ── */
+
+function RiskFencePanels({ marketOpen }) {
+  const toast = useToast();
+  const [cfg, setCfg] = useState(null);
+  const [livePnl, setLivePnl] = useState(null);
+  const [autoTime, setAutoTime] = useState('15:15');
+  // local form state
+  const [pf, setPf] = useState({ enabled: false, lock_profit: '', max_loss: '' });
+  const [lc, setLc] = useState({ enabled: false, max_day_loss: '' });
+  const [savingPf, setSavingPf] = useState(false);
+  const [savingLc, setSavingLc] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [squaring, setSquaring] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await api.getRiskConfig();
+      setCfg(r.config);
+      setLivePnl(r.live_pnl);
+      setAutoTime(r.auto_squareoff_at || '15:15');
+      setPf({
+        enabled: !!r.config.pnl_fence.enabled,
+        lock_profit: r.config.pnl_fence.lock_profit || '',
+        max_loss: r.config.pnl_fence.max_loss || '',
+      });
+      setLc({
+        enabled: !!r.config.loss_control.enabled,
+        max_day_loss: r.config.loss_control.max_day_loss || '',
+      });
+    } catch (e) { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, marketOpen ? 5000 : 30000);
+    return () => clearInterval(id);
+  }, [refresh, marketOpen]);
+
+  const savePf = async () => {
+    setSavingPf(true);
+    try {
+      await api.updatePnlFence({
+        enabled: pf.enabled,
+        lock_profit: Number(pf.lock_profit) || 0,
+        max_loss: Number(pf.max_loss) || 0,
+      });
+      toast.success('P&L Fence updated');
+      await refresh();
+    } catch (e) { toast.error(e.message); }
+    finally { setSavingPf(false); }
+  };
+
+  const saveLc = async () => {
+    setSavingLc(true);
+    try {
+      await api.updateLossControl({
+        enabled: lc.enabled,
+        max_day_loss: Number(lc.max_day_loss) || 0,
+      });
+      toast.success('Loss Control updated');
+      await refresh();
+    } catch (e) { toast.error(e.message); }
+    finally { setSavingLc(false); }
+  };
+
+  const resetSection = async (section) => {
+    if (!window.confirm(`Reset ${section === 'pnl_fence' ? 'P&L Fence' : 'Loss Control'} trigger?`)) return;
+    setResetting(true);
+    try { await api.resetRiskFence(section); toast.success('Reset done'); await refresh(); }
+    catch (e) { toast.error(e.message); }
+    finally { setResetting(false); }
+  };
+
+  const squareNow = async () => {
+    if (!window.confirm(`Run auto-squareoff NOW for all MIS option positions?`)) return;
+    setSquaring(true);
+    try {
+      const r = await api.squareoffNow();
+      const n = r?.summary?.exited?.length || 0;
+      toast.success(`Squareoff complete — ${n} position(s) exited.`);
+      window.dispatchEvent(new Event('positions:refresh'));
+    } catch (e) { toast.error(e.message); }
+    finally { setSquaring(false); }
+  };
+
+  if (!cfg) return null;
+  const pfTriggered = cfg.pnl_fence.triggered;
+  const lcTriggered = cfg.loss_control.triggered;
+  const pnlTxt = livePnl !== null && livePnl !== undefined
+    ? `${livePnl >= 0 ? '+' : ''}₹${INR(livePnl, 0)}`
+    : '—';
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+      {/* P&L Fence card */}
+      <div className={`bg-surface-1 border rounded-xl p-4 ${pfTriggered ? 'border-red-500/40 bg-red-500/5' : 'border-surface-3'}`}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className={`w-4 h-4 ${pf.enabled ? 'text-yellow-400' : 'text-gray-500'}`} />
+            <span className="text-xs uppercase tracking-wider text-gray-400 font-medium">Advanced P&L Fence</span>
+          </div>
+          <label className="inline-flex items-center gap-1.5 text-xs">
+            <input type="checkbox" checked={pf.enabled}
+                   onChange={(e) => setPf({ ...pf, enabled: e.target.checked })} />
+            <span className="text-gray-400">Enable</span>
+          </label>
+        </div>
+        <p className="text-[10px] text-gray-500 mb-2">
+          Auto-exit when live P&L ≥ <b>+lock</b> or ≤ <b>−max loss</b>. Live P&L: <span className="mono text-gray-300">{pnlTxt}</span>
+        </p>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <input type="number" placeholder="Lock profit ₹" value={pf.lock_profit}
+                 onChange={(e) => setPf({ ...pf, lock_profit: e.target.value })}
+                 className="input text-xs mono py-1.5" />
+          <input type="number" placeholder="Max loss ₹" value={pf.max_loss}
+                 onChange={(e) => setPf({ ...pf, max_loss: e.target.value })}
+                 className="input text-xs mono py-1.5" />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <button onClick={savePf} disabled={savingPf}
+                  className="px-3 py-1.5 rounded-lg bg-brand-600/80 hover:bg-brand-600 text-white text-xs font-medium disabled:opacity-50 flex-1">
+            {savingPf ? 'Saving...' : 'Save'}
+          </button>
+          {pfTriggered ? (
+            <button onClick={() => resetSection('pnl_fence')} disabled={resetting}
+                    className="px-3 py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 text-xs font-medium border border-red-500/30">
+              Reset Trigger
+            </button>
+          ) : null}
+        </div>
+        {pfTriggered ? (
+          <div className="mt-2 text-[11px] text-red-300 bg-red-500/10 border border-red-500/20 rounded p-2">
+            🚨 Triggered: {cfg.pnl_fence.trigger_reason} (PnL ₹{cfg.pnl_fence.trigger_pnl})
+          </div>
+        ) : null}
+      </div>
+
+      {/* Loss Control card */}
+      <div className={`bg-surface-1 border rounded-xl p-4 ${lcTriggered ? 'border-red-500/40 bg-red-500/5' : 'border-surface-3'}`}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className={`w-4 h-4 ${lc.enabled ? 'text-red-400' : 'text-gray-500'}`} />
+            <span className="text-xs uppercase tracking-wider text-gray-400 font-medium">Day-Loss Control</span>
+          </div>
+          <label className="inline-flex items-center gap-1.5 text-xs">
+            <input type="checkbox" checked={lc.enabled}
+                   onChange={(e) => setLc({ ...lc, enabled: e.target.checked })} />
+            <span className="text-gray-400">Enable</span>
+          </label>
+        </div>
+        <p className="text-[10px] text-gray-500 mb-2">
+          Once day P&L ≤ <b>−limit</b>, all new manual & strategy orders are <b>blocked</b> until you disable this.
+        </p>
+        <input type="number" placeholder="Max day loss ₹" value={lc.max_day_loss}
+               onChange={(e) => setLc({ ...lc, max_day_loss: e.target.value })}
+               className="input text-xs mono py-1.5 w-full mb-2" />
+        <div className="flex items-center justify-between gap-2">
+          <button onClick={saveLc} disabled={savingLc}
+                  className="px-3 py-1.5 rounded-lg bg-brand-600/80 hover:bg-brand-600 text-white text-xs font-medium disabled:opacity-50 flex-1">
+            {savingLc ? 'Saving...' : 'Save'}
+          </button>
+          {lcTriggered ? (
+            <button onClick={() => resetSection('loss_control')} disabled={resetting}
+                    className="px-3 py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 text-xs font-medium border border-red-500/30">
+              Reset Trigger
+            </button>
+          ) : null}
+        </div>
+        {lcTriggered ? (
+          <div className="mt-2 text-[11px] text-red-300 bg-red-500/10 border border-red-500/20 rounded p-2">
+            🚫 Trading blocked — PnL was ₹{cfg.loss_control.trigger_pnl}
+          </div>
+        ) : null}
+      </div>
+
+      {/* Auto-Squareoff card */}
+      <div className="bg-surface-1 border border-surface-3 rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Clock className="w-4 h-4 text-blue-400" />
+          <span className="text-xs uppercase tracking-wider text-gray-400 font-medium">Auto-Squareoff Fence</span>
+        </div>
+        <p className="text-[10px] text-gray-500 mb-2">
+          Hard fence at <span className="mono text-gray-300">{autoTime}</span> IST — exits all MIS option positions
+          (NFO/BFO) regardless of strategy state. Equity holdings (CNC) are never touched.
+        </p>
+        <button onClick={squareNow} disabled={squaring}
+                className="w-full px-3 py-1.5 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 text-xs font-medium border border-blue-500/30 disabled:opacity-50">
+          {squaring ? 'Running...' : 'Run Squareoff Now'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
@@ -533,6 +728,9 @@ export default function Dashboard() {
         />
         <ExitAllTile />
       </div>
+
+      {/* ── Risk Fence panels ───────────────────── */}
+      <RiskFencePanels marketOpen={marketOpen} />
 
       {/* ── Strategy cards ──────────────────────── */}
       <div>

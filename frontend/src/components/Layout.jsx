@@ -5,6 +5,7 @@ import { useTheme } from '../ThemeContext';
 import { useAuth } from '../AuthContext';
 import { ErrorBoundary } from './ErrorBoundary';
 import { LogoIcon, LogoFull } from './QuantFluxLogo';
+import MadhavChatbot from './MadhavChatbot';
 import {
   LayoutDashboard,
   TrendingUp,
@@ -255,6 +256,9 @@ export default function Layout() {
           <Outlet />
         </ErrorBoundary>
       </main>
+
+      {/* Floating Madhav chatbot — visible on every authenticated page */}
+      <MadhavChatbot />
     </div>
   );
 }

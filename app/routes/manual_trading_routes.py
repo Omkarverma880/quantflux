@@ -123,11 +123,31 @@ class SquareoffRequest(BaseModel):
 
 class ModifyOrderRequest(BaseModel):
     order_id: str
-    price: float
+    price: float | None = None
+    quantity: int | None = None
+    trigger_price: float | None = None
+    order_type: str | None = None  # MARKET / LIMIT / SL / SL-M
 
 
 class CancelOrderRequest(BaseModel):
     order_id: str
+
+
+class AttachSlTgtRequest(BaseModel):
+    """Attach or update SL/TGT on an already-placed (or filled) trade."""
+    tradingsymbol: str
+    exchange: str = ""
+    side: str = ""          # BUY/SELL — direction of the open position
+    quantity: int = 0       # if 0, looked up from broker positions
+    entry_price: float = 0  # if 0, taken from positions.average_price
+    product: str = "MIS"
+    sl_type: str = "POINTS"
+    stop_loss: float = 0.0
+    target_type: str = "POINTS"
+    target: float = 0.0
+    trailing_type: str = "POINTS"
+    trailing: float = 0.0
+    move_sl_to_cost: bool = False
 
 
 class OptionSetupResponse(BaseModel):
@@ -389,6 +409,10 @@ async def invalidate_instrument_cache():
 
 @router.post("/order")
 async def place_manual_order(order: ManualOrder, _auth=Depends(require_zerodha_auth)):
+    # Risk fence — block when day-loss / pnl-fence triggered
+    from core.risk_fence import assert_trading_allowed
+    assert_trading_allowed(_auth["user_id"])
+
     broker = get_user_broker(_auth["db"], _auth["user_id"])
     tradingsymbol, resolved_expiry, resolved_exchange = _resolve_option_contract(order, broker)
 
@@ -742,16 +766,29 @@ async def get_all_orders(_auth=Depends(require_zerodha_auth)):
 async def modify_order(payload: ModifyOrderRequest, _auth=Depends(require_zerodha_auth)):
     broker = get_user_broker(_auth["db"], _auth["user_id"])
     try:
-        result = broker.modify_order(payload.order_id, price=payload.price)
+        kwargs: dict = {}
+        if payload.price is not None:
+            kwargs["price"] = payload.price
+        if payload.quantity is not None:
+            kwargs["quantity"] = int(payload.quantity)
+        if payload.trigger_price is not None:
+            kwargs["trigger_price"] = payload.trigger_price
+        if payload.order_type is not None:
+            kwargs["order_type"] = payload.order_type
+        if not kwargs:
+            raise HTTPException(status_code=400, detail="Nothing to modify")
+        result = broker.modify_order(payload.order_id, **kwargs)
         _append_manual_log({
             "timestamp": datetime.now().isoformat(),
             "date": date.today().isoformat(),
             "order_id": payload.order_id,
-            "new_price": payload.price,
+            "changes": kwargs,
             "status": "MODIFIED",
         })
-        logger.info("Order %s modified to %s", payload.order_id, payload.price)
+        logger.info("Order %s modified: %s", payload.order_id, kwargs)
         return {"status": "success", "result": result}
+    except HTTPException:
+        raise
     except Exception as error:
         logger.exception("Modify order error")
         raise HTTPException(status_code=500, detail=str(error)) from error
@@ -1179,3 +1216,74 @@ async def get_monitor_status():
 async def unregister_monitor(payload: SquareoffRequest):
     _monitor.unregister(payload.tradingsymbol)
     return {"status": "ok"}
+
+
+@router.post("/monitor/attach")
+async def attach_sl_tgt(payload: AttachSlTgtRequest, _auth=Depends(require_zerodha_auth)):
+    """Attach SL/TGT to an already-filled position OR replace existing levels.
+
+    If exchange/side/qty/entry are not supplied, they are looked up from the
+    broker's live positions for *tradingsymbol*. Useful when the user forgot
+    to give SL/TGT at order time, or wants to change them after fill.
+    """
+    if not payload.tradingsymbol:
+        raise HTTPException(status_code=400, detail="tradingsymbol required")
+    if payload.stop_loss <= 0 and payload.target <= 0 and payload.trailing <= 0:
+        raise HTTPException(status_code=400,
+                            detail="Provide at least one of stop_loss / target / trailing")
+
+    broker = get_user_broker(_auth["db"], _auth["user_id"])
+    exchange, side, quantity, entry_price, product = (
+        payload.exchange, payload.side, payload.quantity,
+        payload.entry_price, payload.product,
+    )
+
+    # Look up missing fields from live positions
+    if not (exchange and side and quantity > 0 and entry_price > 0):
+        try:
+            positions = broker.get_positions() or []
+        except Exception as exc:
+            raise HTTPException(status_code=502,
+                                detail=f"Could not fetch positions: {exc}") from exc
+        match = next((p for p in positions
+                      if p.tradingsymbol == payload.tradingsymbol
+                      and int(getattr(p, "quantity", 0) or 0) != 0), None)
+        if not match:
+            raise HTTPException(status_code=404,
+                                detail=f"No open position for {payload.tradingsymbol}")
+        qty_signed = int(match.quantity)
+        exchange  = exchange  or match.exchange
+        side      = side      or ("BUY" if qty_signed > 0 else "SELL")
+        quantity  = quantity  if quantity > 0 else abs(qty_signed)
+        entry_price = entry_price if entry_price > 0 else float(match.average_price or 0)
+        product   = product   or match.product
+
+    if entry_price <= 0:
+        raise HTTPException(status_code=400, detail="Could not determine entry price")
+
+    _monitor.register(
+        tradingsymbol=payload.tradingsymbol,
+        exchange=exchange,
+        side=side,
+        quantity=quantity,
+        entry_price=entry_price,
+        product=product,
+        sl_type=payload.sl_type,
+        stop_loss=payload.stop_loss,
+        target_type=payload.target_type,
+        target=payload.target,
+        trailing_type=payload.trailing_type,
+        trailing=payload.trailing,
+        move_sl_to_cost=payload.move_sl_to_cost,
+        user_id=_auth["user_id"],
+    )
+    _append_manual_log({
+        "timestamp": datetime.now().isoformat(),
+        "date": date.today().isoformat(),
+        "tradingsymbol": payload.tradingsymbol,
+        "action": "ATTACH_SL_TGT",
+        "sl": payload.stop_loss, "tgt": payload.target,
+        "trailing": payload.trailing,
+        "entry_price": entry_price,
+    })
+    return {"status": "ok", "monitor": _monitor._trades.get(payload.tradingsymbol)}

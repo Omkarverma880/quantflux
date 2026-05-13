@@ -33,32 +33,68 @@ async def dashboard_summary(user_id: int = Depends(login_required), db: Session 
     is_market_hours = MARKET_OPEN <= current_time <= MARKET_CLOSE
     market_status = "OPEN" if (is_weekday and is_market_hours) else "CLOSED"
 
-    # Try to get live data for THIS user
+    # Try to get live data for THIS user. Track per-section warnings so the
+    # frontend can show a banner instead of silently displaying stale zeros.
     account = {"available": 0, "used": 0}
     positions_count = 0
     total_pnl = 0
     orders_count = 0
+    warnings: list[str] = []
+    broker = None
 
     try:
         broker = get_user_broker(db, user_id)
-        margins = broker.get_margins()
-        equity = margins.get("equity", {})
-        available = equity.get("available", {})
-        utilised = equity.get("utilised", {})
-        account = {
-            "available": available.get("live_balance", 0),
-            "used": utilised.get("debits", 0),
-        }
+    except Exception as exc:
+        logger.warning("dashboard: get_user_broker failed: %s", exc)
+        warnings.append(f"broker: {exc}")
 
-        positions = broker.get_positions()
-        active_positions = [p for p in positions if p.quantity != 0]
+    if broker is not None:
+        try:
+            margins = broker.get_margins()
+            equity = margins.get("equity", {})
+            available = equity.get("available", {})
+            utilised = equity.get("utilised", {})
+            account = {
+                "available": available.get("live_balance", 0),
+                "used": utilised.get("debits", 0),
+            }
+        except Exception as exc:
+            logger.warning("dashboard: margins fetch failed: %s", exc)
+            warnings.append(f"margins: {exc}")
+
+        # Retry positions once with cache evict on transient failure.
+        positions = None
+        for attempt in (0, 1):
+            try:
+                positions = broker.get_positions()
+                break
+            except Exception as exc:
+                logger.warning("dashboard: positions fetch attempt %d failed: %s",
+                               attempt, exc)
+                if attempt == 0:
+                    try:
+                        from core.broker import _user_brokers
+                        _user_brokers.pop(user_id, None)
+                        broker = get_user_broker(db, user_id)
+                    except Exception:
+                        positions = []
+                        warnings.append(f"positions: {exc}")
+                        break
+                else:
+                    positions = []
+                    warnings.append(f"positions: {exc}")
+        positions = positions or []
+        active_positions = [p for p in positions if (p.quantity or 0) != 0]
         positions_count = len(active_positions)
-        total_pnl = sum(p.pnl for p in positions)
+        # Sum PnL only for live (non-zero) legs to avoid stale closed-leg noise.
+        total_pnl = sum((p.pnl or 0) for p in active_positions)
 
-        orders = broker.get_orders()
-        orders_count = len(orders) if orders else 0
-    except Exception:
-        pass
+        try:
+            orders = broker.get_orders()
+            orders_count = len(orders) if orders else 0
+        except Exception as exc:
+            logger.warning("dashboard: orders fetch failed: %s", exc)
+            warnings.append(f"orders: {exc}")
 
     return {
         "timestamp": now.isoformat(),
@@ -67,6 +103,7 @@ async def dashboard_summary(user_id: int = Depends(login_required), db: Session 
         "positions_count": positions_count,
         "total_pnl": round(total_pnl, 2),
         "orders_today": orders_count,
+        "warnings": warnings,
         "paper_trade": settings.PAPER_TRADE,
         "trading_enabled": settings.TRADING_ENABLED,
         "max_position_size": settings.MAX_POSITION_SIZE,

@@ -240,21 +240,44 @@ async def modify_order(body: ModifyOrderRequest, user_id: int = Depends(login_re
         return {"status": "error", "error": str(e)}
 
 
+# Kill-switch / fence scope: ONLY MIS intraday option orders & positions.
+# Same-day equity buys (CNC, t1_quantity>0) and any NRML/CNC positions are
+# deliberately left untouched.
+_OPTION_EXCHANGES = {"NFO", "BFO", "CDS", "MCX"}
+
+
+def _is_mis_option_order(o: dict) -> bool:
+    return (
+        str(o.get("product", "")).upper() == "MIS"
+        and str(o.get("exchange", "")).upper() in _OPTION_EXCHANGES
+    )
+
+
+def _is_mis_option_position(p) -> bool:
+    return (
+        str(getattr(p, "product", "")).upper() == "MIS"
+        and str(getattr(p, "exchange", "")).upper() in _OPTION_EXCHANGES
+    )
+
+
 @router.post("/exit_all")
 async def exit_all_positions(
     user_id: int = Depends(login_required), db: Session = Depends(get_db),
 ):
-    """Instant kill-switch: cancel every open/trigger-pending order and
-    square-off every non-zero position at MARKET. Returns a per-action
-    summary. Used by the dashboard's Instant Exit button."""
+    """Instant kill-switch — scope: MIS intraday option orders/positions ONLY.
+
+    Cancels every open/trigger-pending **MIS option** order and squares off
+    every non-zero **MIS option** position at MARKET. Same-day equity buys
+    (CNC holdings with t1_quantity>0), NRML positions and CNC positions are
+    NOT touched.
+    """
     broker = get_user_broker(db, user_id)
     cancelled: list[str] = []
     cancel_errors: list[dict] = []
     squared_off: list[dict] = []
     squareoff_errors: list[dict] = []
 
-    # 1) Cancel every open / trigger-pending order first so they don't fight
-    #    the square-off (e.g. resting LIMIT exits, SL-M legs).
+    # 1) Cancel every open / trigger-pending MIS option order.
     try:
         orders = broker.get_orders()
     except Exception as exc:
@@ -263,6 +286,8 @@ async def exit_all_positions(
     for o in orders:
         status = str(o.get("status", "")).upper()
         if status not in ("OPEN", "TRIGGER PENDING", "MODIFY VALIDATION PENDING", "MODIFY PENDING"):
+            continue
+        if not _is_mis_option_order(o):
             continue
         oid = str(o.get("order_id") or "")
         if not oid:
@@ -273,7 +298,7 @@ async def exit_all_positions(
         except Exception as exc:
             cancel_errors.append({"order_id": oid, "error": str(exc)})
 
-    # 2) Square-off every non-zero position at MARKET.
+    # 2) Square-off every non-zero MIS option position at MARKET.
     try:
         positions = broker.get_positions()
     except Exception as exc:
@@ -282,6 +307,8 @@ async def exit_all_positions(
     for p in positions:
         qty = int(getattr(p, "quantity", 0) or 0)
         if qty == 0:
+            continue
+        if not _is_mis_option_position(p):
             continue
         try:
             req = OrderRequest(
@@ -306,8 +333,11 @@ async def exit_all_positions(
                 "error": str(exc),
             })
 
+    # NOTE: Same-day equity buys (CNC holdings with t1_quantity>0) are
+    # DELIBERATELY NOT touched here. Kill-switch scope = MIS options only.
+
     logger.warning(
-        "EXIT ALL by user_id=%s: cancelled=%d squared_off=%d cancel_err=%d sq_err=%d",
+        "EXIT ALL (MIS-options only) by user_id=%s: cancelled=%d squared_off=%d cancel_err=%d sq_err=%d",
         user_id, len(cancelled), len(squared_off),
         len(cancel_errors), len(squareoff_errors),
     )

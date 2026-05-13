@@ -91,6 +91,17 @@ export const api = {
   modifyOrder: (data) => request('/trading/order/modify', { method: 'PUT', body: JSON.stringify(data) }),
   exitAllPositions: () => request('/trading/exit_all', { method: 'POST' }),
 
+  // Risk Fence (P&L lock + Day-loss control + manual auto-squareoff)
+  getRiskConfig:    () => request('/risk/config'),
+  updatePnlFence:   (data) => request('/risk/pnl_fence',    { method: 'PUT', body: JSON.stringify(data) }),
+  updateLossControl:(data) => request('/risk/loss_control', { method: 'PUT', body: JSON.stringify(data) }),
+  resetRiskFence:   (section) => request('/risk/reset', { method: 'POST', body: JSON.stringify({ section: section || null }) }),
+  squareoffNow:     () => request('/risk/squareoff_now', { method: 'POST' }),
+
+  // Madhav chatbot
+  madhavAsk: (question) => request('/madhav/ask', { method: 'POST', body: JSON.stringify({ question }) }),
+  madhavReload: () => request('/madhav/reload', { method: 'POST' }),
+
   // Strategies
   getStrategies: () => request('/strategies/'),
   getStrategy: (name) => request(`/strategies/${name}`),

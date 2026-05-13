@@ -546,5 +546,104 @@ Delete `data/manual_monitor_state.json` while the server is stopped.
 
 ---
 
-_Last updated: 2026-05-13 — bugs in Manual Trading positions endpoint
-and SL/TGT registration fixed; doc seeded._
+## 16. Risk Fence Subsystem (`core/risk_fence.py`)
+
+Per-user JSON config at `data/risk_fence/<user_id>.json`. Two independent gates:
+
+### Advanced P&L Fence
+- `lock_profit`: when aggregate live PnL ≥ this value → global squareoff + `triggered=true`.
+- `max_loss`:    when aggregate live PnL ≤ −this value → global squareoff + `triggered=true`.
+
+### Day-Loss Control
+- `max_day_loss`: once aggregate live PnL ≤ −value → `triggered=true`. While triggered,
+  `assert_trading_allowed(user_id)` raises **HTTP 423 (Locked)**, blocking new manual orders.
+
+### Auto-reset
+Triggered flags are auto-cleared on a new trading day (different `trigger_date`).
+
+### Background watcher
+Started in `lifespan` via `core.risk_fence.watcher_loop(5)`. Every 5s during 9:15–15:30 IST it
+queries each `ZerodhaSession` user, computes `_aggregate_pnl_for_user`, and fires triggers.
+
+### API (`app/routes/risk_routes.py` mounted at `/api/risk`)
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET  | `/config`         | full config + live PnL + auto-squareoff time |
+| PUT  | `/pnl_fence`      | `{enabled, lock_profit, max_loss}` |
+| PUT  | `/loss_control`   | `{enabled, max_day_loss}` |
+| POST | `/reset`          | `{section: "pnl_fence"\|"loss_control"\|null}` |
+| POST | `/squareoff_now`  | manual trigger of the 15:15 fence for current user |
+
+### Order-placement guard
+`/api/manual/order` calls `risk_fence.assert_trading_allowed(user_id)` before placing.
+Strategy `/start` endpoints can be wired similarly by importing the helper.
+
+---
+
+## 17. Auto-Squareoff Hard Fence (`core/auto_squareoff.py`)
+
+Independent of any individual strategy. Fires once per trading day at the cutoff
+(default 15:15 IST, env `AUTO_SQUARE_OFF_TIME=HH:MM`).
+
+- Iterates all users with a `ZerodhaSession.login_date == today`.
+- Force-exits **only MIS option positions** (`product == 'MIS'` AND `exchange ∈ {NFO,BFO,CDS,MCX}`).
+- **Equity holdings (CNC) are never touched.**
+- Also clears the manual SL/TGT monitor for the user.
+- Logged with `[auto-squareoff]` prefix.
+- Started in `lifespan` via `fence_loop(30)`.
+- Manual trigger exposed at `POST /api/risk/squareoff_now`.
+
+---
+
+## 18. Kill Switch — same-day equity (T+0) inclusion
+
+`POST /api/trading/exit_all` now also sells **same-day equity buys** that show up in
+`kite.holdings()` with `t1_quantity > 0` (CNC sell at MARKET, tag `EXITALL_T1`). Long-settled
+holdings (`t1_quantity == 0`) are intentionally untouched.
+
+---
+
+## 19. Manual Trading: Open Orders + SL/TGT after fill
+
+- `POST /api/manual/order/modify` — `ModifyOrderRequest` now accepts optional
+  `price`, `quantity`, `trigger_price`, `order_type` (any combination).
+- `POST /api/manual/monitor/attach` — `AttachSlTgtRequest{tradingsymbol, exchange?, side?,
+  quantity?, entry_price?, product?, sl_type, stop_loss, target_type, target,
+  trailing_type, trailing, move_sl_to_cost}`. If the position-level fields are blank
+  they're auto-resolved from `broker.get_positions()`. Used to add SL/TGT to a
+  already-filled order, OR to edit existing levels.
+- Frontend `ManualOpenOrders` table now shows Type/Price/Trigger columns + **Modify**
+  and **SL/TGT** buttons. `ManualActivePositions` adds a **Set/Edit SL/TGT** button.
+
+---
+
+## 20. Madhav chatbot (`app/routes/madhav_routes.py`)
+
+In-app help bot — **no external LLM**. Indexes
+`knowledge_base.md`, `README.md`, `application_documentation.html`,
+`strategy_documentation.html`, `steps.md` into title+body sections, scores
+sections by token-overlap with the user's question.
+
+| Endpoint | Body | Returns |
+| --- | --- | --- |
+| `POST /api/madhav/ask` | `{question, top_k?}` | `{answer, sources[]}` |
+| `POST /api/madhav/reload` | — | re-index (call after editing KB) |
+
+Frontend widget: `frontend/src/components/MadhavChatbot.jsx` — floating bottom-right
+"ask" pill, mounted globally in `Layout.jsx` so it appears on every authenticated page.
+
+---
+
+## 21. Dashboard summary — defensive PnL + warnings
+
+`/api/dashboard/summary` no longer swallows broker errors with `except: pass`. It now:
+- retries `get_positions()` once after evicting the per-user broker cache;
+- aggregates `total_pnl` over **non-zero** positions only (avoids stale closed-leg noise);
+- returns a `warnings: [str]` array so the frontend can show a soft banner instead
+  of stale zeros being silently shown.
+
+---
+
+_Last updated: 2026-05-13 — added P&L Fence, Day-Loss Control, hard 15:15 auto-squareoff,
+kill-switch T+0 equity coverage, Open Orders modify + SL/TGT-after-fill, Madhav chatbot,
+and dashboard summary hardening._
