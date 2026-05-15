@@ -304,6 +304,7 @@ export const api = {
   getPortfolioQuote: (symbol, exchange = 'NSE') =>
     request(`/portfolio/quote?symbol=${encodeURIComponent(symbol)}&exchange=${encodeURIComponent(exchange)}`),
   getAnalyticsWorld: () => request('/portfolio/analytics-world'),
+  getHoldingsInsights: () => request('/portfolio/holdings/insights'),
   getSectorOverrides: () => request('/portfolio/sectors'),
   upsertSectorOverride: (tradingsymbol, sector) =>
     request('/portfolio/sectors', { method: 'PUT', body: JSON.stringify({ tradingsymbol, sector }) }),

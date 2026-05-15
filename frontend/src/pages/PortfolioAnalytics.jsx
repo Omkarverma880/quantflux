@@ -16,6 +16,7 @@ import {
   ArrowDownRight, PieChart as PieIcon, Plus, Trash2, Pencil,
   Search, X, Target, Bookmark, FlaskConical, AlertCircle, ChevronDown,
   ChevronUp, Filter, IndianRupee, Layers, Zap, Sparkles, ArrowRight,
+  Download, ShieldAlert, Gauge, Activity,
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend,
@@ -37,6 +38,150 @@ const fmtINR = (v, frac = 2) =>
   });
 
 const cls = (...xs) => xs.filter(Boolean).join(' ');
+
+const SIGNAL_META = {
+  breakout:       { label: 'Breakout',     text: 'text-emerald-400', bg: 'bg-emerald-500/15', ring: 'border-emerald-500/30' },
+  strong_uptrend: { label: 'Strong',       text: 'text-green-400',   bg: 'bg-green-500/15',   ring: 'border-green-500/30' },
+  neutral:        { label: 'Neutral',      text: 'text-gray-400',    bg: 'bg-surface-3',      ring: 'border-surface-3' },
+  weak:           { label: 'Weak',         text: 'text-amber-400',   bg: 'bg-amber-500/15',   ring: 'border-amber-500/30' },
+  breakdown:      { label: 'Breakdown',    text: 'text-rose-400',    bg: 'bg-rose-500/15',    ring: 'border-rose-500/30' },
+};
+
+const ACTION_META = {
+  'Buy More':     { text: 'text-emerald-400', bg: 'bg-emerald-500/15', ring: 'border-emerald-500/30' },
+  'Hold':         { text: 'text-blue-400',    bg: 'bg-blue-500/15',    ring: 'border-blue-500/30' },
+  'Trim':         { text: 'text-amber-400',   bg: 'bg-amber-500/15',   ring: 'border-amber-500/30' },
+  'Trim / Exit': { text: 'text-rose-400',    bg: 'bg-rose-500/15',    ring: 'border-rose-500/30' },
+};
+
+function SignalBadge({ signal, notes }) {
+  const m = SIGNAL_META[signal] || SIGNAL_META.neutral;
+  const title = Array.isArray(notes) && notes.length > 0 ? notes.join(' · ') : m.label;
+  return (
+    <span
+      title={title}
+      className={cls(
+        'inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border',
+        m.bg, m.text, m.ring,
+      )}
+    >
+      {m.label}
+    </span>
+  );
+}
+
+function ActionBadge({ action }) {
+  if (!action) return <span className="text-gray-500 text-xs">—</span>;
+  const m = ACTION_META[action] || ACTION_META.Hold;
+  return (
+    <span
+      className={cls(
+        'inline-flex items-center text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border',
+        m.bg, m.text, m.ring,
+      )}
+    >
+      {action}
+    </span>
+  );
+}
+
+/* ─── Insights summary (risk gauge + warnings) ──────────────── */
+
+function RiskGauge({ pct }) {
+  const value = Math.max(0, Math.min(100, Number(pct) || 0));
+  // 0..6 ok, 6..12 caution, 12+ high
+  const tone = value < 6 ? 'emerald' : value < 12 ? 'amber' : 'rose';
+  const map = {
+    emerald: { bar: 'bg-emerald-500', text: 'text-emerald-400', label: 'Low' },
+    amber:   { bar: 'bg-amber-500',   text: 'text-amber-400',   label: 'Moderate' },
+    rose:    { bar: 'bg-rose-500',    text: 'text-rose-400',    label: 'High' },
+  };
+  const m = map[tone];
+  // visual scale: cap fill at 25% mark (rare to exceed)
+  const fillPct = Math.min(100, (value / 25) * 100);
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1">
+        <span className={cls('text-2xl font-bold mono', m.text)}>{value.toFixed(2)}%</span>
+        <span className={cls('text-[11px] font-semibold uppercase tracking-wider', m.text)}>{m.label}</span>
+      </div>
+      <div className="relative h-1.5 rounded-full bg-surface-3 overflow-hidden">
+        <div className={cls('absolute inset-y-0 left-0', m.bar)} style={{ width: `${fillPct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function InsightsSummary({ insights, loading }) {
+  if (loading && !insights) {
+    return (
+      <div className="bg-surface-2 border border-surface-3 rounded-xl p-4">
+        <div className="animate-pulse h-16 bg-surface-3/60 rounded" />
+      </div>
+    );
+  }
+  if (!insights) return null;
+  const { portfolio = {}, warnings = [] } = insights;
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+      {/* Risk gauge */}
+      <div className="bg-surface-2 border border-surface-3 rounded-xl p-4">
+        <div className="flex items-center gap-2 text-[11px] text-gray-500 uppercase tracking-wider font-medium mb-2">
+          <Gauge className="w-3.5 h-3.5" /> Portfolio Risk
+        </div>
+        <RiskGauge pct={portfolio.total_risk_pct} />
+        <div className="text-[11px] text-gray-500 mt-2">
+          Open downside if all stops hit: <span className="text-white font-semibold">₹{fmtINR(portfolio.total_risk, 0)}</span>
+        </div>
+      </div>
+
+      {/* P&L + count */}
+      <div className="bg-surface-2 border border-surface-3 rounded-xl p-4">
+        <div className="flex items-center gap-2 text-[11px] text-gray-500 uppercase tracking-wider font-medium mb-2">
+          <Activity className="w-3.5 h-3.5" /> Net Exposure
+        </div>
+        <div className="text-2xl font-bold mono text-white">₹{fmtINR(portfolio.total_current, 0)}</div>
+        <div className={cls(
+          'text-xs mt-1 font-semibold mono',
+          (portfolio.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400',
+        )}>
+          {(portfolio.total_pnl || 0) >= 0 ? '+' : ''}₹{fmtINR(portfolio.total_pnl, 0)}
+          {' · '}
+          {(portfolio.total_pnl_pct || 0) >= 0 ? '+' : ''}{Number(portfolio.total_pnl_pct || 0).toFixed(2)}%
+        </div>
+        <div className="text-[11px] text-gray-500 mt-2">{portfolio.holdings_count || 0} positions</div>
+      </div>
+
+      {/* Warnings */}
+      <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 lg:col-span-1">
+        <div className="flex items-center gap-2 text-[11px] text-gray-500 uppercase tracking-wider font-medium mb-2">
+          <ShieldAlert className="w-3.5 h-3.5" /> Concentration & Alerts
+          <span className="text-[10px] text-gray-500 normal-case">({warnings.length})</span>
+        </div>
+        {warnings.length === 0 ? (
+          <p className="text-xs text-gray-500 italic">No active warnings.</p>
+        ) : (
+          <ul className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+            {warnings.slice(0, 6).map((w, i) => (
+              <li
+                key={i}
+                className={cls(
+                  'text-[11px] px-2 py-1 rounded border flex items-start gap-1.5',
+                  w.level === 'alert'
+                    ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                    : 'bg-amber-500/10 border-amber-500/30 text-amber-300',
+                )}
+              >
+                <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                <span>{w.message}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /* ─── Card / sub-components ─────────────────────────────────── */
 
@@ -74,7 +219,7 @@ function ProximityDot({ label, color = 'amber' }) {
 
 /* ─── Holdings panel ────────────────────────────────────────── */
 
-function HoldingsTable({ rows, onSetExit, onSetSector, sortKey, sortDir, onSort, filter, onFilter }) {
+function HoldingsTable({ rows, onSetExit, onSetSector, sortKey, sortDir, onSort, filter, onFilter, onExportCsv }) {
   const sorted = useMemo(() => {
     const arr = (rows || []).filter((r) =>
       !filter || r.tradingsymbol.toLowerCase().includes(filter.toLowerCase())
@@ -111,13 +256,24 @@ function HoldingsTable({ rows, onSetExit, onSetSector, sortKey, sortDir, onSort,
           <span className="font-semibold">Holdings</span>
           <span className="text-[11px] text-gray-500">({rows?.length || 0})</span>
         </div>
-        <div className="relative">
-          <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" />
-          <input
-            type="text" placeholder="Filter symbol…"
-            value={filter} onChange={(e) => onFilter(e.target.value)}
-            className="pl-7 pr-2 py-1 text-xs bg-surface-3 border border-surface-4 rounded-md text-white w-44"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input
+              type="text" placeholder="Filter symbol…"
+              value={filter} onChange={(e) => onFilter(e.target.value)}
+              className="pl-7 pr-2 py-1 text-xs bg-surface-3 border border-surface-4 rounded-md text-white w-44"
+            />
+          </div>
+          {onExportCsv && (
+            <button
+              onClick={onExportCsv}
+              title="Export holdings to CSV"
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md bg-surface-3 border border-surface-4 hover:bg-surface-4 text-gray-300"
+            >
+              <Download className="w-3 h-3" /> CSV
+            </button>
+          )}
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -134,12 +290,15 @@ function HoldingsTable({ rows, onSetExit, onSetSector, sortKey, sortDir, onSort,
               <Th k="pnl" align="right">P&amp;L</Th>
               <Th k="pnl_pct" align="right">%</Th>
               <Th k="allocation_pct" align="right">Alloc</Th>
+              <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-gray-500 font-medium text-center">Signal</th>
+              <Th k="position_risk" align="right">Risk ₹</Th>
+              <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-gray-500 font-medium text-center">Action</th>
               <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-gray-500 font-medium text-center">Exit</th>
             </tr>
           </thead>
           <tbody>
             {sorted.length === 0 ? (
-              <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-500 text-sm">
+              <tr><td colSpan={14} className="px-4 py-8 text-center text-gray-500 text-sm">
                 No holdings to show. Connect your Zerodha account or buy a stock to see it here.
               </td></tr>
             ) : sorted.map((h) => (
@@ -176,6 +335,15 @@ function HoldingsTable({ rows, onSetExit, onSetSector, sortKey, sortDir, onSort,
                   {h.pnl_pct >= 0 ? '+' : ''}{Number(h.pnl_pct).toFixed(2)}%
                 </td>
                 <td className="px-3 py-2 text-right mono text-gray-400">{Number(h.allocation_pct).toFixed(1)}%</td>
+                <td className="px-3 py-2 text-center">
+                  {h.signal ? <SignalBadge signal={h.signal} notes={h.signal_notes} /> : <span className="text-gray-600">—</span>}
+                </td>
+                <td className="px-3 py-2 text-right mono text-amber-300">
+                  {h.position_risk != null ? `₹${fmtINR(h.position_risk, 0)}` : <span className="text-gray-600">—</span>}
+                </td>
+                <td className="px-3 py-2 text-center">
+                  <ActionBadge action={h.action} />
+                </td>
                 <td className="px-3 py-2 text-center">
                   <button onClick={() => onSetExit(h)}
                     className="text-[11px] px-2 py-0.5 rounded bg-surface-3 border border-surface-4 hover:bg-surface-4 text-gray-300">
@@ -723,6 +891,7 @@ function SectorModal({ holding, suggestions = [], onClose, onSave, onClear }) {
 
 export default function PortfolioAnalytics() {
   const [data, setData] = useState(null);     // holdings response
+  const [insights, setInsights] = useState(null); // /portfolio/holdings/insights
   const [watchlists, setWatchlists] = useState([]);
   const [research, setResearch] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -741,16 +910,18 @@ export default function PortfolioAnalytics() {
     if (!silent) setLoading(true);
     setRefreshing(true);
     try {
-      const [h, w, r, s] = await Promise.all([
+      const [h, w, r, s, i] = await Promise.all([
         api.getPortfolioHoldings().catch((e) => { setErr(String(e.message || e)); return null; }),
         api.getPortfolioWatchlists().catch(() => []),
         api.getResearchEntries().catch(() => []),
         api.getSectorOverrides().catch(() => null),
+        api.getHoldingsInsights().catch(() => null),
       ]);
       if (h) setData(h);
       setWatchlists(Array.isArray(w) ? w : []);
       setResearch(Array.isArray(r) ? r : []);
       if (s && Array.isArray(s.suggestions)) setSectorSuggestions(s.suggestions);
+      if (i) setInsights(i);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -839,9 +1010,67 @@ export default function PortfolioAnalytics() {
   /* Derived */
   const summary = data?.summary || {};
   const sectors = data?.sector_allocation || [];
-  const holdings = data?.holdings || [];
+  const baseHoldings = data?.holdings || [];
   const topGainer = data?.top_gainer;
   const topLoser = data?.top_loser;
+
+  // Merge per-holding insights (signal, position_risk, action) onto the
+  // base holdings rows so HoldingsTable can render the new columns.
+  const holdings = useMemo(() => {
+    const map = new Map();
+    (insights?.holdings || []).forEach((row) => {
+      const key = `${(row.exchange || 'NSE').toUpperCase()}:${row.tradingsymbol}`;
+      map.set(key, row);
+    });
+    return baseHoldings.map((h) => {
+      const key = `${(h.exchange || 'NSE').toUpperCase()}:${h.tradingsymbol}`;
+      const ins = map.get(key);
+      if (!ins) return h;
+      return {
+        ...h,
+        signal: ins.signal,
+        signal_notes: ins.signal_notes,
+        action: ins.action,
+        position_risk: ins.position_risk,
+        risk_per_share: ins.risk_per_share,
+      };
+    });
+  }, [baseHoldings, insights]);
+
+  const exportCsv = useCallback(() => {
+    if (!holdings.length) return;
+    const cols = [
+      'Symbol', 'Exchange', 'Sector', 'Qty', 'Avg', 'LTP',
+      'Invested', 'Current', 'P&L', 'P&L %', 'Alloc %',
+      'Signal', 'Risk', 'Action', 'Exit Level',
+    ];
+    const esc = (v) => {
+      if (v == null) return '';
+      const s = String(v).replace(/"/g, '""');
+      return /[",\n]/.test(s) ? `"${s}"` : s;
+    };
+    const lines = [cols.join(',')];
+    holdings.forEach((h) => {
+      lines.push([
+        h.tradingsymbol, h.exchange || 'NSE', h.sector,
+        h.quantity, h.average_price, h.last_price,
+        h.invested, h.current_value, h.pnl,
+        Number(h.pnl_pct ?? 0).toFixed(2),
+        Number(h.allocation_pct ?? 0).toFixed(2),
+        h.signal || '', h.position_risk ?? '', h.action || '',
+        h.exit_level ?? '',
+      ].map(esc).join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `portfolio-holdings-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [holdings]);
 
   const allocationBars = useMemo(() => {
     return holdings.slice().sort((a, b) => b.allocation_pct - a.allocation_pct).slice(0, 12)
@@ -878,6 +1107,9 @@ export default function PortfolioAnalytics() {
           <AlertCircle className="w-4 h-4" /> {err}
         </div>
       )}
+
+      {/* Insights summary (risk + warnings) */}
+      <InsightsSummary insights={insights} loading={loading} />
 
       {/* Top stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -971,6 +1203,7 @@ export default function PortfolioAnalytics() {
         rows={holdings} onSetExit={setExitModal} onSetSector={setSectorModal}
         sortKey={sortKey} sortDir={sortDir} onSort={handleSort}
         filter={filter} onFilter={setFilter}
+        onExportCsv={exportCsv}
       />
 
       {/* Watchlists & Research */}

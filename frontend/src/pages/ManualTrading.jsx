@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import {
   Activity,
@@ -420,6 +421,48 @@ function ManualOrderForm({ onOrderAction }) {
   const optionChainCache = useRef({});
   // Track whether user manually edited quantity (suppress auto-calc)
   const userEditedQty = useRef(false);
+
+  // Prefill from URL query params (used when navigating from
+  // Analytics World / Portfolio "Trade" buttons).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const prefillApplied = useRef(false);
+  useEffect(() => {
+    if (prefillApplied.current) return;
+    const sym = searchParams.get('symbol');
+    if (!sym) return;
+    prefillApplied.current = true;
+    const exch = (searchParams.get('exchange') || 'NSE').toUpperCase();
+    const entry = searchParams.get('entry');
+    const stop = searchParams.get('stop');
+    const target = searchParams.get('target');
+    const side = (searchParams.get('side') || 'BUY').toUpperCase();
+    setForm((cur) => {
+      const next = {
+        ...cur,
+        tradingsymbol: sym.toUpperCase(),
+        exchange: exch,
+        side: side === 'SELL' ? 'SELL' : 'BUY',
+        product: exch === 'NSE' || exch === 'BSE' ? 'CNC' : cur.product,
+        order_type: 'LIMIT',
+      };
+      if (entry && !Number.isNaN(Number(entry))) next.price = String(entry);
+      if (stop && entry && !Number.isNaN(Number(stop)) && !Number.isNaN(Number(entry))) {
+        const pct = Math.abs(((Number(entry) - Number(stop)) / Number(entry)) * 100);
+        next.sl_type = 'PERCENT';
+        next.stop_loss = pct.toFixed(2);
+      }
+      if (target && entry && !Number.isNaN(Number(target)) && !Number.isNaN(Number(entry))) {
+        const pct = Math.abs(((Number(target) - Number(entry)) / Number(entry)) * 100);
+        next.target_type = 'PERCENT';
+        next.target = pct.toFixed(2);
+      }
+      return next;
+    });
+    // Clear params so refresh doesn't re-prefill
+    const cleaned = new URLSearchParams(searchParams);
+    ['symbol', 'exchange', 'entry', 'stop', 'target', 'side'].forEach((k) => cleaned.delete(k));
+    setSearchParams(cleaned, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const handleChange = (event) => {
     const { name, value, type, checked } = event.target;

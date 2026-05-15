@@ -37,7 +37,6 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Routes>
-        <Route path="/portfolio/analytics-world" element={<AnalyticsWorld />} />
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="strategy1" element={<CumulativeVolume />} />
@@ -51,6 +50,7 @@ export default function App() {
           <Route path="strategy8-trade" element={<Strategy8 />} />
           <Route path="strategy9-trade" element={<Strategy9 />} />
           <Route path="portfolio" element={<PortfolioAnalytics />} />
+          <Route path="portfolio/analytics-world" element={<AnalyticsWorld />} />
           <Route path="strategies" element={<Strategies />} />
           <Route path="orders" element={<Orders />} />
           <Route path="settings" element={<Settings />} />
