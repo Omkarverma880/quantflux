@@ -134,6 +134,20 @@ class Broker:
 
     def place_order(self, req: OrderRequest) -> OrderResponse:
         """Place an order (paper or live based on settings). Risk-checked."""
+        # Day-loss control / P&L fence — block EVERY order (manual or
+        # strategy) once the fence is triggered for this user. Auto-resets
+        # next trading day via risk_fence.load_config().
+        if self._user_id is not None:
+            try:
+                from core.risk_fence import is_trading_blocked
+                blocked, reason = is_trading_blocked(self._user_id)
+                if blocked:
+                    raise RuntimeError(f"Risk fence: {reason}")
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                logger.debug("risk_fence check skipped: %s", exc)
+
         if self._user_id is not None:
             from core.risk_manager import get_user_risk_manager
             risk = get_user_risk_manager(self._user_id)

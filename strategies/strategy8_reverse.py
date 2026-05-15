@@ -1077,6 +1077,10 @@ class Strategy8Reverse:
     # ── Status payload ───────────────────────────────
 
     def get_status(self) -> dict:
+        try:
+            self._check_day_reset()
+        except Exception:
+            pass
         unrealized = 0.0
         if self.state == State.POSITION_OPEN and self.current_ltp > 0 and self.fill_price > 0:
             unrealized = round((self.current_ltp - self.fill_price) * self.quantity, 2)

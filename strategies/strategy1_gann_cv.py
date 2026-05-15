@@ -1107,6 +1107,12 @@ class Strategy1GannCV:
     # ── Status ─────────────────────────────────────
 
     def get_status(self) -> dict:
+        # Roll over stale state across day boundaries even when the
+        # strategy is idle/stopped — dashboard polls /status, not /check.
+        try:
+            self._check_day_reset()
+        except Exception:
+            pass
         unrealized_pnl = 0.0
         if self.state == State.POSITION_OPEN and self.current_ltp > 0 and self.fill_price > 0:
             unrealized_pnl = round((self.current_ltp - self.fill_price) * self.lot_size, 2)
