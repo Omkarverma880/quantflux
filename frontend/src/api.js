@@ -303,6 +303,7 @@ export const api = {
     request(`/portfolio/holdings/exit-levels/${encodeURIComponent(symbol)}?exchange=${encodeURIComponent(exchange)}`, { method: 'DELETE' }),
   getPortfolioQuote: (symbol, exchange = 'NSE') =>
     request(`/portfolio/quote?symbol=${encodeURIComponent(symbol)}&exchange=${encodeURIComponent(exchange)}`),
+  getAnalyticsWorld: () => request('/portfolio/analytics-world'),
   getSectorOverrides: () => request('/portfolio/sectors'),
   upsertSectorOverride: (tradingsymbol, sector) =>
     request('/portfolio/sectors', { method: 'PUT', body: JSON.stringify({ tradingsymbol, sector }) }),

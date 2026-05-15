@@ -243,6 +243,16 @@ async def get_holdings(
     }
     sector_overrides = _load_sector_overrides(db, user_id)
 
+    # Kite's holdings endpoint returns `last_price` that can lag by minutes
+    # (and stays stuck at previous-day close until the first tick). Refresh
+    # with a single batched LTP call so the Portfolio Analytics page shows
+    # the same live price as the broker terminal.
+    live_ltp = _bulk_ltp(
+        broker,
+        [_instrument_key(getattr(h, "exchange", "NSE") or "NSE", h.tradingsymbol)
+         for h in holdings_raw],
+    )
+
     holdings: list[dict] = []
     total_invested = 0.0
     total_current = 0.0
@@ -252,7 +262,7 @@ async def get_holdings(
         exch = getattr(h, "exchange", "NSE") or "NSE"
         qty = float(h.quantity or 0)
         avg = float(h.average_price or 0)
-        ltp = float(h.last_price or 0)
+        ltp = float(live_ltp.get(_instrument_key(exch, sym)) or h.last_price or 0)
         invested = qty * avg
         current = qty * ltp
         pnl = current - invested
@@ -783,3 +793,372 @@ async def delete_sector_override(
     db.delete(row)
     db.commit()
     return {"status": "deleted"}
+
+
+# ─── Analytics World ─────────────────────────────────────────────────
+#
+# A real-data swing/positional screener. Pulls live quotes for a
+# curated NSE universe and tags each stock with derived signals
+# (breakout, momentum, swing setup, recent IPO). The frontend
+# `AnalyticsWorld` page consumes this single endpoint.
+#
+# Notes:
+#   • Kite has no native screener / market-cap / IPO endpoint, so
+#     the stock universe is curated. Each entry carries `tags` that
+#     map it to one or more of the four UI sections.
+#   • Live quote (LTP, day OHLC, day volume, circuit limits, prev
+#     close) comes from a single batched `kite.quote()` call.
+#   • 20-day high/low and 5-day momentum come from `kite.historical`
+#     fetched in parallel and cached per trading day.
+#   • All responses are cached for 60s per user.
+
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date as _date, timedelta
+
+# Curated NSE universe. `tags` drives section placement; static data
+# (sector, listing_year, mcap_cr) is best-effort and only used as
+# display/filter hints — never as a source of truth for prices.
+_AW_UNIVERSE: list[dict] = [
+    # Recent IPOs (listed in the last ~24 months)
+    {"sym": "TATATECH",   "sector": "IT",            "listing_year": 2023, "mcap_cr": 36000,  "tags": ["ipo"]},
+    {"sym": "IREDA",      "sector": "Financials",    "listing_year": 2023, "mcap_cr": 45000,  "tags": ["ipo", "momentum"]},
+    {"sym": "JIOFIN",     "sector": "Financials",    "listing_year": 2023, "mcap_cr": 180000, "tags": ["ipo", "swing"]},
+    {"sym": "MANKIND",    "sector": "Pharma",        "listing_year": 2023, "mcap_cr": 95000,  "tags": ["ipo"]},
+    {"sym": "CELLO",      "sector": "Consumer",      "listing_year": 2023, "mcap_cr": 16000,  "tags": ["ipo"]},
+    {"sym": "BAJAJHFL",   "sector": "Financials",    "listing_year": 2024, "mcap_cr": 75000,  "tags": ["ipo", "swing"]},
+    {"sym": "OLAELEC",    "sector": "Auto",          "listing_year": 2024, "mcap_cr": 30000,  "tags": ["ipo"]},
+    {"sym": "FIRSTCRY",   "sector": "Retail",        "listing_year": 2024, "mcap_cr": 27000,  "tags": ["ipo"]},
+    {"sym": "PREMIERENE", "sector": "Energy",        "listing_year": 2024, "mcap_cr": 45000,  "tags": ["ipo", "momentum"]},
+    {"sym": "HYUNDAI",    "sector": "Auto",          "listing_year": 2024, "mcap_cr": 150000, "tags": ["ipo"]},
+    {"sym": "NTPCGREEN",  "sector": "Energy",        "listing_year": 2024, "mcap_cr": 90000,  "tags": ["ipo", "swing"]},
+    {"sym": "SWIGGY",     "sector": "Consumer",      "listing_year": 2024, "mcap_cr": 110000, "tags": ["ipo"]},
+
+    # Swing / positional candidates
+    {"sym": "SUZLON",     "sector": "Energy",        "mcap_cr": 70000,  "tags": ["swing", "momentum"]},
+    {"sym": "IDEA",       "sector": "Telecom",       "mcap_cr": 50000,  "tags": ["swing"]},
+    {"sym": "YESBANK",    "sector": "Banking",       "mcap_cr": 60000,  "tags": ["swing"]},
+    {"sym": "IDFCFIRSTB", "sector": "Banking",       "mcap_cr": 50000,  "tags": ["swing"]},
+    {"sym": "TATAPOWER",  "sector": "Energy",        "mcap_cr": 120000, "tags": ["swing", "breakout"]},
+    {"sym": "PFC",        "sector": "Financials",    "mcap_cr": 150000, "tags": ["swing", "momentum"]},
+    {"sym": "RECLTD",     "sector": "Financials",    "mcap_cr": 140000, "tags": ["swing", "momentum"]},
+    {"sym": "IRFC",       "sector": "Financials",    "mcap_cr": 180000, "tags": ["swing"]},
+    {"sym": "BEL",        "sector": "Defence",       "mcap_cr": 220000, "tags": ["swing", "momentum"]},
+    {"sym": "HAL",        "sector": "Defence",       "mcap_cr": 280000, "tags": ["swing", "momentum"]},
+
+    # Momentum / breakout candidates
+    {"sym": "ADANIPOWER", "sector": "Energy",        "mcap_cr": 220000, "tags": ["momentum", "breakout"]},
+    {"sym": "ADANIENT",   "sector": "Infrastructure","mcap_cr": 300000, "tags": ["breakout"]},
+    {"sym": "TRENT",      "sector": "Retail",        "mcap_cr": 220000, "tags": ["momentum", "breakout"]},
+    {"sym": "DIXON",      "sector": "Consumer",      "mcap_cr": 90000,  "tags": ["momentum", "breakout"]},
+    {"sym": "POLYCAB",    "sector": "Capital Goods", "mcap_cr": 100000, "tags": ["breakout"]},
+    {"sym": "CDSL",       "sector": "Financials",    "mcap_cr": 35000,  "tags": ["breakout", "momentum"]},
+    {"sym": "BSE",        "sector": "Financials",    "mcap_cr": 65000,  "tags": ["momentum", "breakout"]},
+    {"sym": "MAZDOCK",    "sector": "Defence",       "mcap_cr": 110000, "tags": ["momentum", "breakout"]},
+    {"sym": "COCHINSHIP", "sector": "Defence",       "mcap_cr": 50000,  "tags": ["momentum", "breakout"]},
+    {"sym": "RVNL",       "sector": "Infrastructure","mcap_cr": 100000, "tags": ["momentum"]},
+    {"sym": "IRCON",      "sector": "Infrastructure","mcap_cr": 25000,  "tags": ["swing", "momentum"]},
+    {"sym": "ZOMATO",     "sector": "Consumer",      "mcap_cr": 250000, "tags": ["breakout", "momentum"]},
+]
+
+# Module-level caches
+_AW_RESPONSE_CACHE: dict[int, tuple[float, dict]] = {}
+_AW_HIST_CACHE: dict[str, tuple[str, dict]] = {}
+_AW_TOKEN_CACHE: dict[str, tuple[str, dict]] = {"_": ("", {})}
+_AW_RESPONSE_TTL = 60  # seconds
+
+
+def _aw_load_tokens(broker: Broker) -> dict[str, int]:
+    today = _date.today().isoformat()
+    cached_day, cached_map = _AW_TOKEN_CACHE["_"]
+    if cached_day == today and cached_map:
+        return cached_map
+    try:
+        rows = broker.get_instruments("NSE")
+    except Exception as e:
+        logger.warning(f"analytics-world: instruments fetch failed: {e}")
+        return cached_map or {}
+    wanted = {u["sym"] for u in _AW_UNIVERSE}
+    token_map: dict[str, int] = {}
+    for r in rows:
+        ts = r.get("tradingsymbol")
+        if ts in wanted and r.get("instrument_type") == "EQ":
+            token_map[ts] = int(r["instrument_token"])
+    _AW_TOKEN_CACHE["_"] = (today, token_map)
+    return token_map
+
+
+def _aw_compute_hist_metrics(candles: list[dict]) -> dict:
+    if not candles or len(candles) < 5:
+        return {}
+    last20 = candles[-20:] if len(candles) >= 20 else candles
+    h20 = max(float(c["high"]) for c in last20)
+    l20 = min(float(c["low"]) for c in last20)
+    avgvol20 = sum(float(c["volume"]) for c in last20) / max(1, len(last20))
+
+    last5 = candles[-5:]
+    up_days = 0
+    for i in range(1, len(last5)):
+        if float(last5[i]["close"]) > float(last5[i - 1]["close"]):
+            up_days += 1
+
+    closes = [float(c["close"]) for c in candles]
+    ret5 = 0.0
+    if len(closes) >= 6:
+        ret5 = (closes[-1] - closes[-6]) / closes[-6] * 100.0
+
+    range_high = max(float(c["high"]) for c in candles)
+    range_low = min(float(c["low"]) for c in candles)
+
+    return {
+        "high_20d": round(h20, 2),
+        "low_20d": round(l20, 2),
+        "avg_vol_20d": round(avgvol20, 0),
+        "up_days_5d": up_days,
+        "return_5d_pct": round(ret5, 2),
+        "range_high": round(range_high, 2),
+        "range_low": round(range_low, 2),
+    }
+
+
+def _aw_fetch_hist_for(broker: Broker, symbol: str, token: int) -> dict:
+    today = _date.today().isoformat()
+    cached_day, cached = _AW_HIST_CACHE.get(symbol, ("", {}))
+    if cached_day == today and cached:
+        return cached
+    try:
+        to_dt = _date.today()
+        from_dt = to_dt - timedelta(days=60)
+        candles = broker.get_historical_data(token, from_dt, to_dt, "day")
+        metrics = _aw_compute_hist_metrics(candles or [])
+        _AW_HIST_CACHE[symbol] = (today, metrics)
+        return metrics
+    except Exception as e:
+        logger.debug(f"analytics-world: hist fetch failed for {symbol}: {e}")
+        return cached or {}
+
+
+def _aw_verdict(item: dict) -> str:
+    score = 0
+    if item.get("breakout"):
+        score += 2
+    if item.get("near_breakout"):
+        score += 1
+    if item.get("volume_surge"):
+        score += 1
+    if (item.get("up_days_5d") or 0) >= 4:
+        score += 2
+    elif (item.get("up_days_5d") or 0) == 3:
+        score += 1
+    chg = item.get("change_pct") or 0
+    if chg > 2:
+        score += 1
+    if chg < -2:
+        score -= 2
+    if (item.get("return_5d_pct") or 0) > 5:
+        score += 1
+    if (item.get("return_5d_pct") or 0) < -5:
+        score -= 1
+
+    if score >= 5:
+        return "Strong Buy"
+    if score >= 3:
+        return "Buy"
+    if score >= 1:
+        return "Watch"
+    return "Avoid"
+
+
+def _aw_build_item(u: dict, quote: dict, hist: dict) -> dict:
+    last = float(quote.get("last_price") or 0)
+    ohlc = quote.get("ohlc") or {}
+    prev_close = float(ohlc.get("close") or 0)
+    day_open = float(ohlc.get("open") or 0)
+    day_high = float(ohlc.get("high") or 0)
+    day_low = float(ohlc.get("low") or 0)
+    volume = float(quote.get("volume") or quote.get("volume_traded") or 0)
+    circuit = quote.get("circuit_limits") or {}
+
+    change_pct = ((last - prev_close) / prev_close * 100.0) if prev_close > 0 else 0.0
+
+    high_20d = hist.get("high_20d") or day_high or last
+    low_20d = hist.get("low_20d") or day_low or last
+    avg_vol_20d = hist.get("avg_vol_20d") or 0.0
+    up_days_5d = hist.get("up_days_5d") or 0
+    return_5d_pct = hist.get("return_5d_pct") or 0.0
+
+    support = round(low_20d, 2)
+    resistance = round(high_20d, 2)
+
+    breakout = bool(last > 0 and high_20d > 0 and last >= high_20d * 0.999)
+    near_breakout = bool(
+        last > 0 and high_20d > 0 and last >= high_20d * 0.98 and not breakout
+    )
+    volume_surge = bool(
+        volume > 0 and avg_vol_20d > 0 and volume >= avg_vol_20d * 1.5
+    )
+
+    if breakout:
+        entry = round(last, 2)
+        stop = round(max(support, last * 0.96), 2)
+        target = round(last + (last - stop) * 2.0, 2)
+    elif near_breakout:
+        entry = round(resistance * 1.002, 2)
+        stop = round(max(support, last * 0.96), 2)
+        target = round(resistance + (resistance - stop) * 1.5, 2)
+    else:
+        entry = round(last, 2)
+        stop = round(max(support, last * 0.95), 2)
+        target = round(last + (last - stop) * 1.8, 2)
+
+    rr_denom = max(0.01, entry - stop)
+
+    item = {
+        "symbol": u["sym"],
+        "exchange": "NSE",
+        "sector": u.get("sector") or "Others",
+        "tags": u.get("tags") or [],
+        "listing_year": u.get("listing_year"),
+        "market_cap_cr": u.get("mcap_cr"),
+        "last_price": round(last, 2),
+        "prev_close": round(prev_close, 2),
+        "day_open": round(day_open, 2),
+        "day_high": round(day_high, 2),
+        "day_low": round(day_low, 2),
+        "change_pct": round(change_pct, 2),
+        "volume": int(volume),
+        "avg_vol_20d": int(avg_vol_20d) if avg_vol_20d else 0,
+        "support": support,
+        "resistance": resistance,
+        "high_20d": resistance,
+        "low_20d": support,
+        "range_high": hist.get("range_high"),
+        "range_low": hist.get("range_low"),
+        "up_days_5d": up_days_5d,
+        "return_5d_pct": return_5d_pct,
+        "breakout": breakout,
+        "near_breakout": near_breakout,
+        "volume_surge": volume_surge,
+        "circuit_lower": float(circuit.get("lower") or 0) or None,
+        "circuit_upper": float(circuit.get("upper") or 0) or None,
+        "entry": entry,
+        "stop": stop,
+        "target": target,
+        "risk_reward": round((target - entry) / rr_denom, 2),
+    }
+    item["verdict"] = _aw_verdict(item)
+    return item
+
+
+def _aw_classify(items: list[dict]) -> dict:
+    ipos: list[dict] = []
+    swing: list[dict] = []
+    momentum: list[dict] = []
+    breakouts: list[dict] = []
+
+    for it in items:
+        tags = set(it.get("tags") or [])
+        if "ipo" in tags and it["last_price"] and it["last_price"] <= 1500:
+            ipos.append(it)
+        if (
+            "swing" in tags
+            and 50 <= it["last_price"] <= 2500
+            and (it["return_5d_pct"] or 0) >= -3
+        ):
+            swing.append(it)
+        if (
+            (it["up_days_5d"] or 0) >= 4
+            or (it["return_5d_pct"] or 0) >= 5
+            or ("momentum" in tags and (it["change_pct"] or 0) > 0)
+        ):
+            momentum.append(it)
+        if it["breakout"] or (it["near_breakout"] and it["volume_surge"]):
+            breakouts.append(it)
+
+    ipos.sort(key=lambda x: (x["change_pct"], x["return_5d_pct"]), reverse=True)
+    swing.sort(key=lambda x: (x["return_5d_pct"], x["up_days_5d"]), reverse=True)
+    momentum.sort(key=lambda x: (x["up_days_5d"], x["return_5d_pct"]), reverse=True)
+    breakouts.sort(key=lambda x: (x["breakout"], x["change_pct"]), reverse=True)
+
+    return {
+        "ipos": ipos[:12],
+        "swing": swing[:12],
+        "momentum": momentum[:12],
+        "breakouts": breakouts[:12],
+    }
+
+
+@router.get("/analytics-world")
+async def get_analytics_world(
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    """Real-data screener feeding the Analytics World page."""
+    now = time.time()
+    cached = _AW_RESPONSE_CACHE.get(user_id)
+    if cached and (now - cached[0] < _AW_RESPONSE_TTL):
+        return cached[1]
+
+    try:
+        broker = get_user_broker(db, user_id)
+    except Exception as e:
+        logger.warning(f"analytics-world: broker init failed for user {user_id}: {e}")
+        return {
+            "sections": {"ipos": [], "swing": [], "momentum": [], "breakouts": []},
+            "summary": {},
+            "as_of": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "error": "broker_unavailable",
+        }
+
+    symbols = [_instrument_key("NSE", u["sym"]) for u in _AW_UNIVERSE]
+    try:
+        quote_map = broker.get_quote(symbols) or {}
+    except Exception as e:
+        logger.warning(f"analytics-world: quote fetch failed for user {user_id}: {e}")
+        quote_map = {}
+
+    token_map = _aw_load_tokens(broker)
+    hist_map: dict[str, dict] = {}
+
+    def _job(sym: str) -> tuple[str, dict]:
+        tok = token_map.get(sym)
+        if not tok:
+            return sym, {}
+        return sym, _aw_fetch_hist_for(broker, sym, tok)
+
+    needed = [u["sym"] for u in _AW_UNIVERSE if token_map.get(u["sym"])]
+    if needed:
+        try:
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                futures = [pool.submit(_job, s) for s in needed]
+                for f in as_completed(futures):
+                    sym, metrics = f.result()
+                    hist_map[sym] = metrics
+        except Exception as e:
+            logger.warning(f"analytics-world: hist pool failed: {e}")
+
+    items: list[dict] = []
+    for u in _AW_UNIVERSE:
+        key = _instrument_key("NSE", u["sym"])
+        q = quote_map.get(key) or {}
+        h = hist_map.get(u["sym"], {})
+        if not q.get("last_price"):
+            continue
+        items.append(_aw_build_item(u, q, h))
+
+    sections = _aw_classify(items)
+    summary = {
+        "universe_size": len(_AW_UNIVERSE),
+        "live_count": len(items),
+        "breakouts": len(sections["breakouts"]),
+        "momentum": len(sections["momentum"]),
+        "swing": len(sections["swing"]),
+        "ipos": len(sections["ipos"]),
+    }
+    payload = {
+        "sections": sections,
+        "summary": summary,
+        "as_of": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    _AW_RESPONSE_CACHE[user_id] = (now, payload)
+    return payload
