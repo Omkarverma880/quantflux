@@ -392,10 +392,10 @@ function RiskFencePanels({ marketOpen }) {
         <div className="grid grid-cols-2 gap-2 mb-2">
           <input type="number" placeholder="Lock profit ₹" value={pf.lock_profit}
                  onChange={(e) => setPf({ ...pf, lock_profit: e.target.value })}
-                 className="input text-xs mono py-1.5" />
+                 className="input-field text-xs mono py-1.5" />
           <input type="number" placeholder="Max loss ₹" value={pf.max_loss}
                  onChange={(e) => setPf({ ...pf, max_loss: e.target.value })}
-                 className="input text-xs mono py-1.5" />
+                 className="input-field text-xs mono py-1.5" />
         </div>
         <div className="flex items-center justify-between gap-2">
           <button onClick={savePf} disabled={savingPf}
@@ -434,7 +434,7 @@ function RiskFencePanels({ marketOpen }) {
         </p>
         <input type="number" placeholder="Max day loss ₹" value={lc.max_day_loss}
                onChange={(e) => setLc({ ...lc, max_day_loss: e.target.value })}
-               className="input text-xs mono py-1.5 w-full mb-2" />
+               className="input-field text-xs mono py-1.5 w-full mb-2" />
         <div className="flex items-center justify-between gap-2">
           <button onClick={saveLc} disabled={savingLc}
                   className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-50 flex-1 transition-colors ${savedLc ? 'bg-green-600/80 hover:bg-green-600' : 'bg-brand-600/80 hover:bg-brand-600'}`}>
