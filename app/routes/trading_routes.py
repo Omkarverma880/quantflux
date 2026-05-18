@@ -276,6 +276,8 @@ async def exit_all_positions(
     cancel_errors: list[dict] = []
     squared_off: list[dict] = []
     squareoff_errors: list[dict] = []
+    skipped_orders: list[dict] = []
+    skipped_positions: list[dict] = []
 
     # 1) Cancel every open / trigger-pending MIS option order.
     try:
@@ -288,6 +290,13 @@ async def exit_all_positions(
         if status not in ("OPEN", "TRIGGER PENDING", "MODIFY VALIDATION PENDING", "MODIFY PENDING"):
             continue
         if not _is_mis_option_order(o):
+            skipped_orders.append({
+                "order_id": str(o.get("order_id") or ""),
+                "tradingsymbol": o.get("tradingsymbol"),
+                "exchange": o.get("exchange"),
+                "product": o.get("product"),
+                "reason": "not a MIS option order",
+            })
             continue
         oid = str(o.get("order_id") or "")
         if not oid:
@@ -309,6 +318,13 @@ async def exit_all_positions(
         if qty == 0:
             continue
         if not _is_mis_option_position(p):
+            skipped_positions.append({
+                "tradingsymbol": p.tradingsymbol,
+                "exchange": getattr(p, "exchange", None),
+                "product": getattr(p, "product", None),
+                "quantity": qty,
+                "reason": "not a MIS option position",
+            })
             continue
         try:
             req = OrderRequest(
@@ -337,8 +353,10 @@ async def exit_all_positions(
     # DELIBERATELY NOT touched here. Kill-switch scope = MIS options only.
 
     logger.warning(
-        "EXIT ALL (MIS-options only) by user_id=%s: cancelled=%d squared_off=%d cancel_err=%d sq_err=%d",
+        "EXIT ALL (MIS-options only) by user_id=%s: cancelled=%d squared_off=%d "
+        "skipped_orders=%d skipped_positions=%d cancel_err=%d sq_err=%d",
         user_id, len(cancelled), len(squared_off),
+        len(skipped_orders), len(skipped_positions),
         len(cancel_errors), len(squareoff_errors),
     )
     return {
@@ -347,4 +365,6 @@ async def exit_all_positions(
         "cancel_errors": cancel_errors,
         "squared_off": squared_off,
         "squareoff_errors": squareoff_errors,
+        "skipped_orders": skipped_orders,
+        "skipped_positions": skipped_positions,
     }

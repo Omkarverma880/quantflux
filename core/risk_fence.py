@@ -235,19 +235,49 @@ def _global_squareoff_for_user(user_id: int):
 
 
 def _aggregate_pnl_for_user(user_id: int) -> Optional[float]:
-    """Return intraday PnL across MIS option positions only (matches fence scope)."""
+    """Return intraday PnL across MIS option positions only (matches fence scope).
+
+    Refreshes LTPs via broker.kite.ltp() and recomputes pnl per leg the same
+    way the dashboard does — otherwise Kite's positions endpoint can serve a
+    stale ``last_price`` and the fence sees a pnl that's well below the live
+    figure shown on the dashboard. Closed legs (qty==0) keep their realised
+    pnl from the broker payload so same-day round-trips still count.
+    """
     from core.database import get_db_session
     from core.broker import get_user_broker
     db = get_db_session()
     try:
         broker = get_user_broker(db, user_id)
         positions = broker.get_positions() or []
+        # Filter to fence scope first
+        scoped = [
+            p for p in positions
+            if str(getattr(p, "product", "")).upper() == "MIS"
+            and str(getattr(p, "exchange", "")).upper() in _OPTION_EXCHANGES
+        ]
+        if not scoped:
+            return 0.0
+        # Refresh LTPs for any still-open legs so pnl is live, mirroring
+        # dashboard_routes.dashboard_summary().
+        open_legs = [p for p in scoped if int(getattr(p, "quantity", 0) or 0) != 0]
+        if open_legs:
+            try:
+                instruments = [f"{p.exchange}:{p.tradingsymbol}" for p in open_legs]
+                ltp_data = broker.kite.ltp(instruments) or {}
+                for p in open_legs:
+                    info = ltp_data.get(f"{p.exchange}:{p.tradingsymbol}")
+                    if not info:
+                        continue
+                    last_px = float(info.get("last_price") or 0)
+                    if last_px <= 0:
+                        continue
+                    qty = int(getattr(p, "quantity", 0) or 0)
+                    avg = float(getattr(p, "average_price", 0) or 0)
+                    p.pnl = round((last_px - avg) * qty, 2)
+            except Exception as exc:
+                logger.debug("[fence] LTP refresh failed for %s: %s", user_id, exc)
         total = 0.0
-        for p in positions:
-            if str(getattr(p, "product", "")).upper() != "MIS":
-                continue
-            if str(getattr(p, "exchange", "")).upper() not in _OPTION_EXCHANGES:
-                continue
+        for p in scoped:
             total += float(p.pnl or 0.0)
         return total
     except Exception as exc:

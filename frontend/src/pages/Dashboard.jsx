@@ -228,8 +228,17 @@ function ExitAllTile() {
       const s = r?.squared_off?.length || 0;
       const ce = r?.cancel_errors?.length || 0;
       const se = r?.squareoff_errors?.length || 0;
+      const sk = (r?.skipped_positions?.length || 0) + (r?.skipped_orders?.length || 0);
       if (ce || se) {
         toast.error(`Exit All: ${s} squared / ${c} cancelled. ${ce + se} error(s) — check logs.`);
+      } else if (s === 0 && c === 0 && sk > 0) {
+        const sample = (r?.skipped_positions || []).slice(0, 2)
+          .map(p => `${p.tradingsymbol} (${p.product}/${p.exchange})`).join(', ');
+        toast.error(
+          `Exit All scope = MIS options only. Skipped ${sk} item(s)` +
+          (sample ? `: ${sample}${sk > 2 ? '…' : ''}` : '') +
+          '. Use Manual Trading to exit other positions.'
+        );
       } else if (s === 0 && c === 0) {
         toast.info('Nothing to exit — no open orders or positions.');
       } else {

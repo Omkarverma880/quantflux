@@ -461,10 +461,53 @@ def _heal_order_dates(db: Session, user_id: int) -> int:
     return fixed
 
 
+def _heal_stale_open_orders(db: Session, user_id: int) -> int:
+    """Mark pre-today OPEN / TRIGGER-PENDING orders as EXPIRED.
+
+    Zerodha auto-cancels any unfilled regular-session order at session
+    close (3:30 PM IST). Because Kite's ``orders()`` API only returns
+    today's orderbook, an order that was OPEN yesterday and never got
+    filled is never re-fed to our upsert path — it stays OPEN forever
+    in the DB. That's misleading on Trade History (and downright
+    dangerous when reasoning about risk). This sweep heals it.
+    """
+    stale_statuses = {
+        "OPEN", "TRIGGER PENDING",
+        "MODIFY PENDING", "MODIFY VALIDATION PENDING",
+        "PUT ORDER REQ RECEIVED", "VALIDATION PENDING",
+    }
+    today = date.today()
+    rows = db.execute(
+        select(OrderHistory).where(
+            OrderHistory.user_id == user_id,
+            OrderHistory.order_date < today,
+        )
+    ).scalars().all()
+    fixed = 0
+    for r in rows:
+        if (r.status or "").upper() in stale_statuses:
+            r.status = "EXPIRED"
+            fixed += 1
+    if fixed:
+        try:
+            db.commit()
+            logger.info(
+                f"order_history heal: marked {fixed} stale OPEN order(s) "
+                f"as EXPIRED for user {user_id}"
+            )
+        except Exception as exc:
+            db.rollback()
+            logger.error(f"stale-open heal commit failed: {exc}")
+    return fixed
+
+
 def _load_order_history_from_db(db: Session, user_id: int) -> list:
     """Return [{date, orders: [...]}] grouped by order_date for this user."""
     # Heal any historical mis-bucketed rows before grouping.
     _heal_order_dates(db, user_id)
+    # Heal pre-today OPEN/PENDING rows (Kite auto-cancels at session close
+    # but the update never comes back through our upsert path).
+    _heal_stale_open_orders(db, user_id)
 
     rows = db.execute(
         select(OrderHistory)
