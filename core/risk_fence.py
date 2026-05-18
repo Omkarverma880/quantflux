@@ -42,7 +42,16 @@ FENCE_DIR = Path("data") / "risk_fence"
 FENCE_DIR.mkdir(parents=True, exist_ok=True)
 
 _DEFAULT = {
-    "pnl_fence":    {"enabled": False, "lock_profit": 0.0, "max_loss": 0.0,
+    "pnl_fence":    {"enabled": False,
+                     # New signed schema (preferred). None = disabled.
+                     "profit_target": None,   # exit when pnl >= this
+                     "exit_floor":    None,   # exit when pnl <= this
+                     "trail_amount":  None,   # exit when pnl <= peak - this
+                     "peak_pnl":      None,   # runtime, ratchets up only
+                     "peak_at":       None,
+                     # Legacy positive-only keys (back-compat read; new writes
+                     # clear them and use profit_target / exit_floor).
+                     "lock_profit": 0.0, "max_loss": 0.0,
                      "triggered": False, "triggered_at": None,
                      "trigger_reason": None, "trigger_pnl": None,
                      "trigger_date": None},
@@ -82,6 +91,23 @@ def load_config(user_id: int) -> dict:
         logger.warning("Could not load fence config for %s: %s", user_id, exc)
         return json.loads(json.dumps(_DEFAULT))
     merged = _deep_merge(json.loads(json.dumps(_DEFAULT)), data)
+    # Back-compat migration: legacy positive-only lock_profit / max_loss →
+    # signed profit_target / exit_floor (only if new keys are still null).
+    pf = merged.get("pnl_fence", {})
+    if pf.get("profit_target") is None:
+        try:
+            lp = float(pf.get("lock_profit") or 0)
+            if lp > 0:
+                pf["profit_target"] = lp
+        except (TypeError, ValueError):
+            pass
+    if pf.get("exit_floor") is None:
+        try:
+            ml = float(pf.get("max_loss") or 0)
+            if ml > 0:
+                pf["exit_floor"] = -ml
+        except (TypeError, ValueError):
+            pass
     # Auto-reset triggers on a new trading day
     today_iso = date.today().isoformat()
     changed = False
@@ -93,6 +119,18 @@ def load_config(user_id: int) -> dict:
             merged[sec]["trigger_pnl"] = None
             merged[sec]["trigger_reason"] = None
             merged[sec]["trigger_date"] = None
+            changed = True
+    # Auto-reset trailing peak on a new trading day
+    peak_at = pf.get("peak_at")
+    if peak_at:
+        try:
+            if datetime.fromisoformat(peak_at).date() != date.today():
+                pf["peak_pnl"] = None
+                pf["peak_at"] = None
+                changed = True
+        except (TypeError, ValueError):
+            pf["peak_pnl"] = None
+            pf["peak_at"] = None
             changed = True
     if changed:
         save_config(user_id, merged)
@@ -289,27 +327,66 @@ def _aggregate_pnl_for_user(user_id: int) -> Optional[float]:
 
 def evaluate_user(user_id: int) -> dict:
     """Re-evaluate fence/loss state for *user_id* using live PnL.
-    Returns dict with current pnl + any triggers fired."""
+
+    The P&L Fence is now a three-rule engine. Any rule that is configured
+    (non-None) and breached triggers a global squareoff. Rules are checked
+    in priority order:
+
+      1) ``profit_target``  — exit when ``pnl >= profit_target`` (ceiling).
+      2) ``exit_floor``     — exit when ``pnl <= exit_floor`` (signed floor;
+                              can be positive (lock min profit), zero
+                              (breakeven stop), or negative (hard SL).
+      3) ``trail_amount``   — once peak pnl has been >0, exit when
+                              ``pnl <= peak - trail_amount``. Peak ratchets
+                              up only; resets each trading day.
+
+    Returns dict with current pnl, the latest peak, and any triggers fired.
+    """
     cfg = load_config(user_id)
     if not (cfg["pnl_fence"].get("enabled") or cfg["loss_control"].get("enabled")):
-        return {"pnl": None, "fired": []}
+        return {"pnl": None, "peak": None, "fired": []}
     pnl = _aggregate_pnl_for_user(user_id)
     if pnl is None:
-        return {"pnl": None, "fired": []}
+        return {"pnl": None, "peak": None, "fired": []}
     fired: list[str] = []
 
     pf = cfg["pnl_fence"]
+    peak = pf.get("peak_pnl")
     if pf.get("enabled") and not pf.get("triggered"):
-        lp = float(pf.get("lock_profit") or 0)
-        ml = float(pf.get("max_loss") or 0)
-        if lp > 0 and pnl >= lp:
+        # Ratchet peak (only goes up). Persist only on a new high to keep
+        # disk writes proportional to actual peak progress.
+        new_peak = pnl if peak is None else max(float(peak), pnl)
+        if peak is None or new_peak > float(peak):
+            save_config(user_id, {"pnl_fence": {
+                "peak_pnl": new_peak,
+                "peak_at": datetime.now().isoformat(),
+            }})
+            peak = new_peak
+
+        pt = pf.get("profit_target")
+        ef = pf.get("exit_floor")
+        ta = pf.get("trail_amount")
+
+        if pt is not None and pnl >= float(pt):
             _mark_triggered(user_id, "pnl_fence",
-                            f"Profit lock hit (≥ ₹{lp:.0f})", pnl)
-            fired.append("pnl_fence_profit")
-        elif ml > 0 and pnl <= -abs(ml):
+                            f"Profit target hit (≥ ₹{float(pt):.0f})", pnl)
+            fired.append("pnl_fence_target")
+        elif ef is not None and pnl <= float(ef):
+            sign = "≥ +" if float(ef) > 0 else ("=" if float(ef) == 0 else "≤ -")
+            label = (
+                f"₹{abs(float(ef)):.0f}" if float(ef) != 0 else "breakeven"
+            )
             _mark_triggered(user_id, "pnl_fence",
-                            f"Max loss hit (≤ -₹{abs(ml):.0f})", pnl)
-            fired.append("pnl_fence_loss")
+                            f"Exit floor hit (PnL ≤ {'₹' + str(int(float(ef))) if float(ef) != 0 else '₹0'})",
+                            pnl)
+            fired.append("pnl_fence_floor")
+        elif (ta is not None and float(ta) > 0
+              and peak is not None and float(peak) > 0
+              and pnl <= float(peak) - float(ta)):
+            _mark_triggered(user_id, "pnl_fence",
+                            f"Trailing stop hit (peak ₹{float(peak):.0f} − ₹{float(ta):.0f})",
+                            pnl)
+            fired.append("pnl_fence_trail")
 
     lc = cfg["loss_control"]
     if lc.get("enabled") and not lc.get("triggered"):
@@ -320,13 +397,13 @@ def evaluate_user(user_id: int) -> dict:
             fired.append("loss_control")
 
     if fired:
-        logger.warning("[fence] user=%s fired=%s pnl=%.2f → squareoff",
-                       user_id, fired, pnl)
+        logger.warning("[fence] user=%s fired=%s pnl=%.2f peak=%s → squareoff",
+                       user_id, fired, pnl, peak)
         try:
             _global_squareoff_for_user(user_id)
         except Exception as exc:
             logger.exception("[fence] squareoff failed: %s", exc)
-    return {"pnl": pnl, "fired": fired}
+    return {"pnl": pnl, "peak": peak, "fired": fired}
 
 
 # ── background watcher ─────────────────────────────────

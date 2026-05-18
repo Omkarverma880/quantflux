@@ -289,7 +289,12 @@ function RiskFencePanels({ marketOpen }) {
   const [livePnl, setLivePnl] = useState(null);
   const [autoTime, setAutoTime] = useState('15:15');
   // local form state
-  const [pf, setPf] = useState({ enabled: false, lock_profit: '', max_loss: '' });
+  const [pf, setPf] = useState({
+    enabled: false,
+    profit_target: '',
+    exit_floor: '',
+    trail_amount: '',
+  });
   const [lc, setLc] = useState({ enabled: false, max_day_loss: '' });
   const [savingPf, setSavingPf] = useState(false);
   const [savingLc, setSavingLc] = useState(false);
@@ -308,10 +313,18 @@ function RiskFencePanels({ marketOpen }) {
       setLivePnl(r.live_pnl);
       setAutoTime(r.auto_squareoff_at || '15:15');
       if (!pfDirty.current) {
+        const fence = r.config.pnl_fence || {};
+        // Prefer new signed fields; fall back to legacy lock_profit / max_loss
+        // for clients that haven't been migrated yet.
+        const pt = fence.profit_target ??
+          (Number(fence.lock_profit) > 0 ? Number(fence.lock_profit) : null);
+        const ef = fence.exit_floor ??
+          (Number(fence.max_loss) > 0 ? -Number(fence.max_loss) : null);
         setPf({
-          enabled: !!r.config.pnl_fence.enabled,
-          lock_profit: r.config.pnl_fence.lock_profit ?? '',
-          max_loss: r.config.pnl_fence.max_loss ?? '',
+          enabled: !!fence.enabled,
+          profit_target: pt ?? '',
+          exit_floor:    ef ?? '',
+          trail_amount:  fence.trail_amount ?? '',
         });
       }
       if (!lcDirty.current) {
@@ -330,12 +343,48 @@ function RiskFencePanels({ marketOpen }) {
   }, [refresh, marketOpen]);
 
   const savePf = async () => {
+    // Parse to floats once. Empty / non-numeric = null = rule disabled.
+    const parse = (v) => {
+      if (v === '' || v === null || v === undefined) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const pt = parse(pf.profit_target);
+    const ef = parse(pf.exit_floor);
+    const ta = parse(pf.trail_amount);
+
+    // Client-side sanity (server also enforces).
+    if (pt !== null && ef !== null && ef >= pt) {
+      toast.error(`Exit floor (₹${ef}) must be lower than profit target (₹${pt}).`);
+      return;
+    }
+    if (ta !== null && ta <= 0) {
+      toast.error('Trail amount must be greater than 0.');
+      return;
+    }
+
+    // Warn if the rules would trip immediately against current live PnL.
+    if (pf.enabled && livePnl !== null && livePnl !== undefined) {
+      const willFire = (
+        (pt !== null && livePnl >= pt) ||
+        (ef !== null && livePnl <= ef)
+      );
+      if (willFire) {
+        const ok = window.confirm(
+          `WARNING: live PnL is ₹${INR(livePnl, 0)} — this config will exit ALL ` +
+          `MIS option positions immediately on the next 5-second tick.\n\nContinue?`
+        );
+        if (!ok) return;
+      }
+    }
+
     setSavingPf(true);
     try {
       await api.updatePnlFence({
         enabled: pf.enabled,
-        lock_profit: Number(pf.lock_profit) || 0,
-        max_loss: Number(pf.max_loss) || 0,
+        profit_target: pt,
+        exit_floor: ef,
+        trail_amount: ta,
       });
       toast.success('P&L Fence updated');
       pfDirty.current = false;
@@ -405,16 +454,39 @@ function RiskFencePanels({ marketOpen }) {
           </label>
         </div>
         <p className="text-[10px] text-gray-500 mb-2">
-          Auto-exit when live P&L ≥ <b>+lock</b> or ≤ <b>−max loss</b>. Live P&L: <span className="mono text-gray-300">{pnlTxt}</span>
+          Smart Exit — three rules. Any rule that's filled in is armed.
+          <span className="block mt-0.5">Live P&L: <span className="mono text-gray-300">{pnlTxt}</span>{(() => {
+            const peak = cfg.pnl_fence.peak_pnl;
+            const trail = Number(cfg.pnl_fence.trail_amount);
+            if (peak !== null && peak !== undefined && Number.isFinite(trail) && trail > 0) {
+              const exitAt = Number(peak) - trail;
+              return (
+                <span className="ml-2">
+                  · Peak <span className="mono text-emerald-300">+₹{INR(Number(peak), 0)}</span>
+                  {' '}· Trail exit at <span className="mono text-amber-300">₹{INR(exitAt, 0)}</span>
+                </span>
+              );
+            }
+            return null;
+          })()}</span>
         </p>
-        <div className="grid grid-cols-2 gap-2 mb-2">
-          <input type="number" placeholder="Lock profit ₹" value={pf.lock_profit}
-                 onChange={(e) => { pfDirty.current = true; setPf({ ...pf, lock_profit: e.target.value }); }}
+        <div className="grid grid-cols-3 gap-2 mb-1">
+          <input type="number" placeholder="Profit target ₹" value={pf.profit_target}
+                 title="Exit when live P&L ≥ this. e.g. 2400 = book at +₹2400."
+                 onChange={(e) => { pfDirty.current = true; setPf({ ...pf, profit_target: e.target.value }); }}
                  className="input-field text-xs mono py-1.5" />
-          <input type="number" placeholder="Max loss ₹" value={pf.max_loss}
-                 onChange={(e) => { pfDirty.current = true; setPf({ ...pf, max_loss: e.target.value }); }}
+          <input type="number" placeholder="Exit floor ₹ (signed)" value={pf.exit_floor}
+                 title="Exit when live P&L ≤ this. Can be negative (hard SL), zero (breakeven stop), or positive (lock min profit)."
+                 onChange={(e) => { pfDirty.current = true; setPf({ ...pf, exit_floor: e.target.value }); }}
+                 className="input-field text-xs mono py-1.5" />
+          <input type="number" min="0" placeholder="Trail by ₹" value={pf.trail_amount}
+                 title="Trailing stop: exits when P&L gives back this much from its peak. Peak resets each trading day."
+                 onChange={(e) => { pfDirty.current = true; setPf({ ...pf, trail_amount: e.target.value }); }}
                  className="input-field text-xs mono py-1.5" />
         </div>
+        <p className="text-[9px] text-gray-600 mb-2 leading-tight">
+          <b>Target</b> = ceiling · <b>Floor</b> = signed floor (e.g. <span className="mono">-1000</span> hard SL, <span className="mono">0</span> breakeven, <span className="mono">1200</span> min lock) · <b>Trail</b> = give-back from peak. Empty = rule off.
+        </p>
         <div className="flex items-center justify-between gap-2">
           <button onClick={savePf} disabled={savingPf}
                   className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-50 flex-1 transition-colors ${savedPf ? 'bg-green-600/80 hover:bg-green-600' : 'bg-brand-600/80 hover:bg-brand-600'}`}>
