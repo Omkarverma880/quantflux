@@ -94,6 +94,34 @@ async def dashboard_summary(user_id: int = Depends(login_required), db: Session 
                 warnings.append(f"positions: {last_pos_err}")
         active_positions = [p for p in positions if (p.quantity or 0) != 0]
         positions_count = len(active_positions)
+
+        # Refresh LTPs for active positions so Day P&L matches the Manual
+        # Trading view. Kite's positions endpoint can serve a slightly stale
+        # `last_price` (and therefore stale `pnl`) during quiet ticks, which
+        # caused Dashboard Day P&L to drift from the live position view.
+        if active_positions:
+            instruments = [
+                f"{p.exchange}:{p.tradingsymbol}" for p in active_positions
+            ]
+            try:
+                ltp_data = broker.kite.ltp(instruments) or {}
+                for p in active_positions:
+                    key = f"{p.exchange}:{p.tradingsymbol}"
+                    info = ltp_data.get(key)
+                    if not info:
+                        continue
+                    last_px = float(info.get("last_price") or 0)
+                    if last_px <= 0:
+                        continue
+                    p.last_price = last_px
+                    # Mirror Manual Trading's recompute exactly so the two
+                    # views always agree. Closed legs (qty==0) keep their
+                    # realised pnl from the broker payload.
+                    p.pnl = round((last_px - float(p.average_price or 0)) * (p.quantity or 0), 2)
+            except Exception as ltp_err:
+                logger.warning("dashboard: LTP refresh for positions failed: %s", ltp_err)
+                warnings.append(f"ltp_refresh: {ltp_err}")
+
         # Day P&L must include CLOSED legs too (qty==0 but with realised PnL
         # from same-day round-trips). Filtering those out would under-report
         # the day's realised gains and disagree with Trade History.
