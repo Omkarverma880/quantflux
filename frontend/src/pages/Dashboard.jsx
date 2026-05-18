@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, useWebSocket } from '../api';
 import { useToast } from '../ToastContext';
@@ -288,6 +288,9 @@ function RiskFencePanels({ marketOpen }) {
   const [savedLc, setSavedLc] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [squaring, setSquaring] = useState(false);
+  // dirty flags — when user is editing, don't let polling clobber inputs
+  const pfDirty = useRef(false);
+  const lcDirty = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -295,15 +298,19 @@ function RiskFencePanels({ marketOpen }) {
       setCfg(r.config);
       setLivePnl(r.live_pnl);
       setAutoTime(r.auto_squareoff_at || '15:15');
-      setPf({
-        enabled: !!r.config.pnl_fence.enabled,
-        lock_profit: r.config.pnl_fence.lock_profit ?? '',
-        max_loss: r.config.pnl_fence.max_loss ?? '',
-      });
-      setLc({
-        enabled: !!r.config.loss_control.enabled,
-        max_day_loss: r.config.loss_control.max_day_loss ?? '',
-      });
+      if (!pfDirty.current) {
+        setPf({
+          enabled: !!r.config.pnl_fence.enabled,
+          lock_profit: r.config.pnl_fence.lock_profit ?? '',
+          max_loss: r.config.pnl_fence.max_loss ?? '',
+        });
+      }
+      if (!lcDirty.current) {
+        setLc({
+          enabled: !!r.config.loss_control.enabled,
+          max_day_loss: r.config.loss_control.max_day_loss ?? '',
+        });
+      }
     } catch (e) { /* ignore */ }
   }, []);
 
@@ -322,6 +329,7 @@ function RiskFencePanels({ marketOpen }) {
         max_loss: Number(pf.max_loss) || 0,
       });
       toast.success('P&L Fence updated');
+      pfDirty.current = false;
       await refresh();
       setSavedPf(true);
       setTimeout(() => setSavedPf(false), 2500);
@@ -337,6 +345,7 @@ function RiskFencePanels({ marketOpen }) {
         max_day_loss: Number(lc.max_day_loss) || 0,
       });
       toast.success('Loss Control updated');
+      lcDirty.current = false;
       await refresh();
       setSavedLc(true);
       setTimeout(() => setSavedLc(false), 2500);
@@ -391,10 +400,10 @@ function RiskFencePanels({ marketOpen }) {
         </p>
         <div className="grid grid-cols-2 gap-2 mb-2">
           <input type="number" placeholder="Lock profit ₹" value={pf.lock_profit}
-                 onChange={(e) => setPf({ ...pf, lock_profit: e.target.value })}
+                 onChange={(e) => { pfDirty.current = true; setPf({ ...pf, lock_profit: e.target.value }); }}
                  className="input-field text-xs mono py-1.5" />
           <input type="number" placeholder="Max loss ₹" value={pf.max_loss}
-                 onChange={(e) => setPf({ ...pf, max_loss: e.target.value })}
+                 onChange={(e) => { pfDirty.current = true; setPf({ ...pf, max_loss: e.target.value }); }}
                  className="input-field text-xs mono py-1.5" />
         </div>
         <div className="flex items-center justify-between gap-2">
@@ -433,7 +442,7 @@ function RiskFencePanels({ marketOpen }) {
           Once day P&L ≤ <b>−limit</b>, all new manual & strategy orders are <b>blocked</b> until you disable this.
         </p>
         <input type="number" placeholder="Max day loss ₹" value={lc.max_day_loss}
-               onChange={(e) => setLc({ ...lc, max_day_loss: e.target.value })}
+               onChange={(e) => { lcDirty.current = true; setLc({ ...lc, max_day_loss: e.target.value }); }}
                className="input-field text-xs mono py-1.5 w-full mb-2" />
         <div className="flex items-center justify-between gap-2">
           <button onClick={saveLc} disabled={savingLc}
