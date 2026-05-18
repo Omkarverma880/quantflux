@@ -284,6 +284,8 @@ function RiskFencePanels({ marketOpen }) {
   const [lc, setLc] = useState({ enabled: false, max_day_loss: '' });
   const [savingPf, setSavingPf] = useState(false);
   const [savingLc, setSavingLc] = useState(false);
+  const [savedPf, setSavedPf] = useState(false);
+  const [savedLc, setSavedLc] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [squaring, setSquaring] = useState(false);
 
@@ -295,12 +297,12 @@ function RiskFencePanels({ marketOpen }) {
       setAutoTime(r.auto_squareoff_at || '15:15');
       setPf({
         enabled: !!r.config.pnl_fence.enabled,
-        lock_profit: r.config.pnl_fence.lock_profit || '',
-        max_loss: r.config.pnl_fence.max_loss || '',
+        lock_profit: r.config.pnl_fence.lock_profit ?? '',
+        max_loss: r.config.pnl_fence.max_loss ?? '',
       });
       setLc({
         enabled: !!r.config.loss_control.enabled,
-        max_day_loss: r.config.loss_control.max_day_loss || '',
+        max_day_loss: r.config.loss_control.max_day_loss ?? '',
       });
     } catch (e) { /* ignore */ }
   }, []);
@@ -321,6 +323,8 @@ function RiskFencePanels({ marketOpen }) {
       });
       toast.success('P&L Fence updated');
       await refresh();
+      setSavedPf(true);
+      setTimeout(() => setSavedPf(false), 2500);
     } catch (e) { toast.error(e.message); }
     finally { setSavingPf(false); }
   };
@@ -334,6 +338,8 @@ function RiskFencePanels({ marketOpen }) {
       });
       toast.success('Loss Control updated');
       await refresh();
+      setSavedLc(true);
+      setTimeout(() => setSavedLc(false), 2500);
     } catch (e) { toast.error(e.message); }
     finally { setSavingLc(false); }
   };
@@ -393,8 +399,8 @@ function RiskFencePanels({ marketOpen }) {
         </div>
         <div className="flex items-center justify-between gap-2">
           <button onClick={savePf} disabled={savingPf}
-                  className="px-3 py-1.5 rounded-lg bg-brand-600/80 hover:bg-brand-600 text-white text-xs font-medium disabled:opacity-50 flex-1">
-            {savingPf ? 'Saving...' : 'Save'}
+                  className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-50 flex-1 transition-colors ${savedPf ? 'bg-green-600/80 hover:bg-green-600' : 'bg-brand-600/80 hover:bg-brand-600'}`}>
+            {savingPf ? 'Saving...' : savedPf ? '✓ Saved' : 'Save'}
           </button>
           {pfTriggered ? (
             <button onClick={() => resetSection('pnl_fence')} disabled={resetting}
@@ -431,8 +437,8 @@ function RiskFencePanels({ marketOpen }) {
                className="input text-xs mono py-1.5 w-full mb-2" />
         <div className="flex items-center justify-between gap-2">
           <button onClick={saveLc} disabled={savingLc}
-                  className="px-3 py-1.5 rounded-lg bg-brand-600/80 hover:bg-brand-600 text-white text-xs font-medium disabled:opacity-50 flex-1">
-            {savingLc ? 'Saving...' : 'Save'}
+                  className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-50 flex-1 transition-colors ${savedLc ? 'bg-green-600/80 hover:bg-green-600' : 'bg-brand-600/80 hover:bg-brand-600'}`}>
+            {savingLc ? 'Saving...' : savedLc ? '✓ Saved' : 'Save'}
           </button>
           {lcTriggered ? (
             <button onClick={() => resetSection('loss_control')} disabled={resetting}

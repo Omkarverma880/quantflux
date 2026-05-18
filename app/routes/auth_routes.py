@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import timedelta
+from typing import Optional
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -174,10 +175,27 @@ def zerodha_login(user_id: int = Depends(login_required), db: Session = Depends(
 
 
 @router.get("/callback")
-def zerodha_callback(request_token: str = "", status: str = "", user_id: str = ""):
+def zerodha_callback(
+    request: Request,
+    request_token: str = "",
+    status: str = "",
+    user_id: str = "",
+):
     """
     Zerodha redirects here after login.
-    user_id is passed as a query param (we embed it in the redirect URL).
+
+    We embed `user_id` inside Kite's `redirect_params` when starting the
+    login (see `UserZerodhaAuth.get_login_url`). Kite forwards that value
+    back in one of two ways depending on app configuration:
+
+      1. As a literal `?redirect_params=user_id%3D<id>` query string
+         (current Kite Connect behaviour).
+      2. Decoded into individual query params (e.g. `?user_id=<id>`),
+         which happens when a redirect URL is configured with the param
+         baked into it.
+
+    We accept both, so multi-user logins work regardless of how each
+    user's Kite Connect app is configured on the broker side.
     """
     if status != "success" or not request_token:
         return HTMLResponse(
@@ -187,13 +205,33 @@ def zerodha_callback(request_token: str = "", status: str = "", user_id: str = "
             status_code=400,
         )
 
+    # Resolve user_id: direct query param → redirect_params → any other
+    # query param that may carry it (defensive).
+    resolved_uid: Optional[int] = None
     try:
-        uid = int(user_id) if user_id else None
-        if not uid:
-            # No user_id in redirect_params — cannot safely resolve the user.
-            # Falling back to "last cached user" is unsafe with multiple users,
-            # because exchanging a request_token with the wrong api_key/secret
-            # yields Zerodha's "Token is invalid or has expired" error.
+        if user_id:
+            resolved_uid = int(user_id)
+    except (TypeError, ValueError):
+        resolved_uid = None
+
+    if resolved_uid is None:
+        try:
+            from urllib.parse import parse_qs, unquote
+            qp = dict(request.query_params)
+            raw_rp = qp.get("redirect_params") or ""
+            # Kite may URL-encode or double-encode the value; try both.
+            for candidate in (raw_rp, unquote(raw_rp)):
+                if not candidate:
+                    continue
+                parsed = parse_qs(candidate)
+                if "user_id" in parsed and parsed["user_id"]:
+                    resolved_uid = int(parsed["user_id"][0])
+                    break
+        except Exception as e:
+            logger.warning(f"callback: failed to parse redirect_params: {e}")
+
+    try:
+        if not resolved_uid:
             raise RuntimeError(
                 "Cannot determine which user is logging in. "
                 "Please retry the login from the app."
@@ -202,11 +240,11 @@ def zerodha_callback(request_token: str = "", status: str = "", user_id: str = "
         from core.database import get_db_session
         db = get_db_session()
         try:
-            UserZerodhaAuth.complete_login(db, uid, request_token)
+            UserZerodhaAuth.complete_login(db, resolved_uid, request_token)
         finally:
             db.close()
 
-        logger.info(f"Zerodha login successful for user_id={uid}")
+        logger.info(f"Zerodha login successful for user_id={resolved_uid}")
         return HTMLResponse(
             "<html><body>"
             "<h2 style='color:green'>Login successful!</h2>"

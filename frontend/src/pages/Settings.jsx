@@ -107,10 +107,36 @@ export default function Settings() {
     }
   };
 
-  const copyRedirect = () => {
-    navigator.clipboard.writeText(cfg?.kite_redirect_url || '');
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const REDIRECT_URL = 'https://quantflux-production.up.railway.app/api/auth/callback';
+
+  const copyRedirect = async () => {
+    const text = cfg?.kite_redirect_url || REDIRECT_URL;
+    let ok = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      } else {
+        // Fallback for non-secure contexts / older browsers
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    } catch {
+      ok = false;
+    }
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      window.prompt('Copy this URL (Ctrl+C, Enter):', text);
+    }
   };
 
   if (!cfg) {
@@ -251,7 +277,7 @@ export default function Settings() {
             <input
               type="text"
               readOnly
-              value="https://quantflux-production.up.railway.app/api/auth/callback"
+              value={cfg?.kite_redirect_url || REDIRECT_URL}
               className="input-field flex-1 text-gray-400 cursor-default"
             />
             <button
