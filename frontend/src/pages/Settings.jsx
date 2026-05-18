@@ -18,7 +18,156 @@ import {
   ToggleRight,
   RefreshCw,
   Layers,
+  Lock,
 } from 'lucide-react';
+
+/* ── Change Password card ─────────────────────────── */
+function ChangePasswordCard() {
+  const toast = useToast();
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNext, setShowNext] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const strengthLabel = (() => {
+    if (!next) return null;
+    if (next.length < 6) return { txt: 'Too short', cls: 'text-red-400' };
+    let score = 0;
+    if (/[a-z]/.test(next)) score++;
+    if (/[A-Z]/.test(next)) score++;
+    if (/\d/.test(next)) score++;
+    if (/[^A-Za-z0-9]/.test(next)) score++;
+    if (next.length >= 12) score++;
+    if (score <= 1) return { txt: 'Weak', cls: 'text-red-400' };
+    if (score === 2) return { txt: 'Fair', cls: 'text-yellow-400' };
+    if (score === 3) return { txt: 'Good', cls: 'text-blue-400' };
+    return { txt: 'Strong', cls: 'text-green-400' };
+  })();
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault?.();
+    if (!current || !next || !confirm) {
+      toast.error('Fill all password fields');
+      return;
+    }
+    if (next.length < 6) {
+      toast.error('New password must be at least 6 characters');
+      return;
+    }
+    if (next !== confirm) {
+      toast.error('New passwords do not match');
+      return;
+    }
+    if (current === next) {
+      toast.error('New password must be different from current');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.changePassword(current, next);
+      toast.success('Password updated');
+      setCurrent('');
+      setNext('');
+      setConfirm('');
+    } catch (err) {
+      toast.error(err?.message || 'Could not change password');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="card space-y-4">
+      <div className="flex items-center gap-2 pb-2 border-b border-surface-3/60">
+        <Lock className="w-5 h-5 text-brand-400" />
+        <h3 className="font-semibold text-white">Change Password</h3>
+      </div>
+      <p className="text-xs text-gray-500">
+        Update your QuantFlux account password. Your Zerodha credentials are not affected.
+      </p>
+
+      <div className="space-y-3">
+        {/* Current */}
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-1.5">Current password</label>
+          <div className="relative">
+            <input
+              type={showCurrent ? 'text' : 'password'}
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+              autoComplete="current-password"
+              className="input-field w-full pr-10"
+              placeholder="Enter current password"
+            />
+            <button
+              type="button"
+              onClick={() => setShowCurrent((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded text-gray-400 hover:text-white hover:bg-surface-3 transition-colors"
+              tabIndex={-1}
+            >
+              {showCurrent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        {/* New + Confirm */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">New password</label>
+            <div className="relative">
+              <input
+                type={showNext ? 'text' : 'password'}
+                value={next}
+                onChange={(e) => setNext(e.target.value)}
+                autoComplete="new-password"
+                className="input-field w-full pr-10"
+                placeholder="Minimum 6 characters"
+              />
+              <button
+                type="button"
+                onClick={() => setShowNext((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded text-gray-400 hover:text-white hover:bg-surface-3 transition-colors"
+                tabIndex={-1}
+              >
+                {showNext ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            {strengthLabel && (
+              <p className={`text-[11px] mt-1 ${strengthLabel.cls}`}>Strength: {strengthLabel.txt}</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">Confirm new password</label>
+            <input
+              type={showNext ? 'text' : 'password'}
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+              className="input-field w-full"
+              placeholder="Re-enter new password"
+            />
+            {confirm && next !== confirm && (
+              <p className="text-[11px] mt-1 text-red-400">Passwords do not match</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-end pt-1">
+        <button
+          type="submit"
+          disabled={saving}
+          className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+          {saving ? 'Updating...' : 'Update Password'}
+        </button>
+      </div>
+    </form>
+  );
+}
 
 export default function Settings() {
   const [auth, setAuth] = useState({ authenticated: false, profile: null });
@@ -378,6 +527,9 @@ export default function Settings() {
           />
         </div>
       </div>
+
+      {/* ── Change Password ──────────────────── */}
+      <ChangePasswordCard />
 
       {/* ── Active Strategies ────────────────── */}
       <div className="card space-y-5">

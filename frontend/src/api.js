@@ -65,6 +65,8 @@ export const api = {
     request('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ username, email }) }),
   resetPassword: (token, new_password) =>
     request('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, new_password }) }),
+  changePassword: (current_password, new_password) =>
+    request('/auth/change-password', { method: 'POST', body: JSON.stringify({ current_password, new_password }) }),
   getMe: () => request('/auth/me'),
   onboard: (kite_api_key, kite_api_secret) =>
     request('/auth/onboard', { method: 'POST', body: JSON.stringify({ kite_api_key, kite_api_secret }) }),

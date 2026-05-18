@@ -23,6 +23,7 @@ from core.auth import (
     authenticate_user, create_user, create_access_token, get_user_by_id,
     Token, login_required, UserZerodhaAuth,
     create_reset_token, verify_reset_token, reset_user_password,
+    verify_password, hash_password,
 )
 from core.logger import get_logger
 
@@ -53,6 +54,10 @@ class ForgotPasswordRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     token: str
+    new_password: str
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
     new_password: str
 
 
@@ -329,4 +334,35 @@ def reset_password(request: Request, body: ResetPasswordRequest, db: Session = D
         raise HTTPException(400, "Could not reset password. Account may be inactive.")
     logger.info(f"Password reset completed for user_id={user_id}")
     return {"status": "ok", "message": "Password has been reset. You can now sign in."}
+
+
+@router.post("/change-password")
+@limiter.limit("5/minute")
+def change_password(
+    request: Request,
+    body: ChangePasswordRequest,
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    """Authenticated password change. Verifies the current password
+    before setting the new one."""
+    from core.models import User
+
+    if len(body.new_password) < 6:
+        raise HTTPException(400, "New password must be at least 6 characters")
+    if body.current_password == body.new_password:
+        raise HTTPException(400, "New password must be different from the current password")
+
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    if not verify_password(body.current_password, user.password_hash):
+        # Same generic wording as /app-login to avoid leaking which half is wrong.
+        raise HTTPException(401, "Current password is incorrect")
+
+    user.password_hash = hash_password(body.new_password)
+    db.commit()
+    logger.info(f"Password changed for user_id={user_id}")
+    return {"status": "ok", "message": "Password updated successfully"}
 
