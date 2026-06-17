@@ -31,8 +31,8 @@ CONFIG_FILE = settings.DATA_DIR / "strategy_configs" / "strategy10_equity_intrad
 
 class Strategy10Config(BaseModel):
     capital_per_stock: float = 20000.0
-    target_points: float = 30.0
-    sl_points: float = 20.0
+    target_points: float = 10.0
+    sl_points: float = 10.0
     volume_filter: bool = False
     max_positions: int = 5
     lookback_days: int = 5

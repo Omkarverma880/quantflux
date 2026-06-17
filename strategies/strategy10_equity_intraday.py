@@ -110,8 +110,8 @@ class Strategy10EquityIntraday:
 
         # ── Config ──
         self.capital_per_stock: float = float(config.get("capital_per_stock", 20000))
-        self.target_points: float = float(config.get("target_points", 30))
-        self.sl_points: float = float(config.get("sl_points", 20))
+        self.target_points: float = float(config.get("target_points", 10))
+        self.sl_points: float = float(config.get("sl_points", 10))
         self.volume_filter: bool = bool(config.get("volume_filter", False))
         self.max_positions: int = int(config.get("max_positions", 5))
         self.lookback_days: int = int(config.get("lookback_days", 5))

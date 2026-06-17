@@ -80,8 +80,8 @@ function ConfigField({ label, type, value, onChange, hint, step }) {
 
 const DEFAULT_CONFIG = {
   capital_per_stock: 20000,
-  target_points: 30,
-  sl_points: 20,
+  target_points: 10,
+  sl_points: 10,
   volume_filter: false,
   max_positions: 5,
   lookback_days: 5,
@@ -116,6 +116,10 @@ export default function Strategy10() {
   const [btResult, setBtResult] = useState(null);
 
   const fileRef = useRef(null);
+  // Seed the config form from the server only ONCE. After that the form is
+  // user-owned until they Save — otherwise the 2s status poll would clobber
+  // every keystroke with the server's saved values.
+  const configInit = useRef(false);
 
   const showMsg = (msg, isError = false) => {
     if (isError) { setError(msg); setTimeout(() => setError(''), 4500); }
@@ -130,7 +134,10 @@ export default function Strategy10() {
       ]);
       if (st) {
         setStatus(st);
-        if (st.config) setConfig((p) => ({ ...DEFAULT_CONFIG, ...p, ...st.config }));
+        if (st.config && !configInit.current) {
+          setConfig((p) => ({ ...DEFAULT_CONFIG, ...p, ...st.config }));
+          configInit.current = true;
+        }
       }
       if (sk) {
         setStocks(sk.stocks || []);
