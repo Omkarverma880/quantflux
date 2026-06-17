@@ -36,9 +36,11 @@ class Strategy10Config(BaseModel):
     volume_filter: bool = False
     max_positions: int = 5
     lookback_days: int = 5
-    entry_cutoff: str = "09:30"
+    entry_cutoff: str = "15:00"
     squareoff_time: str = "15:15"
     exchange: str = "NSE"
+    allow_reentry: bool = False
+    max_reentries: int = 1
 
 
 class ManualOrder(BaseModel):
@@ -388,11 +390,11 @@ async def run_backtest_multi(
     user_id: int = Depends(login_required),
     db: Session = Depends(get_db),
 ):
-    """Aggregated multi-day backtest. Body: {"days": 5} (max 10)."""
-    days = 5
+    """Aggregated multi-day backtest. Body: {"days": 30} (max 30)."""
+    days = 30
     if payload and payload.get("days"):
         try:
-            days = max(1, min(int(payload["days"]), 10))
+            days = max(1, min(int(payload["days"]), 30))
         except Exception:
             return {"status": "error", "message": "Invalid days value"}
 

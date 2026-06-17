@@ -85,9 +85,11 @@ const DEFAULT_CONFIG = {
   volume_filter: false,
   max_positions: 5,
   lookback_days: 5,
-  entry_cutoff: '09:30',
+  entry_cutoff: '15:00',
   squareoff_time: '15:15',
   exchange: 'NSE',
+  allow_reentry: false,
+  max_reentries: 1,
 };
 
 export default function Strategy10() {
@@ -242,11 +244,12 @@ export default function Strategy10() {
     finally { setBtLoading(false); }
   };
 
-  const runBacktestMulti = async () => {
+  const runBacktestMulti = async (daysArg) => {
+    const d = typeof daysArg === 'number' ? daysArg : btDays;
     setBtLoading(true);
     setBtResult(null);
     try {
-      const res = await api.strategy10BacktestMulti(btDays);
+      const res = await api.strategy10BacktestMulti(d);
       if (res.status === 'ok') setBtResult({ ...res, mode: 'multi' });
       else showMsg(res.message || 'Backtest failed', true);
     } catch (e) { showMsg(e.message || 'Backtest failed', true); }
@@ -378,7 +381,7 @@ export default function Strategy10() {
                 hint="Days of first-hour highs/volumes" />
               <ConfigField label="Entry Cutoff (HH:MM)" type="text" value={config.entry_cutoff}
                 onChange={(v) => setConfig((c) => ({ ...c, entry_cutoff: v }))}
-                hint="No new entries after this time" />
+                hint="Latest time to take a fresh entry (set early, e.g. 09:30, to only catch the open)" />
               <ConfigField label="Auto Square-Off (HH:MM)" type="text" value={config.squareoff_time}
                 onChange={(v) => setConfig((c) => ({ ...c, squareoff_time: v }))} />
               <ConfigField label="Exchange" type="text" value={config.exchange}
@@ -396,11 +399,33 @@ export default function Strategy10() {
                   Volume Filter: {config.volume_filter ? 'ON' : 'OFF'}
                 </button>
               </div>
+              <div className="flex items-center gap-2 pt-5">
+                <button
+                  onClick={() => setConfig((c) => ({ ...c, allow_reentry: !c.allow_reentry }))}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium border transition ${
+                    config.allow_reentry
+                      ? 'bg-purple-600/20 text-purple-400 border-purple-500/40'
+                      : 'bg-surface-3 text-gray-400 border-surface-4'
+                  }`}
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Re-entry: {config.allow_reentry ? 'ON' : 'OFF'}
+                </button>
+              </div>
+              {config.allow_reentry && (
+                <ConfigField label="Max Re-entries" type="number" value={config.max_reentries}
+                  onChange={(v) => setConfig((c) => ({ ...c, max_reentries: Math.max(0, parseInt(v) || 0) }))}
+                  hint="Re-entries allowed per stock after SL/Target" />
+              )}
             </div>
             <p className="text-gray-600 text-[11px]">
               When the volume filter is ON, an armed stock only buys once today&apos;s live cumulative
               volume exceeds the <strong>average</strong> of the last {config.lookback_days} days&apos;
-              first-hour volumes.
+              first-hour volumes. Max <strong>{config.max_positions}</strong> positions can be open at once;
+              extra breakout candidates wait for a free slot.
+              {config.allow_reentry
+                ? ` Re-entry is ON — a stock can re-enter up to ${config.max_reentries}× after its SL/Target is hit.`
+                : ' Re-entry is OFF — a stock trades once per day.'}
             </p>
             <div className="flex justify-end pt-1">
               <button onClick={handleSaveConfig}
@@ -574,18 +599,23 @@ export default function Strategy10() {
           </button>
           <div className="h-8 w-px bg-surface-3 mx-1 hidden sm:block" />
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Days (max 10)</label>
-            <input type="number" min="1" max="10" value={btDays}
-              onChange={(e) => setBtDays(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+            <label className="block text-xs text-gray-400 mb-1">Days (max 30)</label>
+            <input type="number" min="1" max="30" value={btDays}
+              onChange={(e) => setBtDays(Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))}
               className="w-20 bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500/60" />
           </div>
-          <button onClick={runBacktestMulti} disabled={btLoading}
+          <button onClick={() => runBacktestMulti()} disabled={btLoading}
             className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-surface-3 hover:bg-surface-4 text-gray-200 border border-surface-4 font-semibold disabled:opacity-50 transition">
             {btLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />} Run Multi-Day
+          </button>
+          <button onClick={() => { setBtDays(30); runBacktestMulti(30); }} disabled={btLoading}
+            className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 border border-blue-500/30 font-semibold disabled:opacity-50 transition">
+            <FlaskConical className="w-4 h-4" /> Run 30 Days
           </button>
           <p className="text-gray-600 text-[11px] basis-full">
             Replays real minute data: enters at open when Open &gt; level{config.volume_filter ? ' (and live volume beats the 5-day average)' : ''},
             then exits on hidden Target/SL or {config.squareoff_time} square-off. SL is checked before Target within a candle (conservative).
+            Each signal is evaluated independently (the live {config.max_positions}-position cap isn&apos;t applied in backtest). Large lists × 30 days can take a while.
           </p>
         </div>
 

@@ -115,9 +115,14 @@ class Strategy10EquityIntraday:
         self.volume_filter: bool = bool(config.get("volume_filter", False))
         self.max_positions: int = int(config.get("max_positions", 5))
         self.lookback_days: int = int(config.get("lookback_days", 5))
-        self.entry_cutoff: dtime = self._parse_time(config.get("entry_cutoff", "09:30"))
+        self.entry_cutoff: dtime = self._parse_time(config.get("entry_cutoff", "15:00"))
         self.squareoff_time: dtime = self._parse_time(config.get("squareoff_time", "15:15"))
         self.exchange: str = str(config.get("exchange", "NSE")).upper()
+        # Re-entry: OFF by default. When ON, a stock may re-enter up to
+        # max_reentries times after its SL/Target is hit (same day, while the
+        # breakout condition still holds and a position slot is free).
+        self.allow_reentry: bool = bool(config.get("allow_reentry", False))
+        self.max_reentries: int = max(0, int(config.get("max_reentries", 1)))
 
         # ── Global state ──
         self.is_active: bool = False
@@ -176,6 +181,7 @@ class Strategy10EquityIntraday:
             "skip_reason": None,
             "manual": False,
             "is_paper": False,
+            "reentry_count": 0,
         }
 
     def _previous_trading_days(self, n: int) -> list[date]:
@@ -518,6 +524,30 @@ class Strategy10EquityIntraday:
             stock["state"] = new_state
 
             self._append_trade(symbol, stock)
+
+            # ── Re-entry: re-arm the stock after an SL/Target exit ──
+            rc = int(stock.get("reentry_count", 0) or 0)
+            if (
+                self.allow_reentry
+                and reason in ("SL_HIT", "TARGET_HIT")
+                and not stock.get("manual")
+                and rc < self.max_reentries
+            ):
+                fresh = self._fresh_stock(stock.get("exchange"))
+                fresh.update({
+                    "level": stock.get("level"),
+                    "avg_volume": stock.get("avg_volume"),
+                    "level_date": stock.get("level_date"),
+                    "level_days_used": stock.get("level_days_used"),
+                    "today_open": stock.get("today_open"),
+                    "ltp": stock.get("ltp"),
+                    "live_volume": stock.get("live_volume"),
+                    "reentry_count": rc + 1,
+                })
+                self.stock_states[symbol] = fresh  # back to WATCHING
+                logger.info("S10 %s re-armed for re-entry (%d/%d)",
+                            symbol, rc + 1, self.max_reentries)
+
             self._save_state()
             logger.info("S10 exit %s: %s qty=%d @%.2f pnl=%.2f",
                         symbol, reason, qty, stock["exit_price"], stock["pnl"])
@@ -615,6 +645,18 @@ class Strategy10EquityIntraday:
         if in_entry_window:
             if not self._levels_ready:
                 self._compute_levels()
+
+            # Revive "soft" skips (cutoff / max-positions) back to WATCHING so
+            # that extending the entry cutoff or freeing a slot lets them enter
+            # again. Hard skips ("open below level") stay retired.
+            for stock in self.stock_states.values():
+                if (
+                    stock.get("state") == STOCK_SKIP
+                    and not stock.get("manual")
+                    and stock.get("skip_reason") in ("no entry by cutoff", "max positions reached")
+                ):
+                    stock["state"] = STOCK_IDLE
+                    stock["skip_reason"] = None
 
             # Resolve today's open for stocks still waiting
             need_open = [
@@ -820,22 +862,22 @@ class Strategy10EquityIntraday:
             return None, None
         return max(highs), (sum(vols) / len(vols) if vols else 0.0)
 
-    def _simulate_day(self, symbol: str, token: int, day: date) -> Optional[dict]:
-        level, avg_vol = self._first_hour_levels(token, day)
-        if level is None:
-            return None
-        from_dt = datetime.combine(day, MARKET_OPEN)
-        to_dt = datetime.combine(day, MARKET_CLOSE)
-        minutes = self.broker.get_historical_data(token, from_dt, to_dt, "minute") or []
-        if not minutes:
-            return None
+    def _group_by_date(self, candles: list[dict]) -> dict:
+        out: dict = {}
+        for c in candles:
+            dt = self._candle_dt(c)
+            if dt:
+                out.setdefault(dt.date(), []).append(c)
+        return out
 
+    def _simulate_core(self, symbol: str, level: float, avg_vol: float, minutes: list[dict]) -> dict:
+        """Replay one day's minute candles given a precomputed level / avg_vol."""
         day_open = float(minutes[0]["open"])
         base = {"symbol": symbol, "level": round(level, 2), "day_open": round(day_open, 2)}
         if day_open <= level:
             return {**base, "result": "NO_TRADE", "reason": "open ≤ level", "pnl": 0}
 
-        # Resolve entry candle
+        # Resolve entry candle (honouring the volume filter + entry cutoff)
         if self.volume_filter:
             entry_idx, cum = None, 0.0
             for i, c in enumerate(minutes):
@@ -885,6 +927,17 @@ class Strategy10EquityIntraday:
             "exit_time": exit_dt.strftime("%H:%M") if exit_dt else None,
         }
 
+    def _simulate_day(self, symbol: str, token: int, day: date) -> Optional[dict]:
+        level, avg_vol = self._first_hour_levels(token, day)
+        if level is None:
+            return None
+        from_dt = datetime.combine(day, MARKET_OPEN)
+        to_dt = datetime.combine(day, MARKET_CLOSE)
+        minutes = self.broker.get_historical_data(token, from_dt, to_dt, "minute") or []
+        if not minutes:
+            return None
+        return self._simulate_core(symbol, level, avg_vol, minutes)
+
     def backtest(self, target_date: Optional[date] = None, symbols: Optional[list] = None) -> dict:
         syms = symbols or list(self.stock_states.keys())
         if not syms:
@@ -908,24 +961,71 @@ class Strategy10EquityIntraday:
         return {"status": "ok", "date": target_date.isoformat(), "trades": trades,
                 "summary": self._bt_summary(trades)}
 
-    def backtest_multi(self, days: int = 5, symbols: Optional[list] = None) -> dict:
-        days = max(1, min(int(days), 10))
-        tdays = self._previous_trading_days(days)
-        daily, all_trades = [], []
-        for d in reversed(tdays):
-            res = self.backtest(d, symbols)
-            if res.get("status") != "ok":
+    def backtest_multi(self, days: int = 30, symbols: Optional[list] = None) -> dict:
+        """Aggregated multi-day backtest.
+
+        Optimised to TWO historical calls per stock (one 60-min span for the
+        rolling levels, one minute span for the days), so it scales to 30 days
+        without a fetch-per-day explosion.
+        """
+        days = max(1, min(int(days), 30))
+        syms = symbols or list(self.stock_states.keys())
+        if not syms:
+            return {"status": "error", "message": "No stocks loaded — upload a list first"}
+
+        target_days = sorted(self._previous_trading_days(days))  # ascending
+        oldest, newest = target_days[0], target_days[-1]
+        # 60-min span must reach back lookback_days *trading* days before oldest.
+        fh_start = oldest - timedelta(days=self.lookback_days * 3 + 12)
+
+        daily_map = {d.isoformat(): {"total_pnl": 0.0, "trades_taken": 0} for d in target_days}
+        all_trades: list[dict] = []
+
+        for sym in syms:
+            token = self._resolve_token(sym)
+            if not token:
                 continue
-            daily.append({
-                "date": d.isoformat(),
-                "total_pnl": res["summary"]["total_pnl"],
-                "trades_taken": res["summary"]["trades_taken"],
-            })
-            for t in res["trades"]:
-                if t.get("result") not in ("NO_TRADE", "NO_DATA"):
-                    all_trades.append({**t, "date": d.isoformat()})
+            try:
+                c60 = self.broker.get_historical_data(
+                    token, datetime.combine(fh_start, MARKET_OPEN),
+                    datetime.combine(newest, FIRST_HOUR_END), "60minute") or []
+                fh: dict = {}
+                for c in c60:
+                    dt = self._candle_dt(c)
+                    if dt and dt.hour == 9 and dt.minute == 15:
+                        fh[dt.date()] = (float(c["high"]), float(c.get("volume", 0) or 0))
+
+                cmin = self.broker.get_historical_data(
+                    token, datetime.combine(oldest, MARKET_OPEN),
+                    datetime.combine(newest, MARKET_CLOSE), "minute") or []
+                by_date = self._group_by_date(cmin)
+
+                for d in target_days:
+                    minutes = by_date.get(d)
+                    if not minutes:
+                        continue
+                    prior = sorted([k for k in fh if k < d])[-self.lookback_days:]
+                    if not prior:
+                        continue
+                    highs = [fh[k][0] for k in prior]
+                    vols = [fh[k][1] for k in prior]
+                    level = max(highs)
+                    avg_vol = sum(vols) / len(vols) if vols else 0.0
+                    r = self._simulate_core(sym, level, avg_vol, minutes)
+                    if r.get("result") in ("NO_TRADE", "NO_DATA"):
+                        continue
+                    all_trades.append({**r, "date": d.isoformat()})
+                    daily_map[d.isoformat()]["total_pnl"] += r["pnl"]
+                    daily_map[d.isoformat()]["trades_taken"] += 1
+            except Exception as exc:
+                logger.debug("S10 multi backtest %s failed: %s", sym, exc)
+
+        daily = [
+            {"date": k, "total_pnl": round(v["total_pnl"], 2), "trades_taken": v["trades_taken"]}
+            for k, v in sorted(daily_map.items())
+        ]
         return {"status": "ok", "days": days, "daily": daily,
-                "trades": all_trades[-200:], "summary": self._bt_summary(all_trades)}
+                "trades": all_trades[-300:], "summary": self._bt_summary(all_trades)}
 
     @staticmethod
     def _bt_summary(trades: list[dict]) -> dict:
@@ -971,6 +1071,8 @@ class Strategy10EquityIntraday:
         self.entry_cutoff = self._parse_time(config.get("entry_cutoff", self.entry_cutoff.strftime("%H:%M")))
         self.squareoff_time = self._parse_time(config.get("squareoff_time", self.squareoff_time.strftime("%H:%M")))
         self.exchange = str(config.get("exchange", self.exchange)).upper()
+        self.allow_reentry = bool(config.get("allow_reentry", self.allow_reentry))
+        self.max_reentries = max(0, int(config.get("max_reentries", self.max_reentries)))
         if save:
             self._save_state()
 
@@ -1021,6 +1123,8 @@ class Strategy10EquityIntraday:
             "entry_cutoff": self.entry_cutoff.strftime("%H:%M"),
             "squareoff_time": self.squareoff_time.strftime("%H:%M"),
             "exchange": self.exchange,
+            "allow_reentry": self.allow_reentry,
+            "max_reentries": self.max_reentries,
         }
 
     def _save_state(self):
