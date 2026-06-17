@@ -31,8 +31,8 @@ CONFIG_FILE = settings.DATA_DIR / "strategy_configs" / "strategy10_equity_intrad
 
 class Strategy10Config(BaseModel):
     capital_per_stock: float = 20000.0
-    target_points: float = 10.0
-    sl_points: float = 10.0
+    target_percent: float = 2.0
+    sl_percent: float = 1.0
     volume_filter: bool = False
     max_positions: int = 5
     lookback_days: int = 5
@@ -47,8 +47,8 @@ class ManualOrder(BaseModel):
     symbol: str
     quantity: int | None = None
     capital: float | None = None
-    sl_points: float | None = None
-    target_points: float | None = None
+    sl_percent: float | None = None
+    target_percent: float | None = None
     exchange: str | None = None
 
 
@@ -56,8 +56,8 @@ class ManualModify(BaseModel):
     symbol: str
     sl_price: float | None = None
     target_price: float | None = None
-    sl_points: float | None = None
-    target_points: float | None = None
+    sl_percent: float | None = None
+    target_percent: float | None = None
 
 
 class ManualExit(BaseModel):
@@ -238,6 +238,29 @@ async def upload_stocks(
     }
 
 
+@router.get("/download-stocks")
+async def download_stocks(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Return the currently-stored stock list as CSV text (for edit + re-upload)."""
+    row = _latest_stock_list(db)
+    if not row or not row.symbols:
+        return {"status": "error", "message": "No stock list uploaded yet"}
+    lines = ["symbol,exchange"]
+    for s in row.symbols:
+        if isinstance(s, dict):
+            sym = (s.get("symbol") or "").strip().upper()
+            exch = (s.get("exchange") or "NSE").strip().upper()
+        else:
+            sym, exch = str(s).strip().upper(), "NSE"
+        if sym:
+            lines.append(f"{sym},{exch}")
+    return {
+        "status": "ok",
+        "filename": row.filename or "stocks_list.csv",
+        "csv": "\n".join(lines) + "\n",
+        "stock_count": row.stock_count,
+    }
+
+
 @router.post("/start")
 async def start_strategy(
     config: Strategy10Config,
@@ -317,8 +340,8 @@ async def manual_order(
         symbol=order.symbol,
         quantity=order.quantity,
         capital=order.capital,
-        sl_points=order.sl_points,
-        target_points=order.target_points,
+        sl_percent=order.sl_percent,
+        target_percent=order.target_percent,
         exchange=order.exchange,
     )
 
@@ -335,8 +358,8 @@ async def manual_modify(
         symbol=payload.symbol,
         sl_price=payload.sl_price,
         target_price=payload.target_price,
-        sl_points=payload.sl_points,
-        target_points=payload.target_points,
+        sl_percent=payload.sl_percent,
+        target_percent=payload.target_percent,
     )
 
 

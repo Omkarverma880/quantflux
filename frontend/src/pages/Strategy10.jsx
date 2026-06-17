@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Play, Square, Settings2, ChevronDown, ChevronUp, RefreshCw,
   TrendingUp, CheckCircle2, XCircle, AlertCircle, Activity,
-  Upload, List, Zap, ShoppingCart, Pencil, LogOut, FileText, Loader2, FlaskConical,
+  Upload, Download, List, Zap, ShoppingCart, Pencil, LogOut, FileText, Loader2, FlaskConical,
 } from 'lucide-react';
 import { api } from '../api';
 
@@ -80,8 +80,8 @@ function ConfigField({ label, type, value, onChange, hint, step }) {
 
 const DEFAULT_CONFIG = {
   capital_per_stock: 20000,
-  target_points: 10,
-  sl_points: 10,
+  target_percent: 2,
+  sl_percent: 1,
   volume_filter: false,
   max_positions: 5,
   lookback_days: 5,
@@ -105,7 +105,7 @@ export default function Strategy10() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const [manual, setManual] = useState({ symbol: '', capital: '', sl_points: '', target_points: '' });
+  const [manual, setManual] = useState({ symbol: '', capital: '', sl_percent: '', target_percent: '' });
   const [editSym, setEditSym] = useState(null);
   const [editVals, setEditVals] = useState({ sl_price: '', target_price: '' });
 
@@ -178,6 +178,25 @@ export default function Strategy10() {
     }
   };
 
+  const handleDownload = async () => {
+    try {
+      const res = await api.strategy10DownloadStocks();
+      if (res.status === 'ok') {
+        const blob = new Blob([res.csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = res.filename || 'stocks_list.csv';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } else {
+        showMsg(res.message || 'Nothing to download', true);
+      }
+    } catch (e) { showMsg(e.message || 'Download failed', true); }
+  };
+
   const handleStart = async () => {
     setLoading(true);
     try {
@@ -221,12 +240,12 @@ export default function Strategy10() {
       const res = await api.strategy10ManualOrder({
         symbol: manual.symbol.trim().toUpperCase(),
         capital: manual.capital ? parseFloat(manual.capital) : null,
-        sl_points: manual.sl_points ? parseFloat(manual.sl_points) : null,
-        target_points: manual.target_points ? parseFloat(manual.target_points) : null,
+        sl_percent: manual.sl_percent ? parseFloat(manual.sl_percent) : null,
+        target_percent: manual.target_percent ? parseFloat(manual.target_percent) : null,
       });
       if (res.status === 'ok') {
         showMsg(`Manual BUY placed for ${res.symbol}.`);
-        setManual({ symbol: '', capital: '', sl_points: '', target_points: '' });
+        setManual({ symbol: '', capital: '', sl_percent: '', target_percent: '' });
         fetchAll();
       } else showMsg(res.message || 'Order failed', true);
     } catch (e) { showMsg(e.message || 'Order failed', true); }
@@ -319,6 +338,10 @@ export default function Strategy10() {
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-surface-3 text-gray-300 hover:bg-surface-3/80 border border-surface-4 transition">
             <Upload className="w-3.5 h-3.5" /> Upload CSV
           </button>
+          <button onClick={handleDownload} disabled={stocks.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-surface-3 text-gray-300 hover:bg-surface-3/80 border border-surface-4 disabled:opacity-40 transition">
+            <Download className="w-3.5 h-3.5" /> Download CSV
+          </button>
           <button onClick={handleRefreshStocks} disabled={refreshing}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-surface-3 text-gray-300 hover:bg-surface-3/80 border border-surface-4 disabled:opacity-40 transition">
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh Levels
@@ -377,10 +400,12 @@ export default function Strategy10() {
               <ConfigField label="Capital per Stock (₹)" type="number" value={config.capital_per_stock}
                 onChange={(v) => setConfig((c) => ({ ...c, capital_per_stock: parseFloat(v) || 0 }))}
                 hint="Qty = floor(capital / entry price)" />
-              <ConfigField label="Target (points)" type="number" value={config.target_points}
-                onChange={(v) => setConfig((c) => ({ ...c, target_points: parseFloat(v) || 0 }))} />
-              <ConfigField label="Stop-Loss (points)" type="number" value={config.sl_points}
-                onChange={(v) => setConfig((c) => ({ ...c, sl_points: parseFloat(v) || 0 }))} />
+              <ConfigField label="Target (%)" type="number" step="0.1" value={config.target_percent}
+                onChange={(v) => setConfig((c) => ({ ...c, target_percent: parseFloat(v) || 0 }))}
+                hint="e.g. 2 = exit at entry + 2%" />
+              <ConfigField label="Stop-Loss (%)" type="number" step="0.1" value={config.sl_percent}
+                onChange={(v) => setConfig((c) => ({ ...c, sl_percent: parseFloat(v) || 0 }))}
+                hint="e.g. 1 = exit at entry − 1%" />
               <ConfigField label="Max Concurrent Positions" type="number" value={config.max_positions}
                 onChange={(v) => setConfig((c) => ({ ...c, max_positions: parseInt(v) || 1 }))} />
               <ConfigField label="Lookback Days" type="number" value={config.lookback_days}
@@ -456,10 +481,10 @@ export default function Strategy10() {
           </div>
           <ConfigField label={`Capital (₹) — def ${config.capital_per_stock}`} type="number"
             value={manual.capital} onChange={(v) => setManual((m) => ({ ...m, capital: v }))} />
-          <ConfigField label={`SL pts — def ${config.sl_points}`} type="number"
-            value={manual.sl_points} onChange={(v) => setManual((m) => ({ ...m, sl_points: v }))} />
-          <ConfigField label={`Target pts — def ${config.target_points}`} type="number"
-            value={manual.target_points} onChange={(v) => setManual((m) => ({ ...m, target_points: v }))} />
+          <ConfigField label={`SL % — def ${config.sl_percent}`} type="number" step="0.1"
+            value={manual.sl_percent} onChange={(v) => setManual((m) => ({ ...m, sl_percent: v }))} />
+          <ConfigField label={`Target % — def ${config.target_percent}`} type="number" step="0.1"
+            value={manual.target_percent} onChange={(v) => setManual((m) => ({ ...m, target_percent: v }))} />
           <button onClick={handleManualOrder}
             className="flex items-center justify-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold transition">
             <ShoppingCart className="w-4 h-4" /> Buy (MIS)
@@ -766,8 +791,8 @@ export default function Strategy10() {
               <span className="w-5 h-5 rounded-full bg-blue-600/30 text-blue-400 flex items-center justify-center text-[10px] font-bold">3</span>
               Exit
             </div>
-            <p>Hidden <strong className="text-emerald-400">Target +{config.target_points}</strong> /
-              <strong className="text-red-400"> SL -{config.sl_points}</strong> points, monitored on LTP.</p>
+            <p>Hidden <strong className="text-emerald-400">Target +{config.target_percent}%</strong> /
+              <strong className="text-red-400"> SL −{config.sl_percent}%</strong>, monitored on LTP.</p>
             <p className="text-gray-500">All positions auto square-off at {config.squareoff_time}.</p>
           </div>
         </div>

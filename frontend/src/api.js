@@ -319,6 +319,7 @@ export const api = {
     request('/strategy10-trade/refresh-stocks', { method: 'POST' }),
   strategy10UploadStocks: (formData) =>
     requestUpload('/strategy10-trade/upload-stocks', formData),
+  strategy10DownloadStocks: () => request('/strategy10-trade/download-stocks'),
   strategy10ManualOrder: (order) =>
     request('/strategy10-trade/manual/order', { method: 'POST', body: JSON.stringify(order) }),
   strategy10ManualModify: (payload) =>

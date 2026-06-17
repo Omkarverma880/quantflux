@@ -18,9 +18,10 @@ Entry rule
 
 Exit
 ----
-    • Hidden (shadow) SL / Target in *points*: SL = entry - sl_points,
-      Target = entry + target_points. Monitored on LTP; fired as MARKET
-      when touched. Never resting on the exchange.
+    • Hidden (shadow) SL / Target in *percent*: SL = entry × (1 − sl_pct),
+      Target = entry × (1 + target_pct). Percentage keeps risk uniform across
+      high- and low-priced stocks. Monitored on LTP; fired as MARKET when
+      touched. Never resting on the exchange.
     • Flat auto-square-off at squareoff_time (default 15:15 IST).
     • Detects manual broker exits (live positions only).
 
@@ -110,8 +111,8 @@ class Strategy10EquityIntraday:
 
         # ── Config ──
         self.capital_per_stock: float = float(config.get("capital_per_stock", 20000))
-        self.target_points: float = float(config.get("target_points", 10))
-        self.sl_points: float = float(config.get("sl_points", 10))
+        self.target_percent: float = float(config.get("target_percent", 2.0))
+        self.sl_percent: float = float(config.get("sl_percent", 1.0))
         self.volume_filter: bool = bool(config.get("volume_filter", False))
         self.max_positions: int = int(config.get("max_positions", 5))
         self.lookback_days: int = int(config.get("lookback_days", 5))
@@ -170,8 +171,8 @@ class Strategy10EquityIntraday:
             "quantity": 0,
             "entry_price": 0.0,
             "entry_time": None,
-            "sl_points": self.sl_points,
-            "target_points": self.target_points,
+            "sl_percent": self.sl_percent,
+            "target_percent": self.target_percent,
             "sl_price": 0.0,
             "target_price": 0.0,
             "exit_order_id": None,
@@ -429,8 +430,8 @@ class Strategy10EquityIntraday:
 
     def _place_entry(self, symbol: str, ref_price: float, manual: bool = False,
                      quantity: Optional[int] = None,
-                     sl_points: Optional[float] = None,
-                     target_points: Optional[float] = None):
+                     sl_percent: Optional[float] = None,
+                     target_percent: Optional[float] = None):
         stock = self.stock_states[symbol]
         qty = int(quantity) if quantity else self._qty_for(ref_price)
         stock["state"] = STOCK_ORDER_PLACED
@@ -438,8 +439,8 @@ class Strategy10EquityIntraday:
         stock["manual"] = manual
         if stock.get("today_open", 0) <= 0 and ref_price > 0:
             stock["today_open"] = round(ref_price, 2)
-        stock["sl_points"] = float(sl_points) if sl_points is not None else self.sl_points
-        stock["target_points"] = float(target_points) if target_points is not None else self.target_points
+        stock["sl_percent"] = float(sl_percent) if sl_percent is not None else self.sl_percent
+        stock["target_percent"] = float(target_percent) if target_percent is not None else self.target_percent
         try:
             exch = Exchange(stock.get("exchange", self.exchange))
         except ValueError:
@@ -476,8 +477,8 @@ class Strategy10EquityIntraday:
         stock = self.stock_states[symbol]
         entry = round(float(fill_price), 2)
         stock["entry_price"] = entry
-        stock["sl_price"] = round(max(0.05, entry - stock["sl_points"]), 2)
-        stock["target_price"] = round(entry + stock["target_points"], 2)
+        stock["sl_price"] = round(max(0.05, entry * (1 - stock["sl_percent"] / 100)), 2)
+        stock["target_price"] = round(entry * (1 + stock["target_percent"] / 100), 2)
         stock["state"] = STOCK_POSITION_OPEN
 
     def _place_exit(self, symbol: str, reason: str):
@@ -558,8 +559,8 @@ class Strategy10EquityIntraday:
 
     def add_manual_trade(self, symbol: str, quantity: Optional[int] = None,
                          capital: Optional[float] = None,
-                         sl_points: Optional[float] = None,
-                         target_points: Optional[float] = None,
+                         sl_percent: Optional[float] = None,
+                         target_percent: Optional[float] = None,
                          exchange: Optional[str] = None) -> dict:
         symbol = symbol.strip().upper()
         if symbol not in self.stock_states:
@@ -583,14 +584,14 @@ class Strategy10EquityIntraday:
         self.state = GlobalState.RUNNING
         self._place_entry(
             symbol, ref, manual=True, quantity=qty,
-            sl_points=sl_points, target_points=target_points,
+            sl_percent=sl_percent, target_percent=target_percent,
         )
         return {"status": "ok", **self._stock_view(symbol)}
 
     def modify_manual(self, symbol: str, sl_price: Optional[float] = None,
                       target_price: Optional[float] = None,
-                      sl_points: Optional[float] = None,
-                      target_points: Optional[float] = None) -> dict:
+                      sl_percent: Optional[float] = None,
+                      target_percent: Optional[float] = None) -> dict:
         symbol = symbol.strip().upper()
         stock = self.stock_states.get(symbol)
         if not stock or stock.get("state") != STOCK_POSITION_OPEN:
@@ -598,16 +599,16 @@ class Strategy10EquityIntraday:
         entry = float(stock.get("entry_price") or 0)
         if sl_price is not None:
             stock["sl_price"] = round(float(sl_price), 2)
-            stock["sl_points"] = round(entry - stock["sl_price"], 2)
-        elif sl_points is not None:
-            stock["sl_points"] = float(sl_points)
-            stock["sl_price"] = round(max(0.05, entry - stock["sl_points"]), 2)
+            stock["sl_percent"] = round((entry - stock["sl_price"]) / entry * 100, 3) if entry else stock.get("sl_percent")
+        elif sl_percent is not None:
+            stock["sl_percent"] = float(sl_percent)
+            stock["sl_price"] = round(max(0.05, entry * (1 - sl_percent / 100)), 2)
         if target_price is not None:
             stock["target_price"] = round(float(target_price), 2)
-            stock["target_points"] = round(stock["target_price"] - entry, 2)
-        elif target_points is not None:
-            stock["target_points"] = float(target_points)
-            stock["target_price"] = round(entry + stock["target_points"], 2)
+            stock["target_percent"] = round((stock["target_price"] - entry) / entry * 100, 3) if entry else stock.get("target_percent")
+        elif target_percent is not None:
+            stock["target_percent"] = float(target_percent)
+            stock["target_price"] = round(entry * (1 + target_percent / 100), 2)
         self._save_state()
         return {"status": "ok", **self._stock_view(symbol)}
 
@@ -897,8 +898,8 @@ class Strategy10EquityIntraday:
 
         entry_dt = self._candle_dt(minutes[entry_idx])
         qty = max(1, floor(self.capital_per_stock / entry_price)) if entry_price > 0 else 1
-        sl = entry_price - self.sl_points
-        tgt = entry_price + self.target_points
+        sl = entry_price * (1 - self.sl_percent / 100)
+        tgt = entry_price * (1 + self.target_percent / 100)
 
         exit_price, exit_reason, exit_dt = None, None, None
         for c in minutes[entry_idx:]:
@@ -1063,8 +1064,8 @@ class Strategy10EquityIntraday:
 
     def apply_config(self, config: dict, save: bool = True):
         self.capital_per_stock = float(config.get("capital_per_stock", self.capital_per_stock))
-        self.target_points = float(config.get("target_points", self.target_points))
-        self.sl_points = float(config.get("sl_points", self.sl_points))
+        self.target_percent = float(config.get("target_percent", self.target_percent))
+        self.sl_percent = float(config.get("sl_percent", self.sl_percent))
         self.volume_filter = bool(config.get("volume_filter", self.volume_filter))
         self.max_positions = int(config.get("max_positions", self.max_positions))
         self.lookback_days = int(config.get("lookback_days", self.lookback_days))
@@ -1115,8 +1116,8 @@ class Strategy10EquityIntraday:
     def _config_dict(self) -> dict:
         return {
             "capital_per_stock": self.capital_per_stock,
-            "target_points": self.target_points,
-            "sl_points": self.sl_points,
+            "target_percent": self.target_percent,
+            "sl_percent": self.sl_percent,
             "volume_filter": self.volume_filter,
             "max_positions": self.max_positions,
             "lookback_days": self.lookback_days,
