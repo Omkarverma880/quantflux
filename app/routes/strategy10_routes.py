@@ -349,6 +349,67 @@ async def manual_exit(
     return strat.exit_manual(payload.symbol)
 
 
+@router.post("/backtest")
+async def run_backtest(
+    payload: dict | None = None,
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    """Backtest the uploaded list on one day (default latest trading day).
+
+    Body (optional): {"date": "YYYY-MM-DD"}
+    """
+    from datetime import date as _date
+    target = None
+    if payload and payload.get("date"):
+        try:
+            target = _date.fromisoformat(payload["date"])
+        except Exception:
+            return {"status": "error", "message": "Invalid date format (use YYYY-MM-DD)"}
+
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated — backtest needs historical data access"}
+
+    symbols = _load_symbols_from_db(db)
+    sym_list = [s["symbol"] if isinstance(s, dict) else s for s in symbols]
+    # Fresh instance — pass symbols directly so we never touch the live state file
+    strat = Strategy10EquityIntraday(broker, _load_config())
+    try:
+        return strat.backtest(target, symbols=sym_list)
+    except Exception as exc:
+        logger.error("S10 backtest failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/backtest-multi")
+async def run_backtest_multi(
+    payload: dict | None = None,
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    """Aggregated multi-day backtest. Body: {"days": 5} (max 10)."""
+    days = 5
+    if payload and payload.get("days"):
+        try:
+            days = max(1, min(int(payload["days"]), 10))
+        except Exception:
+            return {"status": "error", "message": "Invalid days value"}
+
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated — backtest needs historical data access"}
+
+    symbols = _load_symbols_from_db(db)
+    sym_list = [s["symbol"] if isinstance(s, dict) else s for s in symbols]
+    strat = Strategy10EquityIntraday(broker, _load_config())
+    try:
+        return strat.backtest_multi(days, symbols=sym_list)
+    except Exception as exc:
+        logger.error("S10 multi backtest failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
 @router.get("/history")
 async def get_trade_history(user_id: int = Depends(login_required)):
     file = settings.DATA_DIR / "trade_history" / "strategy10_trades.json"

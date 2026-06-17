@@ -325,6 +325,10 @@ export const api = {
     request('/strategy10-trade/manual/modify', { method: 'POST', body: JSON.stringify(payload) }),
   strategy10ManualExit: (symbol) =>
     request('/strategy10-trade/manual/exit', { method: 'POST', body: JSON.stringify({ symbol }) }),
+  strategy10Backtest: (date) =>
+    request('/strategy10-trade/backtest', { method: 'POST', body: JSON.stringify(date ? { date } : {}) }),
+  strategy10BacktestMulti: (days) =>
+    request('/strategy10-trade/backtest-multi', { method: 'POST', body: JSON.stringify({ days: days || 5 }) }),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Play, Square, Settings2, ChevronDown, ChevronUp, RefreshCw,
   TrendingUp, CheckCircle2, XCircle, AlertCircle, Activity,
-  Upload, List, Zap, ShoppingCart, Pencil, LogOut, FileText, Loader2,
+  Upload, List, Zap, ShoppingCart, Pencil, LogOut, FileText, Loader2, FlaskConical,
 } from 'lucide-react';
 import { api } from '../api';
 
@@ -106,6 +106,12 @@ export default function Strategy10() {
   const [manual, setManual] = useState({ symbol: '', capital: '', sl_points: '', target_points: '' });
   const [editSym, setEditSym] = useState(null);
   const [editVals, setEditVals] = useState({ sl_price: '', target_price: '' });
+
+  // Backtest
+  const [btDate, setBtDate] = useState('');
+  const [btDays, setBtDays] = useState(5);
+  const [btLoading, setBtLoading] = useState(false);
+  const [btResult, setBtResult] = useState(null);
 
   const fileRef = useRef(null);
 
@@ -223,6 +229,28 @@ export default function Strategy10() {
       if (res.status === 'ok') { showMsg(`Exit placed for ${symbol}.`); fetchAll(); }
       else showMsg(res.message || 'Exit failed', true);
     } catch (e) { showMsg(e.message || 'Exit failed', true); }
+  };
+
+  const runBacktest = async () => {
+    setBtLoading(true);
+    setBtResult(null);
+    try {
+      const res = await api.strategy10Backtest(btDate || null);
+      if (res.status === 'ok') setBtResult({ ...res, mode: 'single' });
+      else showMsg(res.message || 'Backtest failed', true);
+    } catch (e) { showMsg(e.message || 'Backtest failed', true); }
+    finally { setBtLoading(false); }
+  };
+
+  const runBacktestMulti = async () => {
+    setBtLoading(true);
+    setBtResult(null);
+    try {
+      const res = await api.strategy10BacktestMulti(btDays);
+      if (res.status === 'ok') setBtResult({ ...res, mode: 'multi' });
+      else showMsg(res.message || 'Backtest failed', true);
+    } catch (e) { showMsg(e.message || 'Backtest failed', true); }
+    finally { setBtLoading(false); }
   };
 
   const openEdit = (s) => {
@@ -528,6 +556,104 @@ export default function Strategy10() {
               className="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg">Save</button>
             <button onClick={() => setEditSym(null)}
               className="px-3 py-1.5 text-sm bg-surface-4 hover:bg-surface-3 text-gray-300 rounded-lg">Cancel</button>
+          </div>
+        )}
+      </Card>
+
+      {/* ── Backtest ── */}
+      <Card title="Backtest" icon={FlaskConical}>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Date (blank = latest)</label>
+            <input type="date" value={btDate} onChange={(e) => setBtDate(e.target.value)}
+              className="bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500/60" />
+          </div>
+          <button onClick={runBacktest} disabled={btLoading}
+            className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold disabled:opacity-50 transition">
+            {btLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />} Run 1 Day
+          </button>
+          <div className="h-8 w-px bg-surface-3 mx-1 hidden sm:block" />
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Days (max 10)</label>
+            <input type="number" min="1" max="10" value={btDays}
+              onChange={(e) => setBtDays(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+              className="w-20 bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500/60" />
+          </div>
+          <button onClick={runBacktestMulti} disabled={btLoading}
+            className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-surface-3 hover:bg-surface-4 text-gray-200 border border-surface-4 font-semibold disabled:opacity-50 transition">
+            {btLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />} Run Multi-Day
+          </button>
+          <p className="text-gray-600 text-[11px] basis-full">
+            Replays real minute data: enters at open when Open &gt; level{config.volume_filter ? ' (and live volume beats the 5-day average)' : ''},
+            then exits on hidden Target/SL or {config.squareoff_time} square-off. SL is checked before Target within a candle (conservative).
+          </p>
+        </div>
+
+        {btResult && (
+          <div className="mt-4 space-y-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <StatChip label={btResult.mode === 'multi' ? `${btResult.days} Days` : btResult.date}
+                value={btResult.mode === 'multi' ? 'Window' : 'Day'} />
+              <StatChip label="Trades Taken" value={btResult.summary.trades_taken} />
+              <StatChip label="Wins / Losses" value={`${btResult.summary.wins}/${btResult.summary.losses}`} />
+              <StatChip label="Win Rate" value={`${btResult.summary.win_rate}%`}
+                color={btResult.summary.win_rate >= 50 ? 'text-emerald-400' : 'text-gray-300'} />
+              <StatChip label="Total P&L" value={`₹${INR(btResult.summary.total_pnl)}`}
+                color={btResult.summary.total_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'} />
+            </div>
+
+            {btResult.mode === 'multi' && btResult.daily?.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {btResult.daily.map((d) => (
+                  <div key={d.date} className="px-2.5 py-1.5 rounded-lg bg-surface-3/40 text-xs">
+                    <span className="text-gray-400">{d.date}</span>{' '}
+                    <span className={d.total_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                      {d.total_pnl >= 0 ? '+' : ''}₹{INR(d.total_pnl, 0)}
+                    </span>
+                    <span className="text-gray-600"> · {d.trades_taken}t</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="overflow-x-auto max-h-80 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface-2">
+                  <tr className="border-b border-surface-3">
+                    {[...(btResult.mode === 'multi' ? ['Date'] : []), 'Symbol', 'Level', 'Open', 'Entry', 'Exit', 'Qty', 'Result', 'P&L'].map((h) => (
+                      <th key={h} className="text-gray-500 font-medium text-left pb-2 pr-3 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {btResult.trades.filter((t) => t.result !== 'NO_DATA').map((t, i) => {
+                    const pnl = t.pnl ?? 0;
+                    const noTrade = t.result === 'NO_TRADE';
+                    return (
+                      <tr key={i} className="border-b border-surface-3/30">
+                        {btResult.mode === 'multi' && <td className="py-1.5 pr-3 text-gray-500">{t.date}</td>}
+                        <td className="py-1.5 pr-3 font-medium text-gray-200">{t.symbol}</td>
+                        <td className="py-1.5 pr-3 text-gray-400">{t.level ? `₹${INR(t.level)}` : '—'}</td>
+                        <td className="py-1.5 pr-3 text-gray-400">{t.day_open ? `₹${INR(t.day_open)}` : '—'}</td>
+                        <td className="py-1.5 pr-3 text-gray-300">{t.entry ? `₹${INR(t.entry)}` : '—'}</td>
+                        <td className="py-1.5 pr-3 text-gray-300">{t.exit ? `₹${INR(t.exit)}` : '—'}</td>
+                        <td className="py-1.5 pr-3 text-gray-400">{t.qty ?? '—'}</td>
+                        <td className="py-1.5 pr-3">
+                          <span className={
+                            noTrade ? 'text-gray-500'
+                            : t.result === 'TARGET_HIT' ? 'text-emerald-400'
+                            : t.result === 'SL_HIT' ? 'text-red-400' : 'text-gray-300'
+                          }>{noTrade ? (t.reason || 'no trade') : t.result}</span>
+                        </td>
+                        <td className={`py-1.5 pr-3 font-medium ${noTrade ? 'text-gray-600' : pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {noTrade ? '—' : `${pnl >= 0 ? '+' : ''}₹${INR(pnl)}`}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </Card>

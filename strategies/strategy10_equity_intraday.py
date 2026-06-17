@@ -372,10 +372,15 @@ class Strategy10EquityIntraday:
                 rec = q.get(self._key(sym)) or {}
                 ltp = float(rec.get("last_price", 0) or 0)
                 vol = float(rec.get("volume", 0) or 0)
+                day_open = float((rec.get("ohlc") or {}).get("open", 0) or 0)
                 if ltp > 0:
                     self.stock_states[sym]["ltp"] = round(ltp, 2)
                 if vol > 0:
                     self.stock_states[sym]["live_volume"] = round(vol, 0)
+                # Today's open is fixed for the session — populate it so the
+                # columnar view shows Open / Open>Level even before Start.
+                if day_open > 0:
+                    self.stock_states[sym]["today_open"] = round(day_open, 2)
         except Exception as exc:
             logger.debug("S10 bulk quote failed: %s", exc)
 
@@ -775,6 +780,166 @@ class Strategy10EquityIntraday:
             logger.warning("S10 auto-squareoff firing for %d position(s)", len(open_stocks))
             for symbol in open_stocks:
                 self._place_exit(symbol, "AUTO_SQUAREOFF")
+
+    # ──────────────────────── Backtest ───────────────────────────────
+
+    @staticmethod
+    def _candle_dt(c: dict):
+        dt = c.get("date")
+        if isinstance(dt, str):
+            try:
+                dt = datetime.fromisoformat(dt)
+            except Exception:
+                return None
+        return dt if isinstance(dt, datetime) else None
+
+    def _first_hour_levels(self, token: int, ref_day: date):
+        """level = max & avg_vol = mean of first-hour candles in the lookback
+        window ending the day *before* ref_day."""
+        days: list[date] = []
+        d = ref_day
+        while len(days) < self.lookback_days + 3:
+            d -= timedelta(days=1)
+            if d.weekday() < 5:
+                days.append(d)
+        from_dt = datetime.combine(days[-1], MARKET_OPEN)
+        to_dt = datetime.combine(days[0], FIRST_HOUR_END)
+        candles = self.broker.get_historical_data(token, from_dt, to_dt, "60minute") or []
+        highs, vols = [], []
+        for c in candles:
+            dt = self._candle_dt(c)
+            if dt and dt.hour == 9 and dt.minute == 15:
+                highs.append(float(c["high"]))
+                vols.append(float(c.get("volume", 0) or 0))
+        if not highs:
+            highs = [float(c["high"]) for c in candles]
+            vols = [float(c.get("volume", 0) or 0) for c in candles]
+        highs = highs[-self.lookback_days:]
+        vols = vols[-self.lookback_days:]
+        if not highs:
+            return None, None
+        return max(highs), (sum(vols) / len(vols) if vols else 0.0)
+
+    def _simulate_day(self, symbol: str, token: int, day: date) -> Optional[dict]:
+        level, avg_vol = self._first_hour_levels(token, day)
+        if level is None:
+            return None
+        from_dt = datetime.combine(day, MARKET_OPEN)
+        to_dt = datetime.combine(day, MARKET_CLOSE)
+        minutes = self.broker.get_historical_data(token, from_dt, to_dt, "minute") or []
+        if not minutes:
+            return None
+
+        day_open = float(minutes[0]["open"])
+        base = {"symbol": symbol, "level": round(level, 2), "day_open": round(day_open, 2)}
+        if day_open <= level:
+            return {**base, "result": "NO_TRADE", "reason": "open ≤ level", "pnl": 0}
+
+        # Resolve entry candle
+        if self.volume_filter:
+            entry_idx, cum = None, 0.0
+            for i, c in enumerate(minutes):
+                dt = self._candle_dt(c)
+                if dt and dt.time() > self.entry_cutoff:
+                    break
+                cum += float(c.get("volume", 0) or 0)
+                if avg_vol and cum >= avg_vol:
+                    entry_idx = i
+                    break
+            if entry_idx is None:
+                return {**base, "result": "NO_TRADE", "reason": "volume not met by cutoff", "pnl": 0}
+            entry_price = float(minutes[entry_idx]["close"])
+        else:
+            entry_idx = 0
+            entry_price = day_open
+
+        entry_dt = self._candle_dt(minutes[entry_idx])
+        qty = max(1, floor(self.capital_per_stock / entry_price)) if entry_price > 0 else 1
+        sl = entry_price - self.sl_points
+        tgt = entry_price + self.target_points
+
+        exit_price, exit_reason, exit_dt = None, None, None
+        for c in minutes[entry_idx:]:
+            dt = self._candle_dt(c)
+            if dt and dt.time() >= self.squareoff_time:
+                exit_price, exit_reason, exit_dt = float(c["open"]), "SQUAREOFF", dt
+                break
+            lo, hi = float(c["low"]), float(c["high"])
+            if lo <= sl:  # conservative: SL checked before target
+                exit_price, exit_reason, exit_dt = sl, "SL_HIT", dt
+                break
+            if hi >= tgt:
+                exit_price, exit_reason, exit_dt = tgt, "TARGET_HIT", dt
+                break
+        if exit_price is None:
+            exit_price, exit_reason, exit_dt = float(minutes[-1]["close"]), "SQUAREOFF", self._candle_dt(minutes[-1])
+
+        return {
+            **base,
+            "entry": round(entry_price, 2),
+            "exit": round(exit_price, 2),
+            "qty": qty,
+            "result": exit_reason,
+            "pnl": round((exit_price - entry_price) * qty, 2),
+            "entry_time": entry_dt.strftime("%H:%M") if entry_dt else None,
+            "exit_time": exit_dt.strftime("%H:%M") if exit_dt else None,
+        }
+
+    def backtest(self, target_date: Optional[date] = None, symbols: Optional[list] = None) -> dict:
+        syms = symbols or list(self.stock_states.keys())
+        if not syms:
+            return {"status": "error", "message": "No stocks loaded — upload a list first"}
+        if target_date is None:
+            target_date = self._previous_trading_days(1)[0]
+
+        trades = []
+        for sym in syms:
+            token = self._resolve_token(sym)
+            if not token:
+                trades.append({"symbol": sym, "result": "NO_DATA", "reason": "instrument not found", "pnl": 0})
+                continue
+            try:
+                r = self._simulate_day(sym, token, target_date)
+                if r:
+                    trades.append(r)
+            except Exception as exc:
+                logger.debug("S10 backtest %s failed: %s", sym, exc)
+
+        return {"status": "ok", "date": target_date.isoformat(), "trades": trades,
+                "summary": self._bt_summary(trades)}
+
+    def backtest_multi(self, days: int = 5, symbols: Optional[list] = None) -> dict:
+        days = max(1, min(int(days), 10))
+        tdays = self._previous_trading_days(days)
+        daily, all_trades = [], []
+        for d in reversed(tdays):
+            res = self.backtest(d, symbols)
+            if res.get("status") != "ok":
+                continue
+            daily.append({
+                "date": d.isoformat(),
+                "total_pnl": res["summary"]["total_pnl"],
+                "trades_taken": res["summary"]["trades_taken"],
+            })
+            for t in res["trades"]:
+                if t.get("result") not in ("NO_TRADE", "NO_DATA"):
+                    all_trades.append({**t, "date": d.isoformat()})
+        return {"status": "ok", "days": days, "daily": daily,
+                "trades": all_trades[-200:], "summary": self._bt_summary(all_trades)}
+
+    @staticmethod
+    def _bt_summary(trades: list[dict]) -> dict:
+        taken = [t for t in trades if t.get("result") not in ("NO_TRADE", "NO_DATA")]
+        wins = [t for t in taken if (t.get("pnl") or 0) > 0]
+        total = round(sum(t.get("pnl") or 0 for t in taken), 2)
+        return {
+            "candidates": len([t for t in trades if t.get("result") != "NO_DATA"]),
+            "trades_taken": len(taken),
+            "wins": len(wins),
+            "losses": len(taken) - len(wins),
+            "win_rate": round(100 * len(wins) / len(taken), 1) if taken else 0,
+            "total_pnl": total,
+        }
 
     # ──────────────────────── Lifecycle ──────────────────────────────
 
