@@ -242,3 +242,23 @@ class SectorOverride(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "tradingsymbol", name="uq_sector_override_user_sym"),
     )
+
+
+class Strategy10StockList(Base):
+    """Uploaded equity stock list for Strategy 10 (Equity Intraday).
+
+    Global / shared across the platform — the most recently uploaded row is
+    the *active* list. Keeping every upload gives an audit trail and the
+    "if not re-uploaded today, use the previous list" behaviour for free
+    (the strategy always loads the latest row).
+
+    `symbols` is a JSON list of {"symbol": str, "exchange": str} objects.
+    """
+    __tablename__ = "strategy10_stock_lists"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String(255))
+    symbols = Column(JSONB, nullable=False, default=list)
+    stock_count = Column(Integer, default=0)
+    uploaded_by = Column(Integer)  # user_id (audit only; list is global)
+    uploaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)

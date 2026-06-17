@@ -37,6 +37,7 @@ const INR = (v, decimals = 0) =>
 
 const STATE_META = {
   IDLE:          { dot: 'bg-gray-500',   label: 'Idle',     text: 'text-gray-500', bg: 'bg-gray-500/10' },
+  RUNNING:       { dot: 'bg-brand-400 animate-pulse', label: 'Running', text: 'text-brand-400', bg: 'bg-brand-400/10' },
   ORDER_PLACED:  { dot: 'bg-yellow-400 animate-pulse', label: 'Order Placed', text: 'text-yellow-400', bg: 'bg-yellow-400/10' },
   POSITION_OPEN: { dot: 'bg-blue-400 animate-pulse',  label: 'In Position', text: 'text-blue-400', bg: 'bg-blue-400/10' },
   COMPLETED:     { dot: 'bg-green-400',  label: 'Completed', text: 'text-green-400', bg: 'bg-green-400/10' },
@@ -576,13 +577,14 @@ export default function Dashboard() {
   const [s7, setS7] = useState(null);
   const [s8, setS8] = useState(null);
   const [s9, setS9] = useState(null);
+  const [s10, setS10] = useState(null);
   const [loading, setLoading] = useState(true);
   const [engineLoading, setEngineLoading] = useState(false);
   const [time, setTime] = useState(new Date());
 
   const fetchData = useCallback(async () => {
     try {
-      const [sm, en, st1, st2, st3, st4, st5, st6, st7, st8, st9] = await Promise.all([
+      const [sm, en, st1, st2, st3, st4, st5, st6, st7, st8, st9, st10] = await Promise.all([
         api.getSummary().catch(() => null),
         api.getEngineStatus().catch(() => null),
         api.getStrategy1TradeStatus().catch(() => null),
@@ -594,6 +596,7 @@ export default function Dashboard() {
         api.getStrategy7TradeStatus().catch(() => null),
         api.getStrategy8TradeStatus().catch(() => null),
         api.getStrategy9TradeStatus().catch(() => null),
+        api.getStrategy10Status().catch(() => null),
       ]);
       if (sm) setSummary(sm);
       if (en) setEngine(en);
@@ -606,6 +609,7 @@ export default function Dashboard() {
       if (st7) setS7(st7);
       if (st8) setS8(st8);
       if (st9) setS9(st9);
+      if (st10) setS10(st10);
     } finally {
       setLoading(false);
     }
@@ -624,6 +628,7 @@ export default function Dashboard() {
       if (d.s7) setS7(d.s7);
       if (d.s8) setS8(d.s8);
       if (d.s9) setS9(d.s9);
+      if (d.s10) setS10(d.s10);
     }
   }, []));
 
@@ -658,8 +663,8 @@ export default function Dashboard() {
   // Build equity curve from trade logs
   const equityCurve = useMemo(() => {
     const allTrades = [];
-    [s1, s2, s3, s4, s5, s6, s7, s8, s9].forEach((s, idx) => {
-      const label = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9'][idx];
+    [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10].forEach((s, idx) => {
+      const label = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9', 'S10'][idx];
       (s?.trade_log || []).forEach((t) => {
         if (t.pnl !== undefined && t.pnl !== null) {
           allTrades.push({
@@ -683,7 +688,7 @@ export default function Dashboard() {
         strategy: t.strategy,
       };
     });
-  }, [s1, s2, s3, s4, s5, s6, s7, s8, s9]);
+  }, [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10]);
 
   if (loading) return <DashboardSkeleton />;
 
@@ -721,7 +726,8 @@ export default function Dashboard() {
   const s7Pnl = stratPnl(s7);
   const s8Pnl = stratPnl(s8);
   const s9Pnl = stratPnl(s9);
-  const totalStratPnl = s1Pnl + s2Pnl + s3Pnl + s4Pnl + s5Pnl + s6Pnl + s7Pnl + s8Pnl + s9Pnl;
+  const s10Pnl = s10?.total_pnl ?? 0;
+  const totalStratPnl = s1Pnl + s2Pnl + s3Pnl + s4Pnl + s5Pnl + s6Pnl + s7Pnl + s8Pnl + s9Pnl + s10Pnl;
 
   const totalTrades =
     (s1?.trade_log?.length || 0) +
@@ -732,9 +738,11 @@ export default function Dashboard() {
     (s6?.trade_log?.length || 0) +
     (s7?.trade_log?.length || 0) +
     (s8?.trade_log?.length || 0) +
-    (s9?.trade_log?.length || 0);
+    (s9?.trade_log?.length || 0) +
+    (s10?.trade_log?.length || 0);
 
-  const openPositions = [s1, s2, s3, s4, s5, s6, s7, s8, s9].filter((s) => s?.state === 'POSITION_OPEN').length;
+  const openPositions = [s1, s2, s3, s4, s5, s6, s7, s8, s9].filter((s) => s?.state === 'POSITION_OPEN').length
+    + (s10?.positions_open ?? 0);
 
   const riskBlocked = summary?.risk && !summary.risk.trading_allowed;
 
@@ -892,6 +900,12 @@ export default function Dashboard() {
             data={s9}
             onClick={() => navigate('/strategy9-trade')}
           />
+          <StrategyCard
+            label="Equity Intraday"
+            shortName="Strategy 10"
+            data={s10}
+            onClick={() => navigate('/strategy10-trade')}
+          />
         </div>
       </div>
 
@@ -940,6 +954,7 @@ export default function Dashboard() {
             { label: 'Strike Lines', short: 'S7', data: s7, pnl: s7Pnl, color: 'brand' },
             { label: 'Reverse Lines', short: 'S8', data: s8, pnl: s8Pnl, color: 'amber' },
             { label: 'Line Of Control', short: 'S9', data: s9, pnl: s9Pnl, color: 'cyan' },
+            { label: 'Equity Intraday', short: 'S10', data: s10, pnl: s10Pnl, color: 'emerald' },
           ].map((s) => {
             const trades = s.data?.trade_log?.length || 0;
             const wins = (s.data?.trade_log || []).filter((t) => (t.pnl || 0) > 0).length;
@@ -1043,7 +1058,7 @@ export default function Dashboard() {
             <div className="flex justify-between items-center">
               <span className="text-gray-400">Strategies</span>
               <span className="text-gray-300 font-medium">
-                {[s1, s2, s3, s4, s5, s6, s7, s8, s9].filter((s) => s?.is_active).length} / 9 active
+                {[s1, s2, s3, s4, s5, s6, s7, s8, s9, s10].filter((s) => s?.is_active).length} / 10 active
               </span>
             </div>
             <div className="flex justify-between items-center">

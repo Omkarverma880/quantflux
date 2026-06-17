@@ -55,6 +55,31 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+async function requestUpload(path, formData) {
+  // Multipart upload — do NOT set Content-Type; the browser adds the
+  // multipart boundary automatically.
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders() },
+    body: formData,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('app_token');
+    localStorage.removeItem('app_user');
+    window.location.reload();
+    throw new Error('Session expired');
+  }
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const err = await res.json();
+      msg = err?.error || err?.message || err?.detail || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 export const api = {
   // App Auth
   appLogin: (username, password) =>
@@ -279,6 +304,27 @@ export const api = {
     request('/strategy9-trade/history'),
   strategy9Backtest: (payload) =>
     request('/strategy9-trade/backtest', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Strategy 10 — Equity Intraday Breakout (+ manual equity desk)
+  getStrategy10Status: () => request('/strategy10-trade/status'),
+  getStrategy10Stocks: () => request('/strategy10-trade/stocks'),
+  strategy10Start: (config) =>
+    request('/strategy10-trade/start', { method: 'POST', body: JSON.stringify(config) }),
+  strategy10Stop: () => request('/strategy10-trade/stop', { method: 'POST' }),
+  strategy10Check: () => request('/strategy10-trade/check', { method: 'POST' }),
+  strategy10UpdateConfig: (config) =>
+    request('/strategy10-trade/config', { method: 'PUT', body: JSON.stringify(config) }),
+  strategy10History: () => request('/strategy10-trade/history'),
+  strategy10RefreshStocks: () =>
+    request('/strategy10-trade/refresh-stocks', { method: 'POST' }),
+  strategy10UploadStocks: (formData) =>
+    requestUpload('/strategy10-trade/upload-stocks', formData),
+  strategy10ManualOrder: (order) =>
+    request('/strategy10-trade/manual/order', { method: 'POST', body: JSON.stringify(order) }),
+  strategy10ManualModify: (payload) =>
+    request('/strategy10-trade/manual/modify', { method: 'POST', body: JSON.stringify(payload) }),
+  strategy10ManualExit: (symbol) =>
+    request('/strategy10-trade/manual/exit', { method: 'POST', body: JSON.stringify({ symbol }) }),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),

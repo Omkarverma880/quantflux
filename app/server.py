@@ -33,6 +33,7 @@ from app.routes.strategy6_routes import router as s6_router
 from app.routes.strategy7_routes import router as s7_router
 from app.routes.strategy8_routes import router as s8_router
 from app.routes.strategy9_routes import router as s9_router
+from app.routes.strategy10_routes import router as s10_router
 from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
@@ -93,8 +94,9 @@ async def _strategy_background_loop():
                 from app.routes.strategy7_routes import _get_strategy as _get_s7
                 from app.routes.strategy8_routes import _get_strategy as _get_s8
                 from app.routes.strategy9_routes import _get_strategy as _get_s9
+                from app.routes.strategy10_routes import _get_strategy as _get_s10
                 payload = {}
-                for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3), ("s4", _get_s4), ("s5", _get_s5), ("s6", _get_s6), ("s7", _get_s7), ("s8", _get_s8), ("s9", _get_s9)]:
+                for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3), ("s4", _get_s4), ("s5", _get_s5), ("s6", _get_s6), ("s7", _get_s7), ("s8", _get_s8), ("s9", _get_s9), ("s10", _get_s10)]:
                     strat = getter(user_id=active_user_ids[0])
                     try:
                         status = strat.get_status()
@@ -215,6 +217,11 @@ def _run_strategies_for_user(uid: int):
         s9 = _get_s9(broker, uid)
         if authenticated and (s9.is_active or s9.ce_symbol or s9.pe_symbol or getattr(s9.state, "value", str(s9.state)) == "POSITION_OPEN"):
             s9.check()
+
+        from app.routes.strategy10_routes import _get_strategy as _get_s10
+        s10 = _get_s10(broker, uid)
+        if s10.is_active or s10.has_open_positions:
+            s10.check()
     finally:
         db.close()
 
@@ -341,6 +348,7 @@ app.include_router(s6_router, prefix="/api/strategy6-trade", tags=["Strategy6-Ca
 app.include_router(s7_router, prefix="/api/strategy7-trade", tags=["Strategy7-StrikeLines"])
 app.include_router(s8_router, prefix="/api/strategy8-trade", tags=["Strategy8-Reverse"])
 app.include_router(s9_router, prefix="/api/strategy9-trade", tags=["Strategy9-LineOfControl"])
+app.include_router(s10_router, prefix="/api/strategy10-trade", tags=["Strategy10-EquityIntraday"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
