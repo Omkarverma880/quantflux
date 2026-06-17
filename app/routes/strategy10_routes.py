@@ -179,9 +179,9 @@ async def get_stocks(user_id: int = Depends(login_required), db: Session = Depen
             strat.set_symbols(symbols)
     if _is_authed(db, user_id):
         try:
-            strat.refresh_ltps()
+            strat.refresh_quotes()  # LTP + live cumulative volume
         except Exception as exc:
-            logger.debug("S10 /stocks LTP refresh failed: %s", exc)
+            logger.debug("S10 /stocks quote refresh failed: %s", exc)
     status = strat.get_status()
     row = _latest_stock_list(db)
     return {

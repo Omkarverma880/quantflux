@@ -339,7 +339,7 @@ class Strategy10EquityIntraday:
     # ──────────────────────── Market data ────────────────────────────
 
     def refresh_ltps(self) -> dict[str, float]:
-        """Bulk-fetch LTP for every stock (columnar view + monitoring)."""
+        """Bulk-fetch LTP for every stock (fast — used by the check() loop)."""
         if not self.stock_states:
             return {}
         keys = [self._key(s) for s in self.stock_states]
@@ -354,6 +354,30 @@ class Strategy10EquityIntraday:
         except Exception as exc:
             logger.debug("S10 bulk LTP failed: %s", exc)
         return out
+
+    def refresh_quotes(self) -> None:
+        """Bulk-fetch LTP + live cumulative volume for every stock.
+
+        Used by the columnar view (/stocks) so the user can see today's
+        running volume next to the 5-day average and verify the volume
+        filter. Heavier than refresh_ltps, so it is only called on the
+        ~2s UI poll, not the 1s check() loop.
+        """
+        if not self.stock_states:
+            return
+        keys = [self._key(s) for s in self.stock_states]
+        try:
+            q = self.broker.get_quote(keys) or {}
+            for sym in self.stock_states:
+                rec = q.get(self._key(sym)) or {}
+                ltp = float(rec.get("last_price", 0) or 0)
+                vol = float(rec.get("volume", 0) or 0)
+                if ltp > 0:
+                    self.stock_states[sym]["ltp"] = round(ltp, 2)
+                if vol > 0:
+                    self.stock_states[sym]["live_volume"] = round(vol, 0)
+        except Exception as exc:
+            logger.debug("S10 bulk quote failed: %s", exc)
 
     def _bulk_ohlc(self, symbols: list[str]) -> dict[str, dict]:
         if not symbols:

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Play, Square, Settings2, ChevronDown, ChevronUp, RefreshCw,
   TrendingUp, CheckCircle2, XCircle, AlertCircle, Activity,
-  Upload, List, Zap, ShoppingCart, Pencil, LogOut, FileText,
+  Upload, List, Zap, ShoppingCart, Pencil, LogOut, FileText, Loader2,
 } from 'lucide-react';
 import { api } from '../api';
 
@@ -95,7 +95,7 @@ export default function Strategy10() {
   const [stocks, setStocks] = useState([]);
   const [listMeta, setListMeta] = useState({ filename: null, uploaded_at: null });
   const [config, setConfig] = useState(DEFAULT_CONFIG);
-  const [configOpen, setConfigOpen] = useState(false);
+  const [configOpen, setConfigOpen] = useState(true);
   const [history, setHistory] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -103,7 +103,6 @@ export default function Strategy10() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Manual desk form
   const [manual, setManual] = useState({ symbol: '', capital: '', sl_points: '', target_points: '' });
   const [editSym, setEditSym] = useState(null);
   const [editVals, setEditVals] = useState({ sl_price: '', target_price: '' });
@@ -156,9 +155,7 @@ export default function Strategy10() {
       if (res.status === 'ok') {
         showMsg(`Uploaded ${res.filename} — ${res.stock_count} stocks loaded.`);
         fetchAll();
-      } else {
-        showMsg(res.message || 'Upload failed', true);
-      }
+      } else showMsg(res.message || 'Upload failed', true);
     } catch (err) {
       showMsg(err.message || 'Upload failed', true);
     } finally {
@@ -216,9 +213,7 @@ export default function Strategy10() {
         showMsg(`Manual BUY placed for ${res.symbol}.`);
         setManual({ symbol: '', capital: '', sl_points: '', target_points: '' });
         fetchAll();
-      } else {
-        showMsg(res.message || 'Order failed', true);
-      }
+      } else showMsg(res.message || 'Order failed', true);
     } catch (e) { showMsg(e.message || 'Order failed', true); }
   };
 
@@ -252,8 +247,17 @@ export default function Strategy10() {
   const gStyle = GLOBAL_STATE_STYLE[globalState] || GLOBAL_STATE_STYLE.IDLE;
   const posOpen = status?.positions_open ?? 0;
   const totalPnl = status?.total_pnl ?? 0;
+  const levelsReady = status?.levels_ready;
   const watchingCount = stocks.filter((s) => ['WATCHING', 'ARMED'].includes(s.state)).length;
   const closedCount = stocks.filter((s) => ['SQUARED_OFF', 'TARGET_HIT', 'SL_HIT', 'MANUAL_EXIT'].includes(s.state)).length;
+  const candidates = stocks.filter((s) => s.open_above_level === true).length;
+
+  // Surface the interesting rows first: live positions → armed → breakout
+  // candidates → watching → closed → skipped.
+  const SORT_RANK = { POSITION_OPEN: 0, ORDER_PLACED: 0, ARMED: 1, WATCHING: 3 };
+  const rankOf = (s) =>
+    s.state === 'WATCHING' && s.open_above_level ? 2 : (SORT_RANK[s.state] ?? 4);
+  const sortedStocks = [...stocks].sort((a, b) => rankOf(a) - rankOf(b));
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-7xl mx-auto">
@@ -273,17 +277,12 @@ export default function Strategy10() {
         </div>
         <div className="flex items-center gap-2">
           <input ref={fileRef} type="file" accept=".csv" onChange={handleUpload} className="hidden" />
-          <button
-            onClick={() => fileRef.current?.click()}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-surface-3 text-gray-300 hover:bg-surface-3/80 border border-surface-4 transition"
-          >
+          <button onClick={() => fileRef.current?.click()}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-surface-3 text-gray-300 hover:bg-surface-3/80 border border-surface-4 transition">
             <Upload className="w-3.5 h-3.5" /> Upload CSV
           </button>
-          <button
-            onClick={handleRefreshStocks}
-            disabled={refreshing}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-surface-3 text-gray-300 hover:bg-surface-3/80 border border-surface-4 disabled:opacity-40 transition"
-          >
+          <button onClick={handleRefreshStocks} disabled={refreshing}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-surface-3 text-gray-300 hover:bg-surface-3/80 border border-surface-4 disabled:opacity-40 transition">
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh Levels
           </button>
           {!isActive ? (
@@ -310,15 +309,80 @@ export default function Strategy10() {
           <CheckCircle2 className="w-4 h-4 shrink-0" /> {success}
         </div>
       )}
+      {isActive && levelsReady === false && (
+        <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded-lg px-4 py-2 text-blue-400 text-sm">
+          <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> Computing 5-day first-hour levels…
+        </div>
+      )}
 
       {/* ── Summary ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <StatChip label="Status" value={gStyle.label} color={`${gStyle.text} font-semibold`} />
         <StatChip label="Positions Open" value={posOpen} color={posOpen > 0 ? 'text-blue-400' : 'text-gray-400'} />
+        <StatChip label="Breakout Candidates" value={candidates} color={candidates > 0 ? 'text-emerald-400' : 'text-gray-400'} />
         <StatChip label="Total P&L" value={`₹${INR(totalPnl)}`}
           color={totalPnl > 0 ? 'text-emerald-400' : totalPnl < 0 ? 'text-red-400' : 'text-gray-400'} />
         <StatChip label="Stocks Loaded" value={stocks.length} />
       </div>
+
+      {/* ── Configuration (top, like other strategies) ── */}
+      <Card title="Configuration" icon={Settings2}
+        right={
+          <button onClick={() => setConfigOpen((o) => !o)} className="text-gray-500 hover:text-gray-300">
+            {configOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+        }
+      >
+        {configOpen && (
+          <div className="space-y-4 mt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <ConfigField label="Capital per Stock (₹)" type="number" value={config.capital_per_stock}
+                onChange={(v) => setConfig((c) => ({ ...c, capital_per_stock: parseFloat(v) || 0 }))}
+                hint="Qty = floor(capital / entry price)" />
+              <ConfigField label="Target (points)" type="number" value={config.target_points}
+                onChange={(v) => setConfig((c) => ({ ...c, target_points: parseFloat(v) || 0 }))} />
+              <ConfigField label="Stop-Loss (points)" type="number" value={config.sl_points}
+                onChange={(v) => setConfig((c) => ({ ...c, sl_points: parseFloat(v) || 0 }))} />
+              <ConfigField label="Max Concurrent Positions" type="number" value={config.max_positions}
+                onChange={(v) => setConfig((c) => ({ ...c, max_positions: parseInt(v) || 1 }))} />
+              <ConfigField label="Lookback Days" type="number" value={config.lookback_days}
+                onChange={(v) => setConfig((c) => ({ ...c, lookback_days: parseInt(v) || 5 }))}
+                hint="Days of first-hour highs/volumes" />
+              <ConfigField label="Entry Cutoff (HH:MM)" type="text" value={config.entry_cutoff}
+                onChange={(v) => setConfig((c) => ({ ...c, entry_cutoff: v }))}
+                hint="No new entries after this time" />
+              <ConfigField label="Auto Square-Off (HH:MM)" type="text" value={config.squareoff_time}
+                onChange={(v) => setConfig((c) => ({ ...c, squareoff_time: v }))} />
+              <ConfigField label="Exchange" type="text" value={config.exchange}
+                onChange={(v) => setConfig((c) => ({ ...c, exchange: v.toUpperCase() }))} />
+              <div className="flex items-center gap-2 pt-5">
+                <button
+                  onClick={() => setConfig((c) => ({ ...c, volume_filter: !c.volume_filter }))}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium border transition ${
+                    config.volume_filter
+                      ? 'bg-amber-600/20 text-amber-400 border-amber-500/40'
+                      : 'bg-surface-3 text-gray-400 border-surface-4'
+                  }`}
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  Volume Filter: {config.volume_filter ? 'ON' : 'OFF'}
+                </button>
+              </div>
+            </div>
+            <p className="text-gray-600 text-[11px]">
+              When the volume filter is ON, an armed stock only buys once today&apos;s live cumulative
+              volume exceeds the <strong>average</strong> of the last {config.lookback_days} days&apos;
+              first-hour volumes.
+            </p>
+            <div className="flex justify-end pt-1">
+              <button onClick={handleSaveConfig}
+                className="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition font-medium">
+                Save Config
+              </button>
+            </div>
+          </div>
+        )}
+      </Card>
 
       {/* ── Manual equity desk ── */}
       <Card title="Manual Equity Desk" icon={ShoppingCart}>
@@ -368,24 +432,39 @@ export default function Strategy10() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-surface-3">
-                  {['Symbol', '5-Day Level', 'Avg 1st-hr Vol', "Open", 'Open>Lvl', 'LTP', 'State', 'Qty', 'Entry', 'SL', 'Target', 'P&L', ''].map((h) => (
+                  {['Symbol', '5-Day Level', 'Avg 1st-hr Vol', 'Cur Vol', 'Open', 'Open>Lvl', 'LTP', 'State', 'Qty', 'Entry', 'SL', 'Target', 'P&L', ''].map((h) => (
                     <th key={h} className="text-gray-500 font-medium text-left pb-2 pr-3 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {stocks.map((s) => {
+                {sortedStocks.map((s) => {
                   const sStyle = STOCK_STATE_STYLE[s.state] || STOCK_STATE_STYLE.WATCHING;
                   const isOpen = s.state === 'POSITION_OPEN';
                   const pnl = s.pnl;
+                  const isCandidate = s.open_above_level === true && ['WATCHING', 'ARMED'].includes(s.state);
+                  const volPct = s.avg_volume > 0 && s.live_volume > 0
+                    ? Math.round((s.live_volume / s.avg_volume) * 100) : null;
+                  const volMet = volPct != null && volPct >= 100;
                   return (
-                    <tr key={s.symbol} className="border-b border-surface-3/40 hover:bg-surface-3/20">
+                    <tr key={s.symbol}
+                      className={`border-b border-surface-3/40 hover:bg-surface-3/20 ${isCandidate ? 'bg-emerald-500/5' : ''}`}>
                       <td className="py-2 pr-3 font-semibold text-gray-200 whitespace-nowrap">
                         {s.symbol}
                         {s.manual && <span className="ml-1 text-[9px] text-purple-400 align-top">M</span>}
                       </td>
                       <td className="py-2 pr-3 text-gray-300">{s.level ? `₹${INR(s.level)}` : '—'}</td>
                       <td className="py-2 pr-3 text-gray-400">{fmtVol(s.avg_volume)}</td>
+                      <td className="py-2 pr-3">
+                        <span className={volMet ? 'text-emerald-400 font-medium' : 'text-gray-300'}>
+                          {fmtVol(s.live_volume)}
+                        </span>
+                        {volPct != null && (
+                          <span className={`ml-1 text-[9px] ${volMet ? 'text-emerald-500' : 'text-gray-600'}`}>
+                            {volPct}%
+                          </span>
+                        )}
+                      </td>
                       <td className="py-2 pr-3 text-gray-300">{s.today_open ? `₹${INR(s.today_open)}` : '—'}</td>
                       <td className="py-2 pr-3">
                         {s.open_above_level == null ? <span className="text-gray-600">—</span>
@@ -449,65 +528,6 @@ export default function Strategy10() {
               className="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg">Save</button>
             <button onClick={() => setEditSym(null)}
               className="px-3 py-1.5 text-sm bg-surface-4 hover:bg-surface-3 text-gray-300 rounded-lg">Cancel</button>
-          </div>
-        )}
-      </Card>
-
-      {/* ── Config ── */}
-      <Card title="Configuration" icon={Settings2}
-        right={
-          <button onClick={() => setConfigOpen((o) => !o)} className="text-gray-500 hover:text-gray-300">
-            {configOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
-        }
-      >
-        {configOpen && (
-          <div className="space-y-4 mt-1">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <ConfigField label="Capital per Stock (₹)" type="number" value={config.capital_per_stock}
-                onChange={(v) => setConfig((c) => ({ ...c, capital_per_stock: parseFloat(v) || 0 }))}
-                hint="Qty = floor(capital / entry price)" />
-              <ConfigField label="Target (points)" type="number" value={config.target_points}
-                onChange={(v) => setConfig((c) => ({ ...c, target_points: parseFloat(v) || 0 }))} />
-              <ConfigField label="Stop-Loss (points)" type="number" value={config.sl_points}
-                onChange={(v) => setConfig((c) => ({ ...c, sl_points: parseFloat(v) || 0 }))} />
-              <ConfigField label="Max Concurrent Positions" type="number" value={config.max_positions}
-                onChange={(v) => setConfig((c) => ({ ...c, max_positions: parseInt(v) || 1 }))} />
-              <ConfigField label="Lookback Days" type="number" value={config.lookback_days}
-                onChange={(v) => setConfig((c) => ({ ...c, lookback_days: parseInt(v) || 5 }))}
-                hint="Days of first-hour highs/volumes" />
-              <ConfigField label="Entry Cutoff (HH:MM)" type="text" value={config.entry_cutoff}
-                onChange={(v) => setConfig((c) => ({ ...c, entry_cutoff: v }))}
-                hint="No new entries after this time" />
-              <ConfigField label="Auto Square-Off (HH:MM)" type="text" value={config.squareoff_time}
-                onChange={(v) => setConfig((c) => ({ ...c, squareoff_time: v }))} />
-              <ConfigField label="Exchange" type="text" value={config.exchange}
-                onChange={(v) => setConfig((c) => ({ ...c, exchange: v.toUpperCase() }))} />
-              <div className="flex items-center gap-2 pt-5">
-                <button
-                  onClick={() => setConfig((c) => ({ ...c, volume_filter: !c.volume_filter }))}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium border transition ${
-                    config.volume_filter
-                      ? 'bg-amber-600/20 text-amber-400 border-amber-500/40'
-                      : 'bg-surface-3 text-gray-400 border-surface-4'
-                  }`}
-                >
-                  <Zap className="w-3.5 h-3.5" />
-                  Volume Filter: {config.volume_filter ? 'ON' : 'OFF'}
-                </button>
-              </div>
-            </div>
-            <p className="text-gray-600 text-[11px]">
-              When the volume filter is ON, an armed stock only buys once today&apos;s live cumulative
-              volume exceeds the <strong>average</strong> of the last {config.lookback_days} days&apos;
-              first-hour volumes.
-            </p>
-            <div className="flex justify-end pt-1">
-              <button onClick={handleSaveConfig}
-                className="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition font-medium">
-                Save Config
-              </button>
-            </div>
           </div>
         )}
       </Card>

@@ -25,6 +25,7 @@ const STRATEGY_PAGES = {
   strategy7_strike_lines: '/strategy7-trade',
   strategy8_reverse: '/strategy8-trade',
   strategy9_loc: '/strategy9-trade',
+  strategy10_equity_intraday: '/strategy10-trade',
 };
 
 export default function Strategies() {
