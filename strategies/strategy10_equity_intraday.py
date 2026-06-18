@@ -581,11 +581,20 @@ class Strategy10EquityIntraday:
             cap = float(capital) if capital else self.capital_per_stock
             qty = max(1, floor(cap / ref)) if ref > 0 else 1
 
+        if ref <= 0:
+            return {"status": "error",
+                    "message": f"No live price for {symbol} — is the market open and Zerodha connected?"}
+
         self.state = GlobalState.RUNNING
         self._place_entry(
             symbol, ref, manual=True, quantity=qty,
             sl_percent=sl_percent, target_percent=target_percent,
         )
+        # Surface a broker rejection instead of a false "ok"
+        if self.stock_states[symbol].get("state") == STOCK_ENTRY_FAILED:
+            return {"status": "error",
+                    "message": self.stock_states[symbol].get("skip_reason") or "Entry order failed",
+                    **self._stock_view(symbol)}
         return {"status": "ok", **self._stock_view(symbol)}
 
     def modify_manual(self, symbol: str, sl_price: Optional[float] = None,

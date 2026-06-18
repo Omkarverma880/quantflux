@@ -559,9 +559,15 @@ export default function Strategy10() {
                       </td>
                       <td className="py-2 pr-3 font-medium text-gray-100">{s.ltp ? `₹${INR(s.ltp)}` : '—'}</td>
                       <td className="py-2 pr-3">
-                        <span className={`px-1.5 py-0.5 rounded text-[11px] font-medium ${sStyle.bg} ${sStyle.text}`}>
-                          {s.skip_reason && s.state === 'SKIP' ? s.skip_reason : sStyle.label}
+                        <span title={s.skip_reason || ''}
+                          className={`px-1.5 py-0.5 rounded text-[11px] font-medium ${sStyle.bg} ${sStyle.text}`}>
+                          {sStyle.label}
                         </span>
+                        {s.skip_reason && (s.state === 'SKIP' || s.state === 'ENTRY_FAILED') && (
+                          <div className="text-[9px] text-gray-500 mt-0.5 max-w-[170px] truncate" title={s.skip_reason}>
+                            {s.skip_reason}
+                          </div>
+                        )}
                       </td>
                       <td className="py-2 pr-3 text-gray-400">{s.quantity || '—'}</td>
                       <td className="py-2 pr-3 text-gray-300">{s.entry_price ? `₹${INR(s.entry_price)}` : '—'}</td>
