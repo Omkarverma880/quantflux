@@ -19,8 +19,9 @@ import {
 const getStrategyLabel = (tag) => {
   if (!tag) return 'Manual';
   const t = String(tag).toUpperCase();
-  // Match S<digit>... at the start of the tag — covers S1..S9 entry/SL/TGT/SLIP/EXIT.
-  const m = t.match(/^S(\d)/);
+  // Match S<digits>... at the start of the tag — covers S1..S10+ entry/SL/TGT/
+  // SLIP/EXIT/MAN. Must be \d+ (not \d) so "S10ENTRY" → 10, not 1.
+  const m = t.match(/^S(\d+)/);
   if (m) return `Strategy ${m[1]}`;
   if (t.startsWith('EXITALL')) return 'Exit All';
   if (t.startsWith('MANUAL')) return 'Manual';
@@ -38,6 +39,7 @@ const strategyBadge = (label) => {
     case 'Strategy 7': return 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30';
     case 'Strategy 8': return 'bg-pink-600/20 text-pink-400 border border-pink-500/30';
     case 'Strategy 9': return 'bg-teal-600/20 text-teal-400 border border-teal-500/30';
+    case 'Strategy 10': return 'bg-orange-600/20 text-orange-400 border border-orange-500/30';
     case 'Exit All':   return 'bg-red-600/20 text-red-400 border border-red-500/30';
     default:           return 'bg-gray-600/20 text-gray-400 border border-gray-500/30';
   }

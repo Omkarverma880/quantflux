@@ -171,22 +171,24 @@ class Broker:
         if not settings.TRADING_ENABLED:
             raise RuntimeError("TRADING_ENABLED is false. Set it to true in .env")
 
-        # Zerodha disallows MARKET orders without market protection via API.
-        # Convert MARKET → LIMIT with a 5% buffer from LTP as a workaround.
-        # This is only needed for F&O — cash equity (NSE/BSE) supports true
-        # MARKET orders, and forcing a LIMIT there causes tick-size rejections
-        # on scrips whose tick is 0.10 (the conversion rounds to 0.05).
+        # Zerodha disallows MARKET orders without market protection via API,
+        # for both F&O and cash equity. Convert MARKET → LIMIT with a 5%
+        # buffer from LTP as a workaround.
         effective_order_type = req.order_type
         effective_price = req.price
 
+        # Tick size: F&O is 0.05; equity scrips can be 0.10 (e.g. CDSL).
+        # A 0.10-aligned price is also a valid multiple for 0.05/0.01-tick
+        # scrips, so 0.10 satisfies every NSE/BSE cash scrip and avoids the
+        # "enter price in the multiple of tick size" rejection.
         is_equity = req.exchange in (Exchange.NSE, Exchange.BSE)
+        tick = 0.10 if is_equity else 0.05
 
-        if req.order_type == OrderType.MARKET and not is_equity:
+        if req.order_type == OrderType.MARKET:
             try:
                 instrument = f"{req.exchange.value}:{req.tradingsymbol}"
                 ltp_data = self.kite.ltp([instrument])
                 ltp = ltp_data[instrument]["last_price"]
-                tick = 0.05  # NFO/BFO tick size
                 buffer = ltp * 0.05  # 5% buffer
                 if req.side == OrderSide.BUY:
                     raw = ltp + buffer
@@ -201,7 +203,7 @@ class Broker:
                     effective_price = max(effective_price, tick)
                 effective_order_type = OrderType.LIMIT
                 logger.info(
-                    f"Converted MARKET → LIMIT: LTP={ltp}, "
+                    f"Converted MARKET → LIMIT: LTP={ltp}, tick={tick}, "
                     f"price={effective_price} ({req.side.value})"
                 )
             except Exception as e:
@@ -212,8 +214,7 @@ class Broker:
             f"@ {effective_order_type.value} | product={req.product.value}"
         )
 
-        # Ensure price and trigger_price are tick-aligned (0.05 for NFO/BFO)
-        tick = 0.05
+        # Ensure price and trigger_price are tick-aligned (0.05 F&O / 0.10 equity)
         if effective_price:
             effective_price = round(round(effective_price / tick) * tick, 2)
         effective_trigger = req.trigger_price
