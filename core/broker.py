@@ -173,10 +173,15 @@ class Broker:
 
         # Zerodha disallows MARKET orders without market protection via API.
         # Convert MARKET → LIMIT with a 5% buffer from LTP as a workaround.
+        # This is only needed for F&O — cash equity (NSE/BSE) supports true
+        # MARKET orders, and forcing a LIMIT there causes tick-size rejections
+        # on scrips whose tick is 0.10 (the conversion rounds to 0.05).
         effective_order_type = req.order_type
         effective_price = req.price
 
-        if req.order_type == OrderType.MARKET:
+        is_equity = req.exchange in (Exchange.NSE, Exchange.BSE)
+
+        if req.order_type == OrderType.MARKET and not is_equity:
             try:
                 instrument = f"{req.exchange.value}:{req.tradingsymbol}"
                 ltp_data = self.kite.ltp([instrument])
