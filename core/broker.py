@@ -3,6 +3,7 @@ Broker abstraction layer.
 Wraps KiteConnect into clean methods the strategy engine uses.
 Handles paper-trading mode transparently.
 """
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -187,27 +188,43 @@ class Broker:
         if req.order_type == OrderType.MARKET:
             try:
                 instrument = f"{req.exchange.value}:{req.tradingsymbol}"
-                ltp_data = self.kite.ltp([instrument])
-                ltp = ltp_data[instrument]["last_price"]
+                # quote() gives last_price AND the circuit band, so we can cap
+                # the buffered LIMIT inside the band — otherwise LTP±5% can
+                # breach the upper/lower circuit and Zerodha rejects the order.
+                q = (self.kite.quote([instrument]) or {}).get(instrument, {})
+                ltp = q.get("last_price") or self.kite.ltp([instrument])[instrument]["last_price"]
+                upper = q.get("upper_circuit_limit") or 0
+                lower = q.get("lower_circuit_limit") or 0
                 buffer = ltp * 0.05  # 5% buffer
+
+                def floor_tick(p):
+                    return round(math.floor(round(p / tick, 6)) * tick, 2)
+
+                def ceil_tick(p):
+                    return round(math.ceil(round(p / tick, 6)) * tick, 2)
+
                 if req.side == OrderSide.BUY:
-                    raw = ltp + buffer
-                    # Round UP to nearest tick for BUY
-                    effective_price = round(
-                        (raw // tick + (1 if raw % tick else 0)) * tick, 2
-                    )
+                    target = ltp + buffer
+                    if upper and target >= upper:
+                        # Cap at the upper circuit, rounded DOWN so we stay inside it
+                        effective_price = floor_tick(upper)
+                    else:
+                        effective_price = ceil_tick(target)
                 else:
-                    raw = max(ltp - buffer, tick)
-                    # Round DOWN to nearest tick for SELL
-                    effective_price = round((raw // tick) * tick, 2)
+                    target = ltp - buffer
+                    if lower and target <= lower:
+                        # Cap at the lower circuit, rounded UP so we stay inside it
+                        effective_price = ceil_tick(lower)
+                    else:
+                        effective_price = floor_tick(target)
                     effective_price = max(effective_price, tick)
                 effective_order_type = OrderType.LIMIT
                 logger.info(
                     f"Converted MARKET → LIMIT: LTP={ltp}, tick={tick}, "
-                    f"price={effective_price} ({req.side.value})"
+                    f"band=[{lower},{upper}], price={effective_price} ({req.side.value})"
                 )
             except Exception as e:
-                logger.warning(f"LTP fetch failed, placing MARKET order as-is: {e}")
+                logger.warning(f"Quote fetch failed, placing MARKET order as-is: {e}")
 
         logger.info(
             f"LIVE ORDER: {req.side.value} {req.quantity} x {req.tradingsymbol} "
