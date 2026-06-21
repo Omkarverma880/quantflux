@@ -328,29 +328,54 @@ export default function VwapPvwapResearch() {
           {cfgManage2 && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div>
-                <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Exit Buffer Type</label>
-                <select value={cfgLeg2Mode} onChange={(e) => setCfgLeg2Mode(e.target.value)}
+                <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Exit Type</label>
+                <select value={cfgLeg2Mode}
+                  onChange={(e) => {
+                    const m = e.target.value;
+                    setCfgLeg2Mode(m);
+                    // sensible default value per mode
+                    setCfgLeg2Value(m === 'fraction' ? 2 : m === 'percent' ? 15 : 15);
+                  }}
                   className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60">
-                  <option value="points">Points</option>
-                  <option value="percent">Percent</option>
+                  <option value="points">Points below entry</option>
+                  <option value="percent">Percent below entry</option>
+                  <option value="fraction">Fraction of premium</option>
                 </select>
               </div>
               <div>
-                <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">
-                  Buffer ({cfgLeg2Mode === 'percent' ? '% of entry' : 'pts below entry'})
-                </label>
-                <input type="number" min="1" value={cfgLeg2Value}
-                  onChange={(e) => setCfgLeg2Value(Math.max(1, parseFloat(e.target.value) || 1))}
-                  className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+                {cfgLeg2Mode === 'fraction' ? (
+                  <>
+                    <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Cut at</label>
+                    <select value={cfgLeg2Value} onChange={(e) => setCfgLeg2Value(parseInt(e.target.value))}
+                      className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60">
+                      <option value={2}>Half (÷2)</option>
+                      <option value={3}>One-third (÷3)</option>
+                      <option value={4}>One-quarter (÷4)</option>
+                    </select>
+                  </>
+                ) : (
+                  <>
+                    <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">
+                      Buffer ({cfgLeg2Mode === 'percent' ? '% of entry' : 'pts below entry'})
+                    </label>
+                    <input type="number" min="1" value={cfgLeg2Value}
+                      onChange={(e) => setCfgLeg2Value(Math.max(1, parseFloat(e.target.value) || 1))}
+                      className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+                  </>
+                )}
               </div>
             </div>
           )}
           <p className="text-gray-600 text-[11px] mt-2">
-            After the <strong>first</strong> leg books its target, the other leg is watched: if it breaks
-            back <strong>above its entry</strong> it&apos;s held (ride the recovery); if it only crawls back to
-            <strong> entry − {cfgManage2 ? `${cfgLeg2Value}${cfgLeg2Mode === 'percent' ? '%' : ' pts'}` : 'buffer'}</strong> without
-            breaking above, it exits there (small controlled loss). If it never recovers, it rides to the
-            15:15 expiry exit. Toggle OFF to compare against plain hold-to-expiry.
+            After the <strong>first</strong> leg books its target, the other leg is watched. If it breaks back
+            <strong> above its entry</strong> it&apos;s held (ride the recovery). Otherwise it&apos;s cut at{' '}
+            {cfgLeg2Mode === 'fraction'
+              ? <strong>entry ÷ {cfgLeg2Value} ({cfgLeg2Value === 2 ? 'half' : cfgLeg2Value === 3 ? 'one-third' : 'one-quarter'} of premium)</strong>
+              : <strong>entry − {cfgLeg2Value}{cfgLeg2Mode === 'percent' ? '%' : ' pts'}</strong>}.
+            {cfgLeg2Mode === 'fraction'
+              ? ' (a hard stop as the losing leg decays). '
+              : ' (a small cut when it crawls back near entry). '}
+            If neither triggers, it rides to the 15:15 expiry exit. Toggle OFF to compare against plain hold-to-expiry.
           </p>
         </div>
         <p className="text-gray-600 text-[11px] mt-2">

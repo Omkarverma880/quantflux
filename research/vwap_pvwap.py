@@ -380,10 +380,17 @@ class VwapPvwapResearch:
             return entry_premium * (1.0 + self.target_percent / 100.0)
         return entry_premium + self.target_points  # "points"
 
-    def _leg2_buffer(self, entry_premium: float) -> float:
+    def _leg2_exit_level(self, entry_premium: float) -> float:
+        """Absolute premium level at which the managed (losing) leg is cut.
+            points   → entry − value
+            percent  → entry × (1 − value%)
+            fraction → entry ÷ value   (2 = half, 3 = one-third, 4 = one-quarter)
+        """
+        if self.leg2_exit_mode == "fraction":
+            return entry_premium / max(1.0, self.leg2_exit_value)
         if self.leg2_exit_mode == "percent":
-            return entry_premium * self.leg2_exit_value / 100.0
-        return self.leg2_exit_value  # points
+            return entry_premium * (1.0 - self.leg2_exit_value / 100.0)
+        return entry_premium - self.leg2_exit_value
 
     def _leg_record(self, option, entry_dt, entry_premium, tgt,
                     exit_premium, exit_reason, exit_dt) -> dict:
@@ -466,7 +473,8 @@ class VwapPvwapResearch:
         """
         option, candles = prep["option"], prep["candles"]
         entry_premium, tgt, edt = prep["entry_premium"], prep["target"], prep["entry_dt"]
-        near = entry_premium - self._leg2_buffer(entry_premium)
+        level = self._leg2_exit_level(entry_premium)
+        is_fraction = self.leg2_exit_mode == "fraction"
 
         broke_out = False
         exit_premium = exit_reason = exit_dt = None
@@ -474,15 +482,19 @@ class VwapPvwapResearch:
             dt = _candle_dt(c)
             if not dt or dt < start_dt:
                 continue  # hold untouched until the first leg booked its target
-            hi = float(c["high"])
+            hi, lo = float(c["high"]), float(c["low"])
             if hi >= tgt:                              # own target → full profit
                 exit_premium, exit_reason, exit_dt = tgt, "TARGET", dt
                 break
             if not broke_out:
                 if hi >= entry_premium:               # broke back above entry → ride it
                     broke_out = True
-                elif hi >= near:                      # recovered near entry, no breakout → cut small
-                    exit_premium, exit_reason, exit_dt = near, "LEG2_EXIT", dt
+                elif is_fraction:
+                    if lo <= level:                   # decayed down to fraction of premium → cut
+                        exit_premium, exit_reason, exit_dt = level, "LEG2_EXIT", dt
+                        break
+                elif hi >= level:                     # recovered near entry, no breakout → cut small
+                    exit_premium, exit_reason, exit_dt = level, "LEG2_EXIT", dt
                     break
             if dt.date() >= expiry_date and dt.time() >= EXPIRY_EXIT:
                 exit_premium, exit_reason, exit_dt = float(c["open"]), "EXPIRY", dt
@@ -698,7 +710,7 @@ class VwapPvwapResearch:
             self.target_points = float(target_points) if target_points else TARGET_POINTS
             self.target_percent = float(target_percent) if target_percent else TARGET_PERCENT
             self.manage_second_leg = MANAGE_SECOND_LEG if manage_second_leg is None else bool(manage_second_leg)
-            self.leg2_exit_mode = leg2_exit_mode if leg2_exit_mode in ("points", "percent") else LEG2_EXIT_MODE
+            self.leg2_exit_mode = leg2_exit_mode if leg2_exit_mode in ("points", "percent", "fraction") else LEG2_EXIT_MODE
             self.leg2_exit_value = float(leg2_exit_value) if leg2_exit_value else LEG2_EXIT_VALUE
             self._opt_candle_cache.clear()
             if target_date is not None:
