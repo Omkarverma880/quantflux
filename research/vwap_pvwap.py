@@ -63,8 +63,9 @@ logger = get_logger("research.vwap_pvwap")
 MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
 ENTRY_START = dtime(9, 30)      # no entries before this
-SIGNAL_CUTOFF = dtime(15, 15)   # ignore signals after this
-FORCE_EXIT = dtime(15, 20)      # force-exit any open leg
+SIGNAL_CUTOFF = dtime(15, 15)   # ignore new-entry signals after this
+FORCE_EXIT = dtime(15, 20)      # force-exit ONLY at this time on the expiry day
+                                # (positional hold — never an intraday square-off)
 
 STRIKE_INTERVAL = 50
 ITM_OFFSET = 200
@@ -75,6 +76,12 @@ QTY = LOT_SIZE * LOTS           # 195
 SL_POINTS = 100.0
 TARGET_POINTS = 300.0
 MAX_TRADES_PER_DAY = 3
+
+# A resolved expiry must be within this many days of the trade day, otherwise
+# the *real* contract for that day has expired and is no longer listed — using
+# the nearest still-listed (far-future) contract would be wrong, so we skip.
+WEEKLY_MAX_DAYS = 10
+MONTHLY_MAX_DAYS = 40
 
 INDEX_NAME = "NIFTY"
 INDEX_SPOT_TRADINGSYMBOL = "NIFTY 50"
@@ -127,6 +134,7 @@ class VwapPvwapResearch:
         self.lots = LOTS
         self.sl_points = SL_POINTS
         self.target_points = TARGET_POINTS
+        self.max_trades_per_day = MAX_TRADES_PER_DAY  # re-entries allowed per day
         # daily caches (per process; cheap and avoids repeated API calls)
         self._index_token: Optional[int] = None
         self._nfo_options: Optional[list[dict]] = None     # NIFTY CE/PE instruments
@@ -256,16 +264,19 @@ class VwapPvwapResearch:
         futures token here to get a volume-weighted VWAP."""
         return self._spot_by_day.get(day, [])
 
-    def _option_candles(self, token: int, day: date) -> list[dict]:
-        key = (token, day)
+    def _option_candles(self, token: int, from_day: date, to_day: date) -> list[dict]:
+        """Minute candles for an option across a date range (entry day → expiry
+        day) — positional holds span multiple sessions."""
+        key = (token, from_day, to_day)
         if key in self._opt_candle_cache:
             return self._opt_candle_cache[key]
-        frm = datetime.combine(day, MARKET_OPEN)
-        to = datetime.combine(day, MARKET_CLOSE)
+        frm = datetime.combine(from_day, MARKET_OPEN)
+        to = datetime.combine(to_day, MARKET_CLOSE)
         try:
             candles = self.broker.get_historical_data(token, frm, to, "minute") or []
         except Exception as exc:
-            logger.warning("Option candle fetch failed (token=%s, %s): %s", token, day, exc)
+            logger.warning("Option candle fetch failed (token=%s, %s→%s): %s",
+                           token, from_day, to_day, exc)
             candles = []
         self._opt_candle_cache[key] = candles
         return candles
@@ -345,9 +356,11 @@ class VwapPvwapResearch:
 
     # ──────────────────── Leg simulation ─────────────────────────
 
-    def _simulate_leg(self, option: dict, day: date, entry_dt: datetime,
-                      opposite_dt: Optional[datetime]) -> Optional[dict]:
-        candles = self._option_candles(option["token"], day)
+    def _simulate_leg(self, option: dict, entry_dt: datetime,
+                      expiry_date: date) -> Optional[dict]:
+        """Positional simulation: hold from entry across days until the leg's
+        own SL or Target is hit, else force-exit at 15:20 on the expiry day."""
+        candles = self._option_candles(option["token"], entry_dt.date(), expiry_date)
         if not candles:
             return None
         # locate entry candle (first option candle at/after the signal minute)
@@ -369,31 +382,31 @@ class VwapPvwapResearch:
             dt = _candle_dt(c)
             if not dt:
                 continue
-            if dt.time() >= FORCE_EXIT:
-                exit_premium, exit_reason, exit_dt = float(c["open"]), "TIME_EXIT", dt
-                break
             lo, hi = float(c["low"]), float(c["high"])
-            if lo <= sl:                                   # 1. SL
+            if lo <= sl:                                   # 1. SL (any day)
                 exit_premium, exit_reason, exit_dt = sl, "SL", dt
                 break
-            if hi >= tgt:                                  # 2. Target
+            if hi >= tgt:                                  # 2. Target (any day)
                 exit_premium, exit_reason, exit_dt = tgt, "TARGET", dt
                 break
-            if opposite_dt and dt >= opposite_dt:          # 3. opposite signal
-                exit_premium, exit_reason, exit_dt = float(c["close"]), "OPPOSITE_SIGNAL", dt
+            # 3. force-exit ONLY at 15:20 on the expiry day — never intraday
+            if dt.date() >= expiry_date and dt.time() >= FORCE_EXIT:
+                exit_premium, exit_reason, exit_dt = float(c["open"]), "EXPIRY", dt
                 break
-        if exit_premium is None:                           # 4. ran out of candles
+        if exit_premium is None:                           # ran out of candles
             last = candles[-1]
-            exit_premium, exit_reason, exit_dt = float(last["close"]), "TIME_EXIT", _candle_dt(last)
+            exit_premium, exit_reason, exit_dt = float(last["close"]), "EXPIRY", _candle_dt(last)
 
         # Quantity is always the fixed NIFTY lot size (65) × configured lots,
         # never the instrument's lot_size — keeps it unambiguous (65×lots).
         qty = LOT_SIZE * self.lots
         pnl = round((exit_premium - entry_premium) * qty, 2)
         return {
-            "date": day.isoformat(),
+            "date": entry_dt.date().isoformat(),
             "entry_time": entry_dt.strftime("%H:%M"),
+            "exit_date": exit_dt.date().isoformat() if exit_dt else None,
             "exit_time": exit_dt.strftime("%H:%M") if exit_dt else None,
+            "held_days": (exit_dt.date() - entry_dt.date()).days if exit_dt else 0,
             "direction": "CALL" if option["type"] == "CE" else "PUT",
             "option_type": option["type"],
             "expiry": option["expiry"].isoformat(),
@@ -409,41 +422,47 @@ class VwapPvwapResearch:
     # ──────────────────── Per-variant backtest ───────────────────
 
     def _run_variant(self, variant: dict, days: list[dict]) -> dict:
-        """days: list of {date, crossovers} precomputed on the underlying."""
+        """days: list of {date, crossovers} precomputed on the underlying.
+
+        Positional: one trade active at a time, possibly spanning multiple days.
+        While a trade is active every crossover is ignored. After BOTH legs of
+        the active trade have closed (own SL/Target, or expiry-day force-exit),
+        the next crossover may re-enter — capped by max_trades_per_day per day.
+        """
         expiry_mode = variant["expiry"]
         strike_mode = variant["strike"]
+        max_days = WEEKLY_MAX_DAYS if expiry_mode == "weekly" else MONTHLY_MAX_DAYS
         trades: list[dict] = []
         skipped: list[dict] = []
 
+        active_until: Optional[datetime] = None   # when the open trade's last leg closes (spans days)
+        entries_per_day: dict[date, int] = {}
+
+        # days is chronological; process every crossover across all days in order
         for day_rec in days:
             day = day_rec["date"]
-            crossovers = day_rec["crossovers"]
-            if not crossovers:
-                continue
-
-            if expiry_mode == "weekly":
-                expiry = self._weekly_expiry_for(day)
-            else:
-                expiry = self._monthly_expiry_for(day)
-            if not expiry:
-                skipped.append({"date": day.isoformat(), "reason": "no expiry resolvable"})
-                continue
-
-            active_until: Optional[datetime] = None
-            trades_today = 0
-
-            for n, ev in enumerate(crossovers):
-                if trades_today >= MAX_TRADES_PER_DAY:
-                    break
+            for ev in day_rec["crossovers"]:
                 if active_until and ev["dt"] <= active_until:
-                    continue  # only one active trade at a time
+                    continue  # a trade is active — hold, do nothing
+                if entries_per_day.get(day, 0) >= self.max_trades_per_day:
+                    continue
 
-                # opposite crossover after this entry → exit trigger for the legs
-                opposite_dt = None
-                for later in crossovers[n + 1:]:
-                    if later["direction"] != ev["direction"]:
-                        opposite_dt = later["dt"]
-                        break
+                if expiry_mode == "weekly":
+                    expiry = self._weekly_expiry_for(day)
+                else:
+                    expiry = self._monthly_expiry_for(day)
+                if not expiry:
+                    skipped.append({"date": day.isoformat(), "time": ev["time"],
+                                    "reason": f"no {expiry_mode} expiry resolvable"})
+                    continue
+                dist = (expiry - day).days
+                if dist > max_days:
+                    skipped.append({
+                        "date": day.isoformat(), "time": ev["time"],
+                        "reason": f"no live {expiry_mode} contract — nearest listed expiry "
+                                  f"{expiry.isoformat()} is {dist}d out (real contract expired)",
+                    })
+                    continue
 
                 ce_strike, pe_strike = self._strikes_for(ev["spot"], strike_mode)
                 ce = self._resolve_option(expiry, ce_strike, "CE")
@@ -452,27 +471,30 @@ class VwapPvwapResearch:
                     skipped.append({
                         "date": day.isoformat(), "time": ev["time"],
                         "reason": f"contract not listed (expiry {expiry.isoformat()} "
-                                  f"CE {ce_strike}/PE {pe_strike}) — likely expired",
+                                  f"CE {ce_strike}/PE {pe_strike})",
                     })
                     continue
 
                 legs = []
                 for opt in (ce, pe):
-                    leg = self._simulate_leg(opt, day, ev["dt"], opposite_dt)
+                    leg = self._simulate_leg(opt, ev["dt"], expiry)
                     if leg:
                         leg["expiry_type"] = expiry_mode
                         legs.append(leg)
                 if not legs:
-                    skipped.append({
-                        "date": day.isoformat(), "time": ev["time"],
-                        "reason": "no option candle data for the day",
-                    })
+                    skipped.append({"date": day.isoformat(), "time": ev["time"],
+                                    "reason": "no option candle data in entry→expiry range"})
                     continue
 
                 trades.extend(legs)
-                trades_today += 1
+                entries_per_day[day] = entries_per_day.get(day, 0) + 1
+                # Trade stays active until BOTH legs have closed (max exit time,
+                # which may be on a later day for a positional hold).
                 active_until = max(
-                    (datetime.combine(day, dtime.fromisoformat(l["exit_time"])) for l in legs if l["exit_time"]),
+                    (datetime.combine(
+                        date.fromisoformat(l["exit_date"]),
+                        dtime.fromisoformat(l["exit_time"]),
+                    ) for l in legs if l.get("exit_date") and l.get("exit_time")),
                     default=ev["dt"],
                 )
 
@@ -555,7 +577,8 @@ class VwapPvwapResearch:
 
     def run(self, days: int = 30, variant_keys: Optional[list[str]] = None,
             target_date: Optional[date] = None, lots: Optional[int] = None,
-            sl_points: Optional[float] = None, target_points: Optional[float] = None) -> dict:
+            sl_points: Optional[float] = None, target_points: Optional[float] = None,
+            max_trades_per_day: Optional[int] = None) -> dict:
         """Run the backtest across the requested variants. Thread-safe.
 
         If ``target_date`` is given, only that single day is backtested (using
@@ -567,6 +590,7 @@ class VwapPvwapResearch:
             self.lots = max(1, int(lots)) if lots else LOTS
             self.sl_points = float(sl_points) if sl_points else SL_POINTS
             self.target_points = float(target_points) if target_points else TARGET_POINTS
+            self.max_trades_per_day = max(1, int(max_trades_per_day)) if max_trades_per_day else MAX_TRADES_PER_DAY
             self._opt_candle_cache.clear()
             if target_date is not None:
                 trading_days = [target_date]
@@ -603,7 +627,7 @@ class VwapPvwapResearch:
                     "qty": LOT_SIZE * self.lots,
                     "sl_points": self.sl_points,
                     "target_points": self.target_points,
-                    "max_trades_per_day": MAX_TRADES_PER_DAY,
+                    "max_trades_per_day": self.max_trades_per_day,
                     "entry_start": ENTRY_START.strftime("%H:%M"),
                     "signal_cutoff": SIGNAL_CUTOFF.strftime("%H:%M"),
                     "force_exit": FORCE_EXIT.strftime("%H:%M"),

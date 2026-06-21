@@ -336,6 +336,7 @@ export const api = {
     request('/research/vwap-pvwap/run', { method: 'POST', body: JSON.stringify({
       days: days || 30, variants: variants || null, date: date || null,
       lots: cfg?.lots ?? null, sl_points: cfg?.sl_points ?? null, target_points: cfg?.target_points ?? null,
+      max_trades_per_day: cfg?.max_trades_per_day ?? null,
     }) }),
   researchVwapPvwapSignals: (date) =>
     request('/research/vwap-pvwap/signals', { method: 'POST', body: JSON.stringify(date ? { date } : {}) }),

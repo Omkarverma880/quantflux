@@ -49,6 +49,7 @@ class RunRequest(BaseModel):
     lots: int | None = None          # qty = 65 × lots
     sl_points: float | None = None
     target_points: float | None = None
+    max_trades_per_day: int | None = None  # re-entries allowed per day
 
 
 class SignalsRequest(BaseModel):
@@ -83,6 +84,7 @@ async def run_vwap_pvwap(
         return eng.run(
             days=payload.days, variant_keys=payload.variants, target_date=target,
             lots=payload.lots, sl_points=payload.sl_points, target_points=payload.target_points,
+            max_trades_per_day=payload.max_trades_per_day,
         )
     except Exception as exc:
         logger.error("VWAP/PVWAP research run failed: %s", exc)

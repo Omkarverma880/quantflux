@@ -18,7 +18,8 @@ const POS = '#34d399';
 const NEG = '#f87171';
 
 const EXIT_COLORS = {
-  TARGET: POS, SL: NEG, OPPOSITE_SIGNAL: '#fbbf24', TIME_EXIT: '#60a5fa',
+  TARGET: POS, SL: NEG, EXPIRY: '#60a5fa',
+  OPPOSITE_SIGNAL: '#fbbf24', TIME_EXIT: '#60a5fa',
 };
 
 function Card({ title, icon: Icon, children, right = null, className = '' }) {
@@ -54,9 +55,11 @@ function downloadCSV(filename, headers, rows) {
 }
 
 const TRADE_HEADERS = [
-  { key: 'date', label: 'Date' },
-  { key: 'entry_time', label: 'Entry' },
-  { key: 'exit_time', label: 'Exit' },
+  { key: 'date', label: 'Entry Date' },
+  { key: 'entry_time', label: 'Entry Time' },
+  { key: 'exit_date', label: 'Exit Date' },
+  { key: 'exit_time', label: 'Exit Time' },
+  { key: 'held_days', label: 'Held Days' },
   { key: 'direction', label: 'Direction' },
   { key: 'expiry_type', label: 'Expiry Type' },
   { key: 'expiry', label: 'Expiry Date' },
@@ -133,6 +136,7 @@ export default function VwapPvwapResearch() {
   const [cfgLots, setCfgLots] = useState(3);
   const [cfgSl, setCfgSl] = useState(100);
   const [cfgTgt, setCfgTgt] = useState(300);
+  const [cfgMaxTrades, setCfgMaxTrades] = useState(3);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -151,7 +155,7 @@ export default function VwapPvwapResearch() {
   const run = useCallback(async (date = null) => {
     setLoading(true); setError(''); setResult(null);
     try {
-      const cfg = { lots: cfgLots, sl_points: cfgSl, target_points: cfgTgt };
+      const cfg = { lots: cfgLots, sl_points: cfgSl, target_points: cfgTgt, max_trades_per_day: cfgMaxTrades };
       const res = await api.researchVwapPvwapRun(days, null, date, cfg);
       if (res.status === 'ok') {
         setResult(res);
@@ -159,7 +163,7 @@ export default function VwapPvwapResearch() {
       } else setError(res.message || 'Run failed');
     } catch (e) { setError(e.message || 'Run failed'); }
     finally { setLoading(false); }
-  }, [days, cfgLots, cfgSl, cfgTgt]);
+  }, [days, cfgLots, cfgSl, cfgTgt, cfgMaxTrades]);
 
   const loadSignals = useCallback(async () => {
     setSigLoading(true);
@@ -222,7 +226,8 @@ export default function VwapPvwapResearch() {
             </span>
           </div>
           <p className="text-gray-500 text-sm mt-0.5">
-            At each VWAP × previous-day-VWAP crossover, buy both CALL &amp; PUT. Read-only backtest.
+            At each crossover, buy both CALL &amp; PUT and <strong>hold positionally</strong> — each leg runs to
+            its own SL/Target across days, else force-exit at 15:20 on the expiry day. Read-only backtest.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
@@ -276,19 +281,26 @@ export default function VwapPvwapResearch() {
               onChange={(e) => setCfgTgt(Math.max(1, parseFloat(e.target.value) || 1))}
               className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
           </div>
+          <div>
+            <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Max Trades / Day (re-entries)</label>
+            <input type="number" min="1" value={cfgMaxTrades}
+              onChange={(e) => setCfgMaxTrades(Math.max(1, parseInt(e.target.value) || 1))}
+              className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+          </div>
           <ConfigItem label="Quantity" value={`${cfgLots} × 65 = ${cfgLots * 65}`} />
-          <ConfigItem label="Max Trades / Day" value={p?.max_trades_per_day ?? 3} />
-          <ConfigItem label="Entry / Force Exit" value={`${p?.entry_start ?? '09:30'}–${p?.signal_cutoff ?? '15:15'} · ${p?.force_exit ?? '15:20'}`} />
+          <ConfigItem label="Entry Window" value={`${p?.entry_start ?? '09:30'}–${p?.signal_cutoff ?? '15:15'}`} />
         </div>
         <p className="text-gray-600 text-[11px] mt-2">
-          Lot size is fixed at <strong>65</strong>; quantity per leg = 65 × lots (3 → 195, 4 → 260). SL/Target are
-          premium points. Changes apply on the next <strong>Run</strong>.
-          {p && <> Active run used <strong>{p.lots} lots ({p.qty} qty), SL {p.sl_points}, Target {p.target_points}</strong>.</>}
+          <strong>Positional</strong>: a trade is held across days until each leg hits its own SL/Target;
+          if not, it force-exits at <strong>{p?.force_exit ?? '15:20'} on the expiry day</strong> (no intraday
+          square-off, no opposite-signal exit). Lot size fixed at <strong>65</strong> → qty = 65 × lots
+          (3 → 195, 4 → 260). Changes apply on next <strong>Run</strong>.
+          {p && <> Active run used <strong>{p.lots} lots ({p.qty} qty), SL {p.sl_points}, Target {p.target_points}, {p.max_trades_per_day} entries/day</strong>.</>}
         </p>
         <p className="text-gray-600 text-[11px] mt-1">
-          Re-entry: after a trade closes (SL/Target/opposite/time) another crossover may enter — up to
-          <strong> {p?.max_trades_per_day ?? 3} trades/day</strong>, one active at a time. Each trade buys a CALL
-          <em> and</em> a PUT leg; each leg exits on SL → Target → opposite crossover → force-exit.
+          One trade active at a time — while it&apos;s open every crossover is ignored. After <em>both</em> legs
+          close (SL/Target/expiry), the next crossover may re-enter (new strikes if spot moved), up to
+          <strong> {p?.max_trades_per_day ?? 3} entries/day</strong>.
         </p>
       </Card>
 
@@ -382,7 +394,7 @@ export default function VwapPvwapResearch() {
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-surface-2">
                     <tr className="border-b border-surface-3 text-gray-500">
-                      {['Date', 'Entry', 'Exit', 'Dir', 'Expiry', 'Strike', 'Option', 'Buy', 'Sell', 'Qty', 'P&L', 'Reason'].map((h) => (
+                      {['Entry', 'Exit', 'Held', 'Dir', 'Expiry', 'Strike', 'Option', 'Buy', 'Sell', 'Qty', 'P&L', 'Reason'].map((h) => (
                         <th key={h} className="text-left font-medium pb-2 pr-3 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -390,9 +402,16 @@ export default function VwapPvwapResearch() {
                   <tbody>
                     {variant.trades.map((t, i) => (
                       <tr key={i} className="border-b border-surface-3/30 hover:bg-surface-3/20">
-                        <td className="py-1.5 pr-3 text-gray-400">{t.date}</td>
-                        <td className="py-1.5 pr-3 text-gray-300">{t.entry_time}</td>
-                        <td className="py-1.5 pr-3 text-gray-300">{t.exit_time}</td>
+                        <td className="py-1.5 pr-3 text-gray-300 whitespace-nowrap">
+                          {t.date} <span className="text-gray-500">{t.entry_time}</span>
+                        </td>
+                        <td className="py-1.5 pr-3 text-gray-300 whitespace-nowrap">
+                          {t.exit_date && t.exit_date !== t.date && (
+                            <span className="text-amber-400">{t.exit_date} </span>
+                          )}
+                          <span className="text-gray-500">{t.exit_time}</span>
+                        </td>
+                        <td className="py-1.5 pr-3 text-gray-400 text-center">{t.held_days ?? 0}</td>
                         <td className="py-1.5 pr-3">
                           <span className={t.direction === 'CALL' ? 'text-emerald-400' : 'text-red-400'}>{t.direction}</span>
                         </td>
