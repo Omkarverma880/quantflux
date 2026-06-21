@@ -78,6 +78,13 @@ TARGET_POINTS = 300.0           # mode="points": entry + 300
 TARGET_PERCENT = 150.0          # mode="percent": entry × (1 + 150%) = 2.5×
 TARGET_MODE = "points"          # "points" | "percent" | "double"
 
+# Second-leg loss control. Once the FIRST leg's target is hit, the other leg is
+# managed: ride it if it breaks back above entry, else exit at (entry − buffer)
+# when it recovers near entry. Buffer is points or percent of entry.
+MANAGE_SECOND_LEG = True
+LEG2_EXIT_MODE = "points"       # "points" | "percent"
+LEG2_EXIT_VALUE = 15.0          # 15 pts below entry (or % of entry)
+
 # A resolved expiry must be within this many days of the trade day, otherwise
 # the *real* contract for that day has expired and is no longer listed — using
 # the nearest still-listed (far-future) contract would be wrong, so we skip.
@@ -136,6 +143,9 @@ class VwapPvwapResearch:
         self.target_mode = TARGET_MODE        # "points" | "percent" | "double"
         self.target_points = TARGET_POINTS
         self.target_percent = TARGET_PERCENT
+        self.manage_second_leg = MANAGE_SECOND_LEG
+        self.leg2_exit_mode = LEG2_EXIT_MODE   # "points" | "percent"
+        self.leg2_exit_value = LEG2_EXIT_VALUE
         # daily caches (per process; cheap and avoids repeated API calls)
         self._index_token: Optional[int] = None
         self._nfo_options: Optional[list[dict]] = None     # NIFTY CE/PE instruments
@@ -370,50 +380,14 @@ class VwapPvwapResearch:
             return entry_premium * (1.0 + self.target_percent / 100.0)
         return entry_premium + self.target_points  # "points"
 
-    # ──────────────────── Leg simulation ─────────────────────────
+    def _leg2_buffer(self, entry_premium: float) -> float:
+        if self.leg2_exit_mode == "percent":
+            return entry_premium * self.leg2_exit_value / 100.0
+        return self.leg2_exit_value  # points
 
-    def _simulate_leg(self, option: dict, entry_dt: datetime,
-                      expiry_date: date) -> Optional[dict]:
-        """Positional, TARGET-ONLY simulation (no stop-loss): hold from entry
-        across days until the target premium is hit, else exit at 15:15 on the
-        expiry day at market."""
-        candles = self._option_candles(option["token"], entry_dt.date(), expiry_date)
-        if not candles:
-            return None
-        # locate entry candle (first option candle at/after the signal minute)
-        entry_idx = None
-        for i, c in enumerate(candles):
-            dt = _candle_dt(c)
-            if dt and dt >= entry_dt:
-                entry_idx = i
-                break
-        if entry_idx is None:
-            return None
-
-        entry_premium = float(candles[entry_idx]["close"])
-        tgt = self._target_for(entry_premium)
-
-        exit_premium = exit_reason = exit_dt = None
-        for c in candles[entry_idx + 1:]:
-            dt = _candle_dt(c)
-            if not dt:
-                continue
-            hi = float(c["high"])
-            if hi >= tgt:                                  # Target (any day) — no SL
-                exit_premium, exit_reason, exit_dt = tgt, "TARGET", dt
-                break
-            # else exit at 15:15 on the expiry day (square-off at market)
-            if dt.date() >= expiry_date and dt.time() >= EXPIRY_EXIT:
-                exit_premium, exit_reason, exit_dt = float(c["open"]), "EXPIRY", dt
-                break
-        if exit_premium is None:                           # ran out of candles
-            last = candles[-1]
-            exit_premium, exit_reason, exit_dt = float(last["close"]), "EXPIRY", _candle_dt(last)
-
-        # Quantity is always the fixed NIFTY lot size (65) × configured lots,
-        # never the instrument's lot_size — keeps it unambiguous (65×lots).
+    def _leg_record(self, option, entry_dt, entry_premium, tgt,
+                    exit_premium, exit_reason, exit_dt) -> dict:
         qty = LOT_SIZE * self.lots
-        pnl = round((exit_premium - entry_premium) * qty, 2)
         return {
             "date": entry_dt.date().isoformat(),
             "entry_time": entry_dt.strftime("%H:%M"),
@@ -429,9 +403,119 @@ class VwapPvwapResearch:
             "target_premium": round(tgt, 2),
             "premium_sell": round(exit_premium, 2),
             "qty": qty,
-            "pnl": pnl,
+            "pnl": round((exit_premium - entry_premium) * qty, 2),
             "exit_reason": exit_reason,
         }
+
+    # ──────────────────── Leg simulation ─────────────────────────
+
+    def _prep_leg(self, option: dict, entry_dt: datetime, expiry_date: date) -> Optional[dict]:
+        """Fetch candles + entry index/premium for a leg (None if no data)."""
+        candles = self._option_candles(option["token"], entry_dt.date(), expiry_date)
+        if not candles:
+            return None
+        for i, c in enumerate(candles):
+            dt = _candle_dt(c)
+            if dt and dt >= entry_dt:
+                entry_premium = float(c["close"])
+                return {"option": option, "candles": candles, "entry_idx": i,
+                        "entry_dt": dt, "entry_premium": entry_premium,
+                        "target": self._target_for(entry_premium)}
+        return None
+
+    def _first_target_time(self, prep: dict) -> Optional[datetime]:
+        tgt = prep["target"]
+        for c in prep["candles"][prep["entry_idx"] + 1:]:
+            if float(c["high"]) >= tgt:
+                return _candle_dt(c)
+        return None
+
+    def _simulate_leg(self, option: dict, entry_dt: datetime,
+                      expiry_date: date) -> Optional[dict]:
+        """Positional, TARGET-ONLY (no SL): hold from entry until the target
+        premium is hit, else exit at 15:15 on the expiry day."""
+        prep = self._prep_leg(option, entry_dt, expiry_date)
+        if not prep:
+            return None
+        candles, tgt = prep["candles"], prep["target"]
+        entry_premium, edt = prep["entry_premium"], prep["entry_dt"]
+
+        exit_premium = exit_reason = exit_dt = None
+        for c in candles[prep["entry_idx"] + 1:]:
+            dt = _candle_dt(c)
+            if not dt:
+                continue
+            if float(c["high"]) >= tgt:
+                exit_premium, exit_reason, exit_dt = tgt, "TARGET", dt
+                break
+            if dt.date() >= expiry_date and dt.time() >= EXPIRY_EXIT:
+                exit_premium, exit_reason, exit_dt = float(c["open"]), "EXPIRY", dt
+                break
+        if exit_premium is None:
+            last = candles[-1]
+            exit_premium, exit_reason, exit_dt = float(last["close"]), "EXPIRY", _candle_dt(last)
+        return self._leg_record(option, edt, entry_premium, tgt, exit_premium, exit_reason, exit_dt)
+
+    def _manage_second_leg(self, prep: dict, start_dt: datetime,
+                           expiry_date: date) -> Optional[dict]:
+        """Manage the leg whose target has NOT hit, from the moment the first
+        leg booked its target (``start_dt``):
+          • breaks back above entry → ride to own target / expiry
+          • recovers to (entry − buffer) without breaking above → exit there (small loss)
+          • never recovers → expiry exit
+        """
+        option, candles = prep["option"], prep["candles"]
+        entry_premium, tgt, edt = prep["entry_premium"], prep["target"], prep["entry_dt"]
+        near = entry_premium - self._leg2_buffer(entry_premium)
+
+        broke_out = False
+        exit_premium = exit_reason = exit_dt = None
+        for c in candles[prep["entry_idx"] + 1:]:
+            dt = _candle_dt(c)
+            if not dt or dt < start_dt:
+                continue  # hold untouched until the first leg booked its target
+            hi = float(c["high"])
+            if hi >= tgt:                              # own target → full profit
+                exit_premium, exit_reason, exit_dt = tgt, "TARGET", dt
+                break
+            if not broke_out:
+                if hi >= entry_premium:               # broke back above entry → ride it
+                    broke_out = True
+                elif hi >= near:                      # recovered near entry, no breakout → cut small
+                    exit_premium, exit_reason, exit_dt = near, "LEG2_EXIT", dt
+                    break
+            if dt.date() >= expiry_date and dt.time() >= EXPIRY_EXIT:
+                exit_premium, exit_reason, exit_dt = float(c["open"]), "EXPIRY", dt
+                break
+        if exit_premium is None:
+            last = candles[-1]
+            exit_premium, exit_reason, exit_dt = float(last["close"]), "EXPIRY", _candle_dt(last)
+        return self._leg_record(option, edt, entry_premium, tgt, exit_premium, exit_reason, exit_dt)
+
+    def _simulate_pair(self, ce: dict, pe: dict, entry_dt: datetime,
+                       expiry_date: date) -> list[dict]:
+        """Simulate the CE+PE pair. With management on, once one leg hits its
+        target the other leg is managed from that moment to control its loss."""
+        ce_p = self._prep_leg(ce, entry_dt, expiry_date)
+        pe_p = self._prep_leg(pe, entry_dt, expiry_date)
+        if not self.manage_second_leg or not ce_p or not pe_p:
+            return [self._simulate_leg(ce, entry_dt, expiry_date),
+                    self._simulate_leg(pe, entry_dt, expiry_date)]
+
+        ce_t = self._first_target_time(ce_p)
+        pe_t = self._first_target_time(pe_p)
+        if ce_t is None and pe_t is None:
+            # neither leg reaches target → both ride to expiry (no management)
+            return [self._simulate_leg(ce, entry_dt, expiry_date),
+                    self._simulate_leg(pe, entry_dt, expiry_date)]
+
+        ce_first = pe_t is None or (ce_t is not None and ce_t <= pe_t)
+        t1 = ce_t if ce_first else pe_t
+        if ce_first:
+            return [self._simulate_leg(ce, entry_dt, expiry_date),       # TARGET at t1
+                    self._manage_second_leg(pe_p, t1, expiry_date)]      # managed
+        return [self._manage_second_leg(ce_p, t1, expiry_date),
+                self._simulate_leg(pe, entry_dt, expiry_date)]
 
     # ──────────────────── Per-variant backtest ───────────────────
 
@@ -482,8 +566,7 @@ class VwapPvwapResearch:
                 })
                 continue
 
-            for opt in (ce, pe):
-                leg = self._simulate_leg(opt, ev["dt"], expiry)
+            for leg in self._simulate_pair(ce, pe, ev["dt"], expiry):
                 if leg:
                     leg["expiry_type"] = expiry_mode
                     leg["signal"] = ev["direction"]
@@ -547,12 +630,42 @@ class VwapPvwapResearch:
             peak2 = max(peak2, run2)
             dd_curve.append(round(run2 - peak2, 2))
 
+        # ── Capital ──
+        # Buying options: capital per leg = premium_buy × qty.
+        # capital_deployed = total premium outlay across every entry.
+        # peak_capital     = max premium outlay open at the same time (overlap),
+        #                    i.e. the capital you'd actually need to run it.
+        capital_deployed = round(sum((t["premium_buy"] or 0) * (t["qty"] or 0) for t in trades), 2)
+        events = []
+        for t in trades:
+            cost = (t["premium_buy"] or 0) * (t["qty"] or 0)
+            try:
+                e_dt = datetime.fromisoformat(f'{t["date"]}T{t["entry_time"]}')
+                x_dt = (datetime.fromisoformat(f'{t["exit_date"]}T{t["exit_time"]}')
+                        if t.get("exit_date") and t.get("exit_time") else e_dt)
+            except Exception:
+                continue
+            events.append((e_dt, cost))      # open
+            events.append((x_dt, -cost))     # close
+        events.sort(key=lambda x: (x[0], x[1]))   # process closes (−) before opens at same ts
+        run_cap = peak_capital = 0.0
+        for _, delta in events:
+            run_cap += delta
+            peak_capital = max(peak_capital, run_cap)
+        peak_capital = round(peak_capital, 2)
+        return_pct = round(net / capital_deployed * 100, 2) if capital_deployed else 0.0
+        return_on_peak_pct = round(net / peak_capital * 100, 2) if peak_capital else 0.0
+
         return {
             "total_trades": n,
             "wins": len(wins),
             "losses": len(losses),
             "win_rate": win_rate,
             "net_pnl": net,
+            "capital_deployed": capital_deployed,
+            "peak_capital": peak_capital,
+            "return_pct": return_pct,
+            "return_on_peak_pct": return_on_peak_pct,
             "avg_profit": avg_profit,
             "avg_loss": avg_loss,
             "max_drawdown": round(max_dd, 2),
@@ -569,7 +682,8 @@ class VwapPvwapResearch:
     def run(self, days: int = 30, variant_keys: Optional[list[str]] = None,
             target_date: Optional[date] = None, lots: Optional[int] = None,
             target_mode: Optional[str] = None, target_points: Optional[float] = None,
-            target_percent: Optional[float] = None) -> dict:
+            target_percent: Optional[float] = None, manage_second_leg: Optional[bool] = None,
+            leg2_exit_mode: Optional[str] = None, leg2_exit_value: Optional[float] = None) -> dict:
         """Run the backtest across the requested variants. Thread-safe.
 
         If ``target_date`` is given, only that single day is backtested (using
@@ -583,6 +697,9 @@ class VwapPvwapResearch:
             self.target_mode = target_mode if target_mode in ("points", "percent", "double") else TARGET_MODE
             self.target_points = float(target_points) if target_points else TARGET_POINTS
             self.target_percent = float(target_percent) if target_percent else TARGET_PERCENT
+            self.manage_second_leg = MANAGE_SECOND_LEG if manage_second_leg is None else bool(manage_second_leg)
+            self.leg2_exit_mode = leg2_exit_mode if leg2_exit_mode in ("points", "percent") else LEG2_EXIT_MODE
+            self.leg2_exit_value = float(leg2_exit_value) if leg2_exit_value else LEG2_EXIT_VALUE
             self._opt_candle_cache.clear()
             if target_date is not None:
                 trading_days = [target_date]
@@ -621,6 +738,9 @@ class VwapPvwapResearch:
                     "target_points": self.target_points,
                     "target_percent": self.target_percent,
                     "stop_loss": "none",
+                    "manage_second_leg": self.manage_second_leg,
+                    "leg2_exit_mode": self.leg2_exit_mode,
+                    "leg2_exit_value": self.leg2_exit_value,
                     "entry_start": ENTRY_START.strftime("%H:%M"),
                     "signal_cutoff": SIGNAL_CUTOFF.strftime("%H:%M"),
                     "expiry_exit": EXPIRY_EXIT.strftime("%H:%M"),
@@ -635,6 +755,8 @@ class VwapPvwapResearch:
                         "trades": r["total_trades"], "win_rate": r["win_rate"],
                         "pnl": r["net_pnl"], "max_dd": r["max_drawdown"],
                         "sharpe": r["sharpe"], "profit_factor": r["profit_factor"],
+                        "capital_deployed": r["capital_deployed"],
+                        "peak_capital": r["peak_capital"], "return_pct": r["return_pct"],
                     }
                     for r in results.values()
                 ],

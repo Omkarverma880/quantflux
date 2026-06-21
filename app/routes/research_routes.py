@@ -50,6 +50,9 @@ class RunRequest(BaseModel):
     target_mode: str | None = None       # "points" | "percent" | "double"
     target_points: float | None = None   # used when mode = points
     target_percent: float | None = None  # used when mode = percent
+    manage_second_leg: bool | None = None         # control losing-leg loss after 1st target
+    leg2_exit_mode: str | None = None             # "points" | "percent"
+    leg2_exit_value: float | None = None          # buffer below entry for the 2nd-leg exit
 
 
 class SignalsRequest(BaseModel):
@@ -85,6 +88,8 @@ async def run_vwap_pvwap(
             days=payload.days, variant_keys=payload.variants, target_date=target,
             lots=payload.lots, target_mode=payload.target_mode,
             target_points=payload.target_points, target_percent=payload.target_percent,
+            manage_second_leg=payload.manage_second_leg,
+            leg2_exit_mode=payload.leg2_exit_mode, leg2_exit_value=payload.leg2_exit_value,
         )
     except Exception as exc:
         logger.error("VWAP/PVWAP research run failed: %s", exc)

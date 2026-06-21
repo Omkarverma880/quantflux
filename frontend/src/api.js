@@ -337,6 +337,8 @@ export const api = {
       days: days || 30, variants: variants || null, date: date || null,
       lots: cfg?.lots ?? null, target_mode: cfg?.target_mode ?? null,
       target_points: cfg?.target_points ?? null, target_percent: cfg?.target_percent ?? null,
+      manage_second_leg: cfg?.manage_second_leg ?? null,
+      leg2_exit_mode: cfg?.leg2_exit_mode ?? null, leg2_exit_value: cfg?.leg2_exit_value ?? null,
     }) }),
   researchVwapPvwapSignals: (date) =>
     request('/research/vwap-pvwap/signals', { method: 'POST', body: JSON.stringify(date ? { date } : {}) }),

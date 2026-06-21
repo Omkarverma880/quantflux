@@ -18,8 +18,8 @@ const POS = '#34d399';
 const NEG = '#f87171';
 
 const EXIT_COLORS = {
-  TARGET: POS, SL: NEG, EXPIRY: '#60a5fa',
-  OPPOSITE_SIGNAL: '#fbbf24', TIME_EXIT: '#60a5fa',
+  TARGET: POS, EXPIRY: '#60a5fa', LEG2_EXIT: '#fbbf24',
+  SL: NEG, OPPOSITE_SIGNAL: '#fbbf24', TIME_EXIT: '#60a5fa',
 };
 
 function Card({ title, icon: Icon, children, right = null, className = '' }) {
@@ -113,6 +113,9 @@ function VariantCard({ v, active, onSelect, onDownload }) {
         <Row k="Avg Loss" val={`₹${INR(v.avg_loss)}`} c="text-red-400" />
         <Row k="Max DD" val={`₹${INR(v.max_drawdown)}`} c="text-red-400" />
         <Row k="Expectancy" val={`₹${INR(v.expectancy)}`} c={v.expectancy >= 0 ? 'text-emerald-400' : 'text-red-400'} />
+        <Row k="Capital" val={`₹${INR(v.capital_deployed)}`} />
+        <Row k="Peak Capital" val={`₹${INR(v.peak_capital)}`} />
+        <Row k="Return %" val={`${v.return_pct}%`} c={v.return_pct >= 0 ? 'text-emerald-400' : 'text-red-400'} />
       </div>
       {v.skipped?.length > 0 && (
         <div className="text-[11px] text-amber-400 mt-2">{v.skipped.length} signal(s) skipped (no contract data)</div>
@@ -138,6 +141,10 @@ export default function VwapPvwapResearch() {
   const [cfgTgtMode, setCfgTgtMode] = useState('points'); // points | percent | double
   const [cfgTgtPoints, setCfgTgtPoints] = useState(300);
   const [cfgTgtPercent, setCfgTgtPercent] = useState(150);
+  // 2nd-leg loss control (activates after the first leg's target hits)
+  const [cfgManage2, setCfgManage2] = useState(true);
+  const [cfgLeg2Mode, setCfgLeg2Mode] = useState('points'); // points | percent
+  const [cfgLeg2Value, setCfgLeg2Value] = useState(15);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -159,6 +166,8 @@ export default function VwapPvwapResearch() {
       const cfg = {
         lots: cfgLots, target_mode: cfgTgtMode,
         target_points: cfgTgtPoints, target_percent: cfgTgtPercent,
+        manage_second_leg: cfgManage2,
+        leg2_exit_mode: cfgLeg2Mode, leg2_exit_value: cfgLeg2Value,
       };
       const res = await api.researchVwapPvwapRun(days, null, date, cfg);
       if (res.status === 'ok') {
@@ -167,7 +176,7 @@ export default function VwapPvwapResearch() {
       } else setError(res.message || 'Run failed');
     } catch (e) { setError(e.message || 'Run failed'); }
     finally { setLoading(false); }
-  }, [days, cfgLots, cfgTgtMode, cfgTgtPoints, cfgTgtPercent]);
+  }, [days, cfgLots, cfgTgtMode, cfgTgtPoints, cfgTgtPercent, cfgManage2, cfgLeg2Mode, cfgLeg2Value]);
 
   const loadSignals = useCallback(async () => {
     setSigLoading(true);
@@ -302,6 +311,48 @@ export default function VwapPvwapResearch() {
           <ConfigItem label="Stop Loss" value="None" />
           <ConfigItem label="Exit (expiry day)" value={p?.expiry_exit ?? '15:15'} />
         </div>
+
+        {/* 2nd-leg loss control */}
+        <div className="mt-3 pt-3 border-t border-surface-3">
+          <div className="flex items-center gap-2 mb-2">
+            <button
+              onClick={() => setCfgManage2((v) => !v)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium border transition ${
+                cfgManage2 ? 'bg-amber-600/20 text-amber-400 border-amber-500/40' : 'bg-surface-3 text-gray-400 border-surface-4'
+              }`}
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              2nd-Leg Loss Control: {cfgManage2 ? 'ON' : 'OFF'}
+            </button>
+          </div>
+          {cfgManage2 && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Exit Buffer Type</label>
+                <select value={cfgLeg2Mode} onChange={(e) => setCfgLeg2Mode(e.target.value)}
+                  className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60">
+                  <option value="points">Points</option>
+                  <option value="percent">Percent</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">
+                  Buffer ({cfgLeg2Mode === 'percent' ? '% of entry' : 'pts below entry'})
+                </label>
+                <input type="number" min="1" value={cfgLeg2Value}
+                  onChange={(e) => setCfgLeg2Value(Math.max(1, parseFloat(e.target.value) || 1))}
+                  className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+              </div>
+            </div>
+          )}
+          <p className="text-gray-600 text-[11px] mt-2">
+            After the <strong>first</strong> leg books its target, the other leg is watched: if it breaks
+            back <strong>above its entry</strong> it&apos;s held (ride the recovery); if it only crawls back to
+            <strong> entry − {cfgManage2 ? `${cfgLeg2Value}${cfgLeg2Mode === 'percent' ? '%' : ' pts'}` : 'buffer'}</strong> without
+            breaking above, it exits there (small controlled loss). If it never recovers, it rides to the
+            15:15 expiry exit. Toggle OFF to compare against plain hold-to-expiry.
+          </p>
+        </div>
         <p className="text-gray-600 text-[11px] mt-2">
           <strong>Target only, no stop-loss.</strong> Target ={' '}
           {cfgTgtMode === 'double' ? '2 × entry premium'
@@ -344,7 +395,35 @@ export default function VwapPvwapResearch() {
 
       {result && variant && (
         <>
-          {/* Variant cards — weekly/monthly × ITM/ATM, each its own calculation */}
+          {/* Headline for the selected variant */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-surface-2 border border-surface-3 rounded-xl px-4 py-3">
+              <div className="text-[11px] text-gray-500 uppercase tracking-wide">Capital Used (peak)</div>
+              <div className="text-xl font-bold text-gray-100 mt-0.5">₹{INR(variant.peak_capital)}</div>
+              <div className="text-[10px] text-gray-500 mt-0.5">total deployed ₹{INR(variant.capital_deployed)}</div>
+            </div>
+            <div className="bg-surface-2 border border-surface-3 rounded-xl px-4 py-3">
+              <div className="text-[11px] text-gray-500 uppercase tracking-wide">Net P&amp;L</div>
+              <div className={`text-xl font-bold mt-0.5 ${variant.net_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {variant.net_pnl >= 0 ? '+' : ''}₹{INR(variant.net_pnl)}
+              </div>
+              <div className="text-[10px] text-gray-500 mt-0.5">{variant.total_trades} legs · {variant.win_rate}% win</div>
+            </div>
+            <div className="bg-surface-2 border border-surface-3 rounded-xl px-4 py-3">
+              <div className="text-[11px] text-gray-500 uppercase tracking-wide">Return % (on peak)</div>
+              <div className={`text-xl font-bold mt-0.5 ${variant.return_on_peak_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {variant.return_on_peak_pct}%
+              </div>
+              <div className="text-[10px] text-gray-500 mt-0.5">on deployed {variant.return_pct}%</div>
+            </div>
+            <div className="bg-surface-2 border border-surface-3 rounded-xl px-4 py-3">
+              <div className="text-[11px] text-gray-500 uppercase tracking-wide">Selected Variant</div>
+              <div className="text-base font-bold text-brand-400 mt-0.5">{variant.label}</div>
+              <div className="text-[10px] text-gray-500 mt-0.5">{p?.mode === 'single_day' ? p.target_date : `${p?.days_with_data} days`}</div>
+            </div>
+          </div>
+
+          {/* Variant cards — weekly/monthly × ITM/OTM, each its own calculation */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {Object.values(result.variants).map((v) => (
               <VariantCard key={v.key} v={v} active={active === v.key}
@@ -364,7 +443,7 @@ export default function VwapPvwapResearch() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-surface-3 text-gray-500 text-xs">
-                    {['Variant', 'Trades', 'Win Rate', 'Net PnL', 'Max DD', 'Sharpe', 'Profit Factor'].map((h) => (
+                    {['Variant', 'Trades', 'Win Rate', 'Capital', 'Net PnL', 'Return %', 'Max DD', 'Sharpe', 'Profit Factor'].map((h) => (
                       <th key={h} className="text-left font-medium pb-2 pr-4 whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -377,8 +456,12 @@ export default function VwapPvwapResearch() {
                       <td className="py-2 pr-4 font-medium text-gray-200">{c.label}</td>
                       <td className="py-2 pr-4 text-gray-300">{c.trades}</td>
                       <td className="py-2 pr-4 text-gray-300">{c.win_rate}%</td>
+                      <td className="py-2 pr-4 text-gray-300">₹{INR(c.capital_deployed)}</td>
                       <td className={`py-2 pr-4 font-semibold ${c.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         {c.pnl >= 0 ? '+' : ''}₹{INR(c.pnl)}
+                      </td>
+                      <td className={`py-2 pr-4 font-semibold ${c.return_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {c.return_pct}%
                       </td>
                       <td className="py-2 pr-4 text-red-400">₹{INR(c.max_dd)}</td>
                       <td className="py-2 pr-4 text-gray-300">{c.sharpe}</td>
