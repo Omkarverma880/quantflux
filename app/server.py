@@ -39,6 +39,7 @@ from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
 from app.routes.risk_routes import router as risk_router
 from app.routes.madhav_routes import router as madhav_router
+from app.routes.research_routes import router as research_router
 from core.logger import get_logger
 
 logger = get_logger("server")
@@ -354,6 +355,7 @@ app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTra
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 app.include_router(risk_router, prefix="/api/risk", tags=["RiskFence"])
 app.include_router(madhav_router, prefix="/api/madhav", tags=["Madhav"])
+app.include_router(research_router, prefix="/api/research", tags=["Research"])
 
 # ── Boot ID — changes every server restart → frontend forces re-login ──
 _BOOT_ID = uuid.uuid4().hex

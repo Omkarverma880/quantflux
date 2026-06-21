@@ -331,6 +331,12 @@ export const api = {
   strategy10BacktestMulti: (days) =>
     request('/strategy10-trade/backtest-multi', { method: 'POST', body: JSON.stringify({ days: days || 5 }) }),
 
+  // Research (read-only backtest modules)
+  researchVwapPvwapRun: (days, variants) =>
+    request('/research/vwap-pvwap/run', { method: 'POST', body: JSON.stringify({ days: days || 30, variants: variants || null }) }),
+  researchVwapPvwapSignals: (date) =>
+    request('/research/vwap-pvwap/signals', { method: 'POST', body: JSON.stringify(date ? { date } : {}) }),
+
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),
   getPortfolioWatchlists: () => request('/portfolio/watchlists'),

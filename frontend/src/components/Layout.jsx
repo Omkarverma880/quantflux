@@ -25,12 +25,20 @@ import {
   Power,
   UserCircle,
   Briefcase,
+  FlaskConical,
+  ChevronDown,
 } from 'lucide-react';
 
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/strategy1', icon: BarChart3, label: 'Cum. Volume' },
   { to: '/strategies', icon: TrendingUp, label: 'Strategies' },
+  {
+    label: 'Research', icon: FlaskConical,
+    children: [
+      { to: '/research/vwap-pvwap', label: '1. VWAP vs Prev VWAP' },
+    ],
+  },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },
   { to: '/orders', icon: ClipboardList, label: 'Orders' },
   { to: '/manual-trading', icon: Activity, label: 'Manual Trading' },
@@ -42,6 +50,7 @@ export default function Layout() {
   const [auth, setAuth] = useState({ authenticated: false, profile: null });
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [openGroups, setOpenGroups] = useState({});
   const location = useLocation();
   const navigate = useNavigate();
   const { theme, toggle: toggleTheme } = useTheme();
@@ -146,24 +155,72 @@ export default function Layout() {
         </div>
 
         {/* Nav Links */}
-        <nav className="flex-1 py-4 px-2 space-y-1">
-          {NAV.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 group ${
-                  isActive
-                    ? 'bg-brand-600/15 text-brand-400 border border-brand-500/20'
-                    : 'text-gray-400 hover:text-white hover:bg-surface-3 border border-transparent'
-                }`
-              }
-            >
-              <Icon className="w-5 h-5 shrink-0" />
-              {!collapsed && <span className="font-medium text-sm">{label}</span>}
-            </NavLink>
-          ))}
+        <nav className="flex-1 py-4 px-2 space-y-1 overflow-y-auto">
+          {NAV.map((item) => {
+            const Icon = item.icon;
+            // Nested group (e.g. Research)
+            if (item.children) {
+              const groupActive = item.children.some((c) => location.pathname.startsWith(c.to));
+              const open = openGroups[item.label] ?? groupActive;
+              return (
+                <div key={item.label}>
+                  <button
+                    onClick={() => setOpenGroups((g) => ({ ...g, [item.label]: !open }))}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 ${
+                      groupActive
+                        ? 'text-brand-400'
+                        : 'text-gray-400 hover:text-white hover:bg-surface-3'
+                    }`}
+                  >
+                    <Icon className="w-5 h-5 shrink-0" />
+                    {!collapsed && (
+                      <>
+                        <span className="font-medium text-sm flex-1 text-left">{item.label}</span>
+                        <ChevronDown className={`w-4 h-4 transition-transform ${open ? '' : '-rotate-90'}`} />
+                      </>
+                    )}
+                  </button>
+                  {!collapsed && open && (
+                    <div className="mt-1 ml-3 pl-3 border-l border-surface-3 space-y-1">
+                      {item.children.map((c) => (
+                        <NavLink
+                          key={c.to}
+                          to={c.to}
+                          className={({ isActive }) =>
+                            `block px-3 py-2 rounded-lg text-sm transition-all duration-150 ${
+                              isActive
+                                ? 'bg-brand-600/15 text-brand-400 border border-brand-500/20'
+                                : 'text-gray-400 hover:text-white hover:bg-surface-3 border border-transparent'
+                            }`
+                          }
+                        >
+                          {c.label}
+                        </NavLink>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            // Standard link
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === '/'}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 group ${
+                    isActive
+                      ? 'bg-brand-600/15 text-brand-400 border border-brand-500/20'
+                      : 'text-gray-400 hover:text-white hover:bg-surface-3 border border-transparent'
+                  }`
+                }
+              >
+                <Icon className="w-5 h-5 shrink-0" />
+                {!collapsed && <span className="font-medium text-sm">{item.label}</span>}
+              </NavLink>
+            );
+          })}
         </nav>
 
         {/* Auth + Collapse */}
