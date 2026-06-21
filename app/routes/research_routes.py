@@ -46,10 +46,10 @@ class RunRequest(BaseModel):
     days: int = 30
     variants: list[str] | None = None
     date: str | None = None  # if set, backtest only this single day (YYYY-MM-DD)
-    lots: int | None = None          # qty = 65 × lots
-    sl_points: float | None = None
-    target_points: float | None = None
-    max_trades_per_day: int | None = None  # re-entries allowed per day
+    lots: int | None = None              # qty = 65 × lots
+    target_mode: str | None = None       # "points" | "percent" | "double"
+    target_points: float | None = None   # used when mode = points
+    target_percent: float | None = None  # used when mode = percent
 
 
 class SignalsRequest(BaseModel):
@@ -83,8 +83,8 @@ async def run_vwap_pvwap(
     try:
         return eng.run(
             days=payload.days, variant_keys=payload.variants, target_date=target,
-            lots=payload.lots, sl_points=payload.sl_points, target_points=payload.target_points,
-            max_trades_per_day=payload.max_trades_per_day,
+            lots=payload.lots, target_mode=payload.target_mode,
+            target_points=payload.target_points, target_percent=payload.target_percent,
         )
     except Exception as exc:
         logger.error("VWAP/PVWAP research run failed: %s", exc)

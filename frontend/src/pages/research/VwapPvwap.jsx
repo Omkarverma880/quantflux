@@ -66,6 +66,7 @@ const TRADE_HEADERS = [
   { key: 'strike', label: 'Strike' },
   { key: 'symbol', label: 'Option Symbol' },
   { key: 'premium_buy', label: 'Premium Buy' },
+  { key: 'target_premium', label: 'Target Premium' },
   { key: 'premium_sell', label: 'Premium Sell' },
   { key: 'qty', label: 'Qty' },
   { key: 'pnl', label: 'PnL' },
@@ -132,11 +133,11 @@ function Row({ k, val, c = 'text-gray-200' }) {
 export default function VwapPvwapResearch() {
   const [days, setDays] = useState(30);
   const [runDate, setRunDate] = useState('');
-  // Editable strategy config (qty = 65 × lots)
+  // Editable strategy config (only Lots + Target are configurable; no SL)
   const [cfgLots, setCfgLots] = useState(3);
-  const [cfgSl, setCfgSl] = useState(100);
-  const [cfgTgt, setCfgTgt] = useState(300);
-  const [cfgMaxTrades, setCfgMaxTrades] = useState(3);
+  const [cfgTgtMode, setCfgTgtMode] = useState('points'); // points | percent | double
+  const [cfgTgtPoints, setCfgTgtPoints] = useState(300);
+  const [cfgTgtPercent, setCfgTgtPercent] = useState(150);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -155,7 +156,10 @@ export default function VwapPvwapResearch() {
   const run = useCallback(async (date = null) => {
     setLoading(true); setError(''); setResult(null);
     try {
-      const cfg = { lots: cfgLots, sl_points: cfgSl, target_points: cfgTgt, max_trades_per_day: cfgMaxTrades };
+      const cfg = {
+        lots: cfgLots, target_mode: cfgTgtMode,
+        target_points: cfgTgtPoints, target_percent: cfgTgtPercent,
+      };
       const res = await api.researchVwapPvwapRun(days, null, date, cfg);
       if (res.status === 'ok') {
         setResult(res);
@@ -163,7 +167,7 @@ export default function VwapPvwapResearch() {
       } else setError(res.message || 'Run failed');
     } catch (e) { setError(e.message || 'Run failed'); }
     finally { setLoading(false); }
-  }, [days, cfgLots, cfgSl, cfgTgt, cfgMaxTrades]);
+  }, [days, cfgLots, cfgTgtMode, cfgTgtPoints, cfgTgtPercent]);
 
   const loadSignals = useCallback(async () => {
     setSigLoading(true);
@@ -226,8 +230,8 @@ export default function VwapPvwapResearch() {
             </span>
           </div>
           <p className="text-gray-500 text-sm mt-0.5">
-            At each crossover, buy both CALL &amp; PUT and <strong>hold positionally</strong> — each leg runs to
-            its own SL/Target across days, else force-exit at 15:20 on the expiry day. Read-only backtest.
+            One entry per day on the first VWAP crossover — buy CALL &amp; PUT, <strong>target-only (no SL)</strong>,
+            held to target or 15:15 on the expiry day. Read-only backtest.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
@@ -260,7 +264,7 @@ export default function VwapPvwapResearch() {
         </div>
       )}
 
-      {/* Config / rules — Lots, SL, Target are editable; applied on next Run */}
+      {/* Config — only Lots + Target are configurable (no stop-loss) */}
       <Card title="Strategy Config & Rules" icon={Settings2}>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <div>
@@ -270,37 +274,46 @@ export default function VwapPvwapResearch() {
               className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
           </div>
           <div>
-            <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Stop Loss (pts)</label>
-            <input type="number" min="1" value={cfgSl}
-              onChange={(e) => setCfgSl(Math.max(1, parseFloat(e.target.value) || 1))}
-              className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+            <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Target Type</label>
+            <select value={cfgTgtMode} onChange={(e) => setCfgTgtMode(e.target.value)}
+              className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60">
+              <option value="points">Points</option>
+              <option value="percent">Percent</option>
+              <option value="double">Double premium</option>
+            </select>
           </div>
-          <div>
-            <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Target (pts)</label>
-            <input type="number" min="1" value={cfgTgt}
-              onChange={(e) => setCfgTgt(Math.max(1, parseFloat(e.target.value) || 1))}
-              className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
-          </div>
-          <div>
-            <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Max Trades / Day (re-entries)</label>
-            <input type="number" min="1" value={cfgMaxTrades}
-              onChange={(e) => setCfgMaxTrades(Math.max(1, parseInt(e.target.value) || 1))}
-              className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
-          </div>
+          {cfgTgtMode === 'points' && (
+            <div>
+              <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Target (pts)</label>
+              <input type="number" min="1" value={cfgTgtPoints}
+                onChange={(e) => setCfgTgtPoints(Math.max(1, parseFloat(e.target.value) || 1))}
+                className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+            </div>
+          )}
+          {cfgTgtMode === 'percent' && (
+            <div>
+              <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Target (% gain)</label>
+              <input type="number" min="1" value={cfgTgtPercent}
+                onChange={(e) => setCfgTgtPercent(Math.max(1, parseFloat(e.target.value) || 1))}
+                className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+            </div>
+          )}
           <ConfigItem label="Quantity" value={`${cfgLots} × 65 = ${cfgLots * 65}`} />
-          <ConfigItem label="Entry Window" value={`${p?.entry_start ?? '09:30'}–${p?.signal_cutoff ?? '15:15'}`} />
+          <ConfigItem label="Stop Loss" value="None" />
+          <ConfigItem label="Exit (expiry day)" value={p?.expiry_exit ?? '15:15'} />
         </div>
         <p className="text-gray-600 text-[11px] mt-2">
-          <strong>Positional</strong>: a trade is held across days until each leg hits its own SL/Target;
-          if not, it force-exits at <strong>{p?.force_exit ?? '15:20'} on the expiry day</strong> (no intraday
-          square-off, no opposite-signal exit). Lot size fixed at <strong>65</strong> → qty = 65 × lots
-          (3 → 195, 4 → 260). Changes apply on next <strong>Run</strong>.
-          {p && <> Active run used <strong>{p.lots} lots ({p.qty} qty), SL {p.sl_points}, Target {p.target_points}, {p.max_trades_per_day} entries/day</strong>.</>}
+          <strong>Target only, no stop-loss.</strong> Target ={' '}
+          {cfgTgtMode === 'double' ? '2 × entry premium'
+            : cfgTgtMode === 'percent' ? `entry × (1 + ${cfgTgtPercent}%) = ${(1 + cfgTgtPercent / 100).toFixed(2)}× entry`
+            : `entry + ${cfgTgtPoints} pts`}.
+          Lot size fixed at <strong>65</strong> → qty = 65 × lots ({cfgLots} → {cfgLots * 65}).
+          {p && <> Active run: <strong>{p.lots} lots ({p.qty} qty), target = {p.target_mode === 'double' ? '2× premium' : p.target_mode === 'percent' ? `+${p.target_percent}%` : `+${p.target_points} pts`}</strong>.</>}
         </p>
         <p className="text-gray-600 text-[11px] mt-1">
-          One trade active at a time — while it&apos;s open every crossover is ignored. After <em>both</em> legs
-          close (SL/Target/expiry), the next crossover may re-enter (new strikes if spot moved), up to
-          <strong> {p?.max_trades_per_day ?? 3} entries/day</strong>.
+          <strong>One entry per day</strong> on that day&apos;s first crossover (09:30–15:15): buy one CALL and one
+          PUT, each held until the target is hit, otherwise squared off at market at <strong>15:15 on the expiry
+          day</strong>. No re-entry, no opposite-signal exit — every trading day with a crossover = 1 CE + 1 PE.
         </p>
       </Card>
 
@@ -394,7 +407,7 @@ export default function VwapPvwapResearch() {
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-surface-2">
                     <tr className="border-b border-surface-3 text-gray-500">
-                      {['Entry', 'Exit', 'Held', 'Dir', 'Expiry', 'Strike', 'Option', 'Buy', 'Sell', 'Qty', 'P&L', 'Reason'].map((h) => (
+                      {['Entry', 'Exit', 'Held', 'Dir', 'Expiry', 'Strike', 'Option', 'Buy', 'Target', 'Sell', 'Qty', 'P&L', 'Reason'].map((h) => (
                         <th key={h} className="text-left font-medium pb-2 pr-3 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -419,6 +432,7 @@ export default function VwapPvwapResearch() {
                         <td className="py-1.5 pr-3 text-gray-300">{t.strike}</td>
                         <td className="py-1.5 pr-3 text-gray-400 font-mono text-[11px]">{t.symbol}</td>
                         <td className="py-1.5 pr-3 text-gray-300">₹{INR(t.premium_buy, 2)}</td>
+                        <td className="py-1.5 pr-3 text-emerald-400/80">₹{INR(t.target_premium, 2)}</td>
                         <td className="py-1.5 pr-3 text-gray-300">₹{INR(t.premium_sell, 2)}</td>
                         <td className="py-1.5 pr-3 text-gray-500">{t.qty}</td>
                         <td className={`py-1.5 pr-3 font-medium ${t.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>

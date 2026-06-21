@@ -63,19 +63,20 @@ logger = get_logger("research.vwap_pvwap")
 MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
 ENTRY_START = dtime(9, 30)      # no entries before this
-SIGNAL_CUTOFF = dtime(15, 15)   # ignore new-entry signals after this
-FORCE_EXIT = dtime(15, 20)      # force-exit ONLY at this time on the expiry day
-                                # (positional hold — never an intraday square-off)
+SIGNAL_CUTOFF = dtime(15, 15)   # first crossover must be at/ before this to enter
+EXPIRY_EXIT = dtime(15, 15)     # if target not hit, exit at 15:15 on the EXPIRY day
 
 STRIKE_INTERVAL = 50
 ITM_OFFSET = 200
+OTM_OFFSET = 200
 LOT_SIZE = 65
 LOTS = 3
 QTY = LOT_SIZE * LOTS           # 195
 
-SL_POINTS = 100.0
-TARGET_POINTS = 300.0
-MAX_TRADES_PER_DAY = 3
+# Target: no stop-loss. Three modes — points / percent / double.
+TARGET_POINTS = 300.0           # mode="points": entry + 300
+TARGET_PERCENT = 150.0          # mode="percent": entry × (1 + 150%) = 2.5×
+TARGET_MODE = "points"          # "points" | "percent" | "double"
 
 # A resolved expiry must be within this many days of the trade day, otherwise
 # the *real* contract for that day has expired and is no longer listed — using
@@ -88,9 +89,9 @@ INDEX_SPOT_TRADINGSYMBOL = "NIFTY 50"
 
 VARIANTS = [
     {"key": "weekly_itm",  "label": "Weekly · 200 ITM",  "expiry": "weekly",  "strike": "ITM"},
-    {"key": "weekly_atm",  "label": "Weekly · ATM",       "expiry": "weekly",  "strike": "ATM"},
-    {"key": "monthly_itm", "label": "Monthly · 200 ITM",  "expiry": "monthly", "strike": "ITM"},
-    {"key": "monthly_atm", "label": "Monthly · ATM",      "expiry": "monthly", "strike": "ATM"},
+    {"key": "weekly_otm",  "label": "Weekly · 200 OTM",  "expiry": "weekly",  "strike": "OTM"},
+    {"key": "monthly_itm", "label": "Monthly · 200 ITM", "expiry": "monthly", "strike": "ITM"},
+    {"key": "monthly_otm", "label": "Monthly · 200 OTM", "expiry": "monthly", "strike": "OTM"},
 ]
 
 
@@ -132,9 +133,9 @@ class VwapPvwapResearch:
         # Configurable per-run params (defaults match the spec). Quantity is
         # always LOT_SIZE (65) × lots — e.g. 3 lots = 195, 4 lots = 260.
         self.lots = LOTS
-        self.sl_points = SL_POINTS
+        self.target_mode = TARGET_MODE        # "points" | "percent" | "double"
         self.target_points = TARGET_POINTS
-        self.max_trades_per_day = MAX_TRADES_PER_DAY  # re-entries allowed per day
+        self.target_percent = TARGET_PERCENT
         # daily caches (per process; cheap and avoids repeated API calls)
         self._index_token: Optional[int] = None
         self._nfo_options: Optional[list[dict]] = None     # NIFTY CE/PE instruments
@@ -347,19 +348,35 @@ class VwapPvwapResearch:
         return int(round(spot / STRIKE_INTERVAL) * STRIKE_INTERVAL)
 
     def _strikes_for(self, spot: float, mode: str) -> tuple[int, int]:
-        """Return (ce_strike, pe_strike) for the given variant mode."""
+        """Return (ce_strike, pe_strike) for the given variant mode.
+
+        ITM (200): CE 200 below spot, PE 200 above spot.
+        OTM (200): CE 200 above spot, PE 200 below spot.
+        ATM:       both at the nearest strike.
+        """
         atm = self._atm(spot)
         if mode == "ATM":
             return atm, atm
-        # 200 ITM: CE 200 below spot, PE 200 above spot
+        if mode == "OTM":
+            return atm + OTM_OFFSET, atm - OTM_OFFSET
+        # default ITM
         return atm - ITM_OFFSET, atm + ITM_OFFSET
+
+    def _target_for(self, entry_premium: float) -> float:
+        """Resolve the target premium from the configured mode (no SL)."""
+        if self.target_mode == "double":
+            return entry_premium * 2.0
+        if self.target_mode == "percent":
+            return entry_premium * (1.0 + self.target_percent / 100.0)
+        return entry_premium + self.target_points  # "points"
 
     # ──────────────────── Leg simulation ─────────────────────────
 
     def _simulate_leg(self, option: dict, entry_dt: datetime,
                       expiry_date: date) -> Optional[dict]:
-        """Positional simulation: hold from entry across days until the leg's
-        own SL or Target is hit, else force-exit at 15:20 on the expiry day."""
+        """Positional, TARGET-ONLY simulation (no stop-loss): hold from entry
+        across days until the target premium is hit, else exit at 15:15 on the
+        expiry day at market."""
         candles = self._option_candles(option["token"], entry_dt.date(), expiry_date)
         if not candles:
             return None
@@ -374,23 +391,19 @@ class VwapPvwapResearch:
             return None
 
         entry_premium = float(candles[entry_idx]["close"])
-        sl = entry_premium - self.sl_points
-        tgt = entry_premium + self.target_points
+        tgt = self._target_for(entry_premium)
 
         exit_premium = exit_reason = exit_dt = None
         for c in candles[entry_idx + 1:]:
             dt = _candle_dt(c)
             if not dt:
                 continue
-            lo, hi = float(c["low"]), float(c["high"])
-            if lo <= sl:                                   # 1. SL (any day)
-                exit_premium, exit_reason, exit_dt = sl, "SL", dt
-                break
-            if hi >= tgt:                                  # 2. Target (any day)
+            hi = float(c["high"])
+            if hi >= tgt:                                  # Target (any day) — no SL
                 exit_premium, exit_reason, exit_dt = tgt, "TARGET", dt
                 break
-            # 3. force-exit ONLY at 15:20 on the expiry day — never intraday
-            if dt.date() >= expiry_date and dt.time() >= FORCE_EXIT:
+            # else exit at 15:15 on the expiry day (square-off at market)
+            if dt.date() >= expiry_date and dt.time() >= EXPIRY_EXIT:
                 exit_premium, exit_reason, exit_dt = float(c["open"]), "EXPIRY", dt
                 break
         if exit_premium is None:                           # ran out of candles
@@ -413,6 +426,7 @@ class VwapPvwapResearch:
             "strike": int(option["strike"]),
             "symbol": option["tradingsymbol"],
             "premium_buy": round(entry_premium, 2),
+            "target_premium": round(tgt, 2),
             "premium_sell": round(exit_premium, 2),
             "qty": qty,
             "pnl": pnl,
@@ -424,10 +438,10 @@ class VwapPvwapResearch:
     def _run_variant(self, variant: dict, days: list[dict]) -> dict:
         """days: list of {date, crossovers} precomputed on the underlying.
 
-        Positional: one trade active at a time, possibly spanning multiple days.
-        While a trade is active every crossover is ignored. After BOTH legs of
-        the active trade have closed (own SL/Target, or expiry-day force-exit),
-        the next crossover may re-enter — capped by max_trades_per_day per day.
+        One entry PER DAY on that day's FIRST crossover: buy a CALL and a PUT,
+        each held (TARGET-only, no SL) until the target premium is hit, else
+        squared off at 15:15 on the expiry day. No re-entry, no one-active gate —
+        every trading day with a crossover produces exactly one CE + one PE.
         """
         expiry_mode = variant["expiry"]
         strike_mode = variant["strike"]
@@ -435,68 +449,45 @@ class VwapPvwapResearch:
         trades: list[dict] = []
         skipped: list[dict] = []
 
-        active_until: Optional[datetime] = None   # when the open trade's last leg closes (spans days)
-        entries_per_day: dict[date, int] = {}
-
-        # days is chronological; process every crossover across all days in order
-        for day_rec in days:
+        for day_rec in days:                  # chronological
             day = day_rec["date"]
-            for ev in day_rec["crossovers"]:
-                if active_until and ev["dt"] <= active_until:
-                    continue  # a trade is active — hold, do nothing
-                if entries_per_day.get(day, 0) >= self.max_trades_per_day:
-                    continue
+            crossovers = day_rec["crossovers"]
+            if not crossovers:
+                continue
+            ev = crossovers[0]                # ← first crossover of the day only
 
-                if expiry_mode == "weekly":
-                    expiry = self._weekly_expiry_for(day)
-                else:
-                    expiry = self._monthly_expiry_for(day)
-                if not expiry:
-                    skipped.append({"date": day.isoformat(), "time": ev["time"],
-                                    "reason": f"no {expiry_mode} expiry resolvable"})
-                    continue
-                dist = (expiry - day).days
-                if dist > max_days:
-                    skipped.append({
-                        "date": day.isoformat(), "time": ev["time"],
-                        "reason": f"no live {expiry_mode} contract — nearest listed expiry "
-                                  f"{expiry.isoformat()} is {dist}d out (real contract expired)",
-                    })
-                    continue
+            expiry = (self._weekly_expiry_for(day) if expiry_mode == "weekly"
+                      else self._monthly_expiry_for(day))
+            if not expiry:
+                skipped.append({"date": day.isoformat(), "time": ev["time"],
+                                "reason": f"no {expiry_mode} expiry resolvable"})
+                continue
+            dist = (expiry - day).days
+            if dist > max_days:
+                skipped.append({
+                    "date": day.isoformat(), "time": ev["time"],
+                    "reason": f"no live {expiry_mode} contract — nearest listed expiry "
+                              f"{expiry.isoformat()} is {dist}d out (real contract expired)",
+                })
+                continue
 
-                ce_strike, pe_strike = self._strikes_for(ev["spot"], strike_mode)
-                ce = self._resolve_option(expiry, ce_strike, "CE")
-                pe = self._resolve_option(expiry, pe_strike, "PE")
-                if not ce or not pe:
-                    skipped.append({
-                        "date": day.isoformat(), "time": ev["time"],
-                        "reason": f"contract not listed (expiry {expiry.isoformat()} "
-                                  f"CE {ce_strike}/PE {pe_strike})",
-                    })
-                    continue
+            ce_strike, pe_strike = self._strikes_for(ev["spot"], strike_mode)
+            ce = self._resolve_option(expiry, ce_strike, "CE")
+            pe = self._resolve_option(expiry, pe_strike, "PE")
+            if not ce or not pe:
+                skipped.append({
+                    "date": day.isoformat(), "time": ev["time"],
+                    "reason": f"contract not listed (expiry {expiry.isoformat()} "
+                              f"CE {ce_strike}/PE {pe_strike})",
+                })
+                continue
 
-                legs = []
-                for opt in (ce, pe):
-                    leg = self._simulate_leg(opt, ev["dt"], expiry)
-                    if leg:
-                        leg["expiry_type"] = expiry_mode
-                        legs.append(leg)
-                if not legs:
-                    skipped.append({"date": day.isoformat(), "time": ev["time"],
-                                    "reason": "no option candle data in entry→expiry range"})
-                    continue
-
-                trades.extend(legs)
-                entries_per_day[day] = entries_per_day.get(day, 0) + 1
-                # Trade stays active until BOTH legs have closed (max exit time,
-                # which may be on a later day for a positional hold).
-                active_until = max(
-                    (datetime.combine(
-                        date.fromisoformat(l["exit_date"]),
-                        dtime.fromisoformat(l["exit_time"]),
-                    ) for l in legs if l.get("exit_date") and l.get("exit_time")),
-                    default=ev["dt"],
-                )
+            for opt in (ce, pe):
+                leg = self._simulate_leg(opt, ev["dt"], expiry)
+                if leg:
+                    leg["expiry_type"] = expiry_mode
+                    leg["signal"] = ev["direction"]
+                    trades.append(leg)
 
         return {
             "key": variant["key"],
@@ -577,20 +568,21 @@ class VwapPvwapResearch:
 
     def run(self, days: int = 30, variant_keys: Optional[list[str]] = None,
             target_date: Optional[date] = None, lots: Optional[int] = None,
-            sl_points: Optional[float] = None, target_points: Optional[float] = None,
-            max_trades_per_day: Optional[int] = None) -> dict:
+            target_mode: Optional[str] = None, target_points: Optional[float] = None,
+            target_percent: Optional[float] = None) -> dict:
         """Run the backtest across the requested variants. Thread-safe.
 
         If ``target_date`` is given, only that single day is backtested (using
         its own previous-session VWAP). Otherwise a rolling window of the last
-        ``days`` trading days is used. ``lots`` / ``sl_points`` / ``target_points``
-        override the defaults (qty = 65 × lots).
+        ``days`` trading days is used. ``lots`` / ``target_mode`` /
+        ``target_points`` / ``target_percent`` override the defaults
+        (qty = 65 × lots; no stop-loss).
         """
         with self._lock:
             self.lots = max(1, int(lots)) if lots else LOTS
-            self.sl_points = float(sl_points) if sl_points else SL_POINTS
+            self.target_mode = target_mode if target_mode in ("points", "percent", "double") else TARGET_MODE
             self.target_points = float(target_points) if target_points else TARGET_POINTS
-            self.max_trades_per_day = max(1, int(max_trades_per_day)) if max_trades_per_day else MAX_TRADES_PER_DAY
+            self.target_percent = float(target_percent) if target_percent else TARGET_PERCENT
             self._opt_candle_cache.clear()
             if target_date is not None:
                 trading_days = [target_date]
@@ -625,12 +617,14 @@ class VwapPvwapResearch:
                     "lot_size": LOT_SIZE,
                     "lots": self.lots,
                     "qty": LOT_SIZE * self.lots,
-                    "sl_points": self.sl_points,
+                    "target_mode": self.target_mode,
                     "target_points": self.target_points,
-                    "max_trades_per_day": self.max_trades_per_day,
+                    "target_percent": self.target_percent,
+                    "stop_loss": "none",
                     "entry_start": ENTRY_START.strftime("%H:%M"),
                     "signal_cutoff": SIGNAL_CUTOFF.strftime("%H:%M"),
-                    "force_exit": FORCE_EXIT.strftime("%H:%M"),
+                    "expiry_exit": EXPIRY_EXIT.strftime("%H:%M"),
+                    "entries_per_day": 1,
                 },
                 "vwap_basis": "NIFTY 50 index typical price (index has no traded "
                               "volume; volume-weighting seam available for futures)",
