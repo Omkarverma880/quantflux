@@ -332,10 +332,15 @@ export const api = {
     request('/strategy10-trade/backtest-multi', { method: 'POST', body: JSON.stringify({ days: days || 5 }) }),
 
   // Research (read-only backtest modules)
-  researchVwapPvwapRun: (days, variants, date) =>
-    request('/research/vwap-pvwap/run', { method: 'POST', body: JSON.stringify({ days: days || 30, variants: variants || null, date: date || null }) }),
+  researchVwapPvwapRun: (days, variants, date, cfg) =>
+    request('/research/vwap-pvwap/run', { method: 'POST', body: JSON.stringify({
+      days: days || 30, variants: variants || null, date: date || null,
+      lots: cfg?.lots ?? null, sl_points: cfg?.sl_points ?? null, target_points: cfg?.target_points ?? null,
+    }) }),
   researchVwapPvwapSignals: (date) =>
     request('/research/vwap-pvwap/signals', { method: 'POST', body: JSON.stringify(date ? { date } : {}) }),
+  researchVwapPvwapExport: (start, end) =>
+    request('/research/vwap-pvwap/export', { method: 'POST', body: JSON.stringify({ start: start || null, end: end || null }) }),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),

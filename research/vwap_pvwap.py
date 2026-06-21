@@ -122,6 +122,11 @@ class VwapPvwapResearch:
     def __init__(self, broker: Broker):
         self.broker = broker
         self._lock = threading.Lock()
+        # Configurable per-run params (defaults match the spec). Quantity is
+        # always LOT_SIZE (65) × lots — e.g. 3 lots = 195, 4 lots = 260.
+        self.lots = LOTS
+        self.sl_points = SL_POINTS
+        self.target_points = TARGET_POINTS
         # daily caches (per process; cheap and avoids repeated API calls)
         self._index_token: Optional[int] = None
         self._nfo_options: Optional[list[dict]] = None     # NIFTY CE/PE instruments
@@ -356,8 +361,8 @@ class VwapPvwapResearch:
             return None
 
         entry_premium = float(candles[entry_idx]["close"])
-        sl = entry_premium - SL_POINTS
-        tgt = entry_premium + TARGET_POINTS
+        sl = entry_premium - self.sl_points
+        tgt = entry_premium + self.target_points
 
         exit_premium = exit_reason = exit_dt = None
         for c in candles[entry_idx + 1:]:
@@ -381,7 +386,9 @@ class VwapPvwapResearch:
             last = candles[-1]
             exit_premium, exit_reason, exit_dt = float(last["close"]), "TIME_EXIT", _candle_dt(last)
 
-        qty = option["lot_size"] * LOTS
+        # Quantity is always the fixed NIFTY lot size (65) × configured lots,
+        # never the instrument's lot_size — keeps it unambiguous (65×lots).
+        qty = LOT_SIZE * self.lots
         pnl = round((exit_premium - entry_premium) * qty, 2)
         return {
             "date": day.isoformat(),
@@ -547,14 +554,19 @@ class VwapPvwapResearch:
     # ──────────────────── Public API ─────────────────────────────
 
     def run(self, days: int = 30, variant_keys: Optional[list[str]] = None,
-            target_date: Optional[date] = None) -> dict:
+            target_date: Optional[date] = None, lots: Optional[int] = None,
+            sl_points: Optional[float] = None, target_points: Optional[float] = None) -> dict:
         """Run the backtest across the requested variants. Thread-safe.
 
         If ``target_date`` is given, only that single day is backtested (using
         its own previous-session VWAP). Otherwise a rolling window of the last
-        ``days`` trading days is used.
+        ``days`` trading days is used. ``lots`` / ``sl_points`` / ``target_points``
+        override the defaults (qty = 65 × lots).
         """
         with self._lock:
+            self.lots = max(1, int(lots)) if lots else LOTS
+            self.sl_points = float(sl_points) if sl_points else SL_POINTS
+            self.target_points = float(target_points) if target_points else TARGET_POINTS
             self._opt_candle_cache.clear()
             if target_date is not None:
                 trading_days = [target_date]
@@ -587,10 +599,10 @@ class VwapPvwapResearch:
                     "days_requested": 1 if target_date is not None else days,
                     "days_with_data": covered,
                     "lot_size": LOT_SIZE,
-                    "lots": LOTS,
-                    "qty": QTY,
-                    "sl_points": SL_POINTS,
-                    "target_points": TARGET_POINTS,
+                    "lots": self.lots,
+                    "qty": LOT_SIZE * self.lots,
+                    "sl_points": self.sl_points,
+                    "target_points": self.target_points,
                     "max_trades_per_day": MAX_TRADES_PER_DAY,
                     "entry_start": ENTRY_START.strftime("%H:%M"),
                     "signal_cutoff": SIGNAL_CUTOFF.strftime("%H:%M"),
@@ -652,3 +664,34 @@ class VwapPvwapResearch:
                 "series": series,
                 "markers": markers,
             }
+
+    def export_vwap(self, frm: date, to: date) -> dict:
+        """Per-minute VWAP / previous-day VWAP / crossover flag rows for a date
+        range, for independent verification in Excel. Crossover flag uses the
+        same tradeable window (09:30–15:15) the backtest acts on."""
+        with self._lock:
+            if to < frm:
+                frm, to = to, frm
+            self._load_spot_range(frm, to)
+            rows: list[dict] = []
+            for d in sorted(x for x in self._spot_by_day if frm <= x <= to):
+                candles = self._underlying_candles(d)
+                if not candles:
+                    continue
+                prev = self._previous_session_vwap(d, [])
+                rv = self._running_vwap_series(candles)
+                flags = {}
+                if prev is not None:
+                    for e in self._crossovers(candles, prev):
+                        flags[e["idx"]] = e["direction"]
+                for i, c in enumerate(candles):
+                    dt = _candle_dt(c)
+                    rows.append({
+                        "date": d.isoformat(),
+                        "time": dt.strftime("%H:%M") if dt else "",
+                        "close": round(float(c["close"]), 2),
+                        "vwap": round(rv[i], 2),
+                        "prev_vwap": round(prev, 2) if prev is not None else "",
+                        "crossover": flags.get(i, ""),
+                    })
+            return {"status": "ok", "from": frm.isoformat(), "to": to.isoformat(), "rows": rows}

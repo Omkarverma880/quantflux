@@ -1,11 +1,11 @@
 import React, { useState, useCallback } from 'react';
 import {
-  LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot, Legend,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ReferenceDot, Legend,
 } from 'recharts';
 import {
-  FlaskConical, Play, Loader2, AlertCircle, TrendingUp, TrendingDown,
-  Activity, BarChart3, LineChart as LineIcon, Info,
+  Play, Loader2, AlertCircle, Activity, Info, Download,
+  LineChart as LineIcon, Settings2, Table,
 } from 'lucide-react';
 import { api } from '../../api';
 
@@ -17,11 +17,15 @@ const AXIS = '#94a3b8';
 const POS = '#34d399';
 const NEG = '#f87171';
 
+const EXIT_COLORS = {
+  TARGET: POS, SL: NEG, OPPOSITE_SIGNAL: '#fbbf24', TIME_EXIT: '#60a5fa',
+};
+
 function Card({ title, icon: Icon, children, right = null, className = '' }) {
   return (
     <div className={`bg-surface-2 border border-surface-3 rounded-xl p-4 ${className}`}>
       {(title || right) && (
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 gap-2">
           <div className="flex items-center gap-2 text-gray-400 text-xs font-medium uppercase tracking-wider">
             {Icon && <Icon className="w-3.5 h-3.5" />} {title}
           </div>
@@ -33,44 +37,129 @@ function Card({ title, icon: Icon, children, right = null, className = '' }) {
   );
 }
 
-function Stat({ label, value, color = 'text-gray-100' }) {
+/* Build + trigger a CSV download from an array of objects. */
+function downloadCSV(filename, headers, rows) {
+  const esc = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [headers.map((h) => esc(h.label)).join(',')];
+  rows.forEach((r) => lines.push(headers.map((h) => esc(r[h.key])).join(',')));
+  const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+const TRADE_HEADERS = [
+  { key: 'date', label: 'Date' },
+  { key: 'entry_time', label: 'Entry' },
+  { key: 'exit_time', label: 'Exit' },
+  { key: 'direction', label: 'Direction' },
+  { key: 'expiry_type', label: 'Expiry Type' },
+  { key: 'expiry', label: 'Expiry Date' },
+  { key: 'strike', label: 'Strike' },
+  { key: 'symbol', label: 'Option Symbol' },
+  { key: 'premium_buy', label: 'Premium Buy' },
+  { key: 'premium_sell', label: 'Premium Sell' },
+  { key: 'qty', label: 'Qty' },
+  { key: 'pnl', label: 'PnL' },
+  { key: 'exit_reason', label: 'Exit Reason' },
+];
+
+function ConfigItem({ label, value }) {
   return (
-    <div className="bg-surface-3/40 rounded-lg px-3 py-3 text-center">
-      <div className={`text-lg font-bold ${color}`}>{value}</div>
-      <div className="text-gray-500 text-[11px] mt-0.5">{label}</div>
+    <div className="bg-surface-3/40 rounded-lg px-3 py-2">
+      <div className="text-[10px] text-gray-500 uppercase tracking-wide">{label}</div>
+      <div className="text-sm font-semibold text-gray-200 mt-0.5">{value}</div>
     </div>
   );
 }
 
-const EXIT_COLORS = {
-  TARGET: POS, SL: NEG, OPPOSITE_SIGNAL: '#fbbf24', TIME_EXIT: '#60a5fa',
-};
+function VariantCard({ v, active, onSelect, onDownload }) {
+  const pos = v.net_pnl >= 0;
+  return (
+    <div
+      onClick={() => onSelect(v.key)}
+      className={`cursor-pointer rounded-xl border p-4 transition ${
+        active ? 'bg-brand-600/10 border-brand-500/50' : 'bg-surface-2 border-surface-3 hover:border-surface-4'
+      }`}
+    >
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold text-gray-100">{v.label}</div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDownload(v); }}
+          title="Download trades CSV"
+          className="p-1 rounded bg-surface-3 hover:bg-surface-4 text-gray-300"
+        >
+          <Download className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className={`text-2xl font-bold mt-1 ${pos ? 'text-emerald-400' : 'text-red-400'}`}>
+        {pos ? '+' : ''}₹{INR(v.net_pnl)}
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-3 text-xs">
+        <Row k="Trades" val={v.total_trades} />
+        <Row k="Win Rate" val={`${v.win_rate}%`} c={v.win_rate >= 50 ? 'text-emerald-400' : 'text-gray-300'} />
+        <Row k="Wins / Losses" val={`${v.wins}/${v.losses}`} />
+        <Row k="Profit Factor" val={v.profit_factor ?? '∞'} />
+        <Row k="Avg Profit" val={`₹${INR(v.avg_profit)}`} c="text-emerald-400" />
+        <Row k="Avg Loss" val={`₹${INR(v.avg_loss)}`} c="text-red-400" />
+        <Row k="Max DD" val={`₹${INR(v.max_drawdown)}`} c="text-red-400" />
+        <Row k="Expectancy" val={`₹${INR(v.expectancy)}`} c={v.expectancy >= 0 ? 'text-emerald-400' : 'text-red-400'} />
+      </div>
+      {v.skipped?.length > 0 && (
+        <div className="text-[11px] text-amber-400 mt-2">{v.skipped.length} signal(s) skipped (no contract data)</div>
+      )}
+    </div>
+  );
+}
+
+function Row({ k, val, c = 'text-gray-200' }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-gray-500">{k}</span>
+      <span className={`font-medium ${c}`}>{val}</span>
+    </div>
+  );
+}
 
 export default function VwapPvwapResearch() {
   const [days, setDays] = useState(30);
-  const [runDate, setRunDate] = useState(''); // single-day backtest date
+  const [runDate, setRunDate] = useState('');
+  // Editable strategy config (qty = 65 × lots)
+  const [cfgLots, setCfgLots] = useState(3);
+  const [cfgSl, setCfgSl] = useState(100);
+  const [cfgTgt, setCfgTgt] = useState(300);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
-  const [active, setActive] = useState(null); // active variant key
+  const [active, setActive] = useState(null);
 
   // Signal overlay
   const [sigDate, setSigDate] = useState('');
   const [sigLoading, setSigLoading] = useState(false);
   const [signals, setSignals] = useState(null);
 
+  // VWAP export
+  const [expStart, setExpStart] = useState('');
+  const [expEnd, setExpEnd] = useState('');
+  const [expLoading, setExpLoading] = useState(false);
+
   const run = useCallback(async (date = null) => {
     setLoading(true); setError(''); setResult(null);
     try {
-      const res = await api.researchVwapPvwapRun(days, null, date);
+      const cfg = { lots: cfgLots, sl_points: cfgSl, target_points: cfgTgt };
+      const res = await api.researchVwapPvwapRun(days, null, date, cfg);
       if (res.status === 'ok') {
         setResult(res);
-        const first = Object.keys(res.variants)[0];
-        setActive(first);
+        setActive(Object.keys(res.variants)[0]);
       } else setError(res.message || 'Run failed');
     } catch (e) { setError(e.message || 'Run failed'); }
     finally { setLoading(false); }
-  }, [days]);
+  }, [days, cfgLots, cfgSl, cfgTgt]);
 
   const loadSignals = useCallback(async () => {
     setSigLoading(true);
@@ -82,22 +171,48 @@ export default function VwapPvwapResearch() {
     finally { setSigLoading(false); }
   }, [sigDate]);
 
-  const variant = result && active ? result.variants[active] : null;
+  const downloadVariant = (v) => {
+    if (!v.trades?.length) { setError(`No trades to download for ${v.label}`); return; }
+    const tag = result?.params?.target_date || `${result?.params?.days_requested}d`;
+    downloadCSV(`vwap_pvwap_${v.key}_${tag}.csv`, TRADE_HEADERS, v.trades);
+  };
 
-  // Derived chart data
-  const equityData = variant ? variant.equity_curve.map((v, i) => ({ i: i + 1, v })) : [];
-  const ddData = variant ? variant.drawdown_curve.map((v, i) => ({ i: i + 1, v })) : [];
-  const dailyData = variant ? variant.daily_pnl : [];
-  const exitDist = React.useMemo(() => {
-    if (!variant) return [];
-    const counts = {};
-    variant.trades.forEach((t) => { counts[t.exit_reason] = (counts[t.exit_reason] || 0) + 1; });
-    return Object.entries(counts).map(([reason, count]) => ({ reason, count }));
-  }, [variant]);
+  const downloadAll = () => {
+    if (!result) return;
+    const all = [];
+    Object.values(result.variants).forEach((v) =>
+      v.trades.forEach((t) => all.push({ variant: v.label, ...t })));
+    if (!all.length) { setError('No trades to download'); return; }
+    const tag = result?.params?.target_date || `${result?.params?.days_requested}d`;
+    downloadCSV(`vwap_pvwap_all_${tag}.csv`, [{ key: 'variant', label: 'Variant' }, ...TRADE_HEADERS], all);
+  };
+
+  const exportVwap = useCallback(async () => {
+    setExpLoading(true); setError('');
+    try {
+      const res = await api.researchVwapPvwapExport(expStart || null, expEnd || expStart || null);
+      if (res.status === 'ok') {
+        if (!res.rows?.length) { setError('No VWAP rows in that range'); return; }
+        downloadCSV(
+          `vwap_pvwap_series_${res.from}_to_${res.to}.csv`,
+          [
+            { key: 'date', label: 'Date' }, { key: 'time', label: 'Time' },
+            { key: 'close', label: 'NIFTY Close' }, { key: 'vwap', label: 'VWAP' },
+            { key: 'prev_vwap', label: 'Prev Day VWAP' }, { key: 'crossover', label: 'Crossover' },
+          ],
+          res.rows,
+        );
+      } else setError(res.message || 'Export failed');
+    } catch (e) { setError(e.message || 'Export failed'); }
+    finally { setExpLoading(false); }
+  }, [expStart, expEnd]);
+
+  const variant = result && active ? result.variants[active] : null;
+  const p = result?.params;
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-7xl mx-auto">
-      {/* Header */}
+      {/* Header + run controls */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -107,8 +222,7 @@ export default function VwapPvwapResearch() {
             </span>
           </div>
           <p className="text-gray-500 text-sm mt-0.5">
-            At each VWAP × previous-day-VWAP crossover, buy both CALL &amp; PUT. SL 100 / Target 300
-            premium pts · {3} lots (×65) · max 3 trades/day · square-off 15:20. Read-only backtest.
+            At each VWAP × previous-day-VWAP crossover, buy both CALL &amp; PUT. Read-only backtest.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
@@ -141,14 +255,52 @@ export default function VwapPvwapResearch() {
         </div>
       )}
 
-      {/* Data-availability note */}
+      {/* Config / rules — Lots, SL, Target are editable; applied on next Run */}
+      <Card title="Strategy Config & Rules" icon={Settings2}>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div>
+            <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Lots</label>
+            <input type="number" min="1" value={cfgLots}
+              onChange={(e) => setCfgLots(Math.max(1, parseInt(e.target.value) || 1))}
+              className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+          </div>
+          <div>
+            <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Stop Loss (pts)</label>
+            <input type="number" min="1" value={cfgSl}
+              onChange={(e) => setCfgSl(Math.max(1, parseFloat(e.target.value) || 1))}
+              className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+          </div>
+          <div>
+            <label className="block text-[10px] text-gray-500 uppercase tracking-wide mb-1">Target (pts)</label>
+            <input type="number" min="1" value={cfgTgt}
+              onChange={(e) => setCfgTgt(Math.max(1, parseFloat(e.target.value) || 1))}
+              className="w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+          </div>
+          <ConfigItem label="Quantity" value={`${cfgLots} × 65 = ${cfgLots * 65}`} />
+          <ConfigItem label="Max Trades / Day" value={p?.max_trades_per_day ?? 3} />
+          <ConfigItem label="Entry / Force Exit" value={`${p?.entry_start ?? '09:30'}–${p?.signal_cutoff ?? '15:15'} · ${p?.force_exit ?? '15:20'}`} />
+        </div>
+        <p className="text-gray-600 text-[11px] mt-2">
+          Lot size is fixed at <strong>65</strong>; quantity per leg = 65 × lots (3 → 195, 4 → 260). SL/Target are
+          premium points. Changes apply on the next <strong>Run</strong>.
+          {p && <> Active run used <strong>{p.lots} lots ({p.qty} qty), SL {p.sl_points}, Target {p.target_points}</strong>.</>}
+        </p>
+        <p className="text-gray-600 text-[11px] mt-1">
+          Re-entry: after a trade closes (SL/Target/opposite/time) another crossover may enter — up to
+          <strong> {p?.max_trades_per_day ?? 3} trades/day</strong>, one active at a time. Each trade buys a CALL
+          <em> and</em> a PUT leg; each leg exits on SL → Target → opposite crossover → force-exit.
+        </p>
+      </Card>
+
+      {/* Data note */}
       <div className="flex items-start gap-2 bg-blue-500/10 border border-blue-500/30 rounded-lg px-4 py-2.5 text-blue-300 text-xs">
         <Info className="w-4 h-4 shrink-0 mt-0.5" />
         <div>
-          Zerodha only lists currently-tradable contracts, so options that already expired in the
-          window have no premium history and those signals are skipped (see “skipped” counts).
-          Coverage is richest for recent days &amp; the live monthly contract.
-          {result && <> VWAP basis: <strong>{result.vwap_basis}</strong>.</>}
+          Zerodha only lists currently-tradable contracts, so options that already expired have no premium
+          history and those signals are skipped (counted per variant). Coverage is richest for recent days
+          &amp; the live monthly contract.
+          {p && <> · VWAP basis: <strong>{result.vwap_basis}</strong>
+            {p.mode === 'single_day' ? ` · Single day: ${p.target_date}` : ` · ${p.days_with_data} day(s) with data`}.</>}
         </div>
       </div>
 
@@ -161,54 +313,33 @@ export default function VwapPvwapResearch() {
       {!result && !loading && (
         <Card><div className="text-center py-12 text-gray-500 text-sm">
           Click <strong>Run {days}-Day</strong> for a rolling window, or pick a date and
-          <strong> Run This Day</strong> to backtest a single session (it uses that day&apos;s own
-          previous-day VWAP). Both evaluate all four variants.
+          <strong> Run This Day</strong> for a single session (uses that day&apos;s own previous-day VWAP).
         </div></Card>
       )}
 
       {result && variant && (
         <>
-          {/* Variant tabs */}
-          <div className="flex flex-wrap gap-2">
+          {/* Variant cards — weekly/monthly × ITM/ATM, each its own calculation */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {Object.values(result.variants).map((v) => (
-              <button key={v.key} onClick={() => setActive(v.key)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${
-                  active === v.key
-                    ? 'bg-brand-600/20 text-brand-400 border-brand-500/40'
-                    : 'bg-surface-3 text-gray-400 border-surface-4 hover:text-gray-200'
-                }`}>
-                {v.label}
-                <span className={`ml-2 text-xs ${v.net_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {v.net_pnl >= 0 ? '+' : ''}₹{INR(v.net_pnl)}
-                </span>
-              </button>
+              <VariantCard key={v.key} v={v} active={active === v.key}
+                onSelect={setActive} onDownload={downloadVariant} />
             ))}
           </div>
 
-          {/* Section 1: Summary cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <Stat label="Total Trades" value={variant.total_trades} />
-            <Stat label="Winning" value={variant.wins} color="text-emerald-400" />
-            <Stat label="Losing" value={variant.losses} color="text-red-400" />
-            <Stat label="Win Rate" value={`${variant.win_rate}%`}
-              color={variant.win_rate >= 50 ? 'text-emerald-400' : 'text-gray-200'} />
-            <Stat label="Net P&L" value={`₹${INR(variant.net_pnl)}`}
-              color={variant.net_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'} />
-            <Stat label="Avg Profit" value={`₹${INR(variant.avg_profit)}`} color="text-emerald-400" />
-            <Stat label="Avg Loss" value={`₹${INR(variant.avg_loss)}`} color="text-red-400" />
-            <Stat label="Max Drawdown" value={`₹${INR(variant.max_drawdown)}`} color="text-red-400" />
-            <Stat label="Profit Factor" value={variant.profit_factor ?? '∞'} />
-            <Stat label="Expectancy" value={`₹${INR(variant.expectancy)}`}
-              color={variant.expectancy >= 0 ? 'text-emerald-400' : 'text-red-400'} />
-          </div>
-
-          {/* Section 2: Variant comparison table */}
-          <Card title="Variant Comparison" icon={BarChart3}>
+          {/* Side-by-side comparison table */}
+          <Card title="Variant Comparison" icon={Table}
+            right={
+              <button onClick={downloadAll}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-surface-3 hover:bg-surface-4 text-gray-200 border border-surface-4">
+                <Download className="w-3.5 h-3.5" /> All trades CSV
+              </button>
+            }>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-surface-3 text-gray-500 text-xs">
-                    {['Variant', 'Trades', 'Win Rate', 'PnL', 'Max DD', 'Sharpe', 'Profit Factor'].map((h) => (
+                    {['Variant', 'Trades', 'Win Rate', 'Net PnL', 'Max DD', 'Sharpe', 'Profit Factor'].map((h) => (
                       <th key={h} className="text-left font-medium pb-2 pr-4 whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -234,96 +365,24 @@ export default function VwapPvwapResearch() {
             </div>
           </Card>
 
-          {/* Charts row 1 */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card title="Equity Curve" icon={LineIcon}>
-              <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={equityData}>
-                  <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
-                  <XAxis dataKey="i" tick={{ fill: AXIS, fontSize: 11 }} />
-                  <YAxis tick={{ fill: AXIS, fontSize: 11 }} width={56} />
-                  <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
-                  <ReferenceLine y={0} stroke={AXIS} strokeOpacity={0.4} />
-                  <Line type="monotone" dataKey="v" stroke="#818cf8" strokeWidth={2} dot={false} name="Equity ₹" />
-                </LineChart>
-              </ResponsiveContainer>
-            </Card>
-            <Card title="Drawdown" icon={TrendingDown}>
-              <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={ddData}>
-                  <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
-                  <XAxis dataKey="i" tick={{ fill: AXIS, fontSize: 11 }} />
-                  <YAxis tick={{ fill: AXIS, fontSize: 11 }} width={56} />
-                  <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
-                  <Line type="monotone" dataKey="v" stroke={NEG} strokeWidth={2} dot={false} name="Drawdown ₹" />
-                </LineChart>
-              </ResponsiveContainer>
-            </Card>
-          </div>
-
-          {/* Charts row 2 */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card title="Daily P&L" icon={BarChart3}>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={dailyData}>
-                  <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tick={{ fill: AXIS, fontSize: 10 }} />
-                  <YAxis tick={{ fill: AXIS, fontSize: 11 }} width={56} />
-                  <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
-                  <ReferenceLine y={0} stroke={AXIS} strokeOpacity={0.4} />
-                  <Bar dataKey="pnl" name="Day P&L ₹">
-                    {dailyData.map((d, i) => <Cell key={i} fill={d.pnl >= 0 ? POS : NEG} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </Card>
-            <Card title="Exit-Reason Distribution" icon={Activity}>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={exitDist}>
-                  <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
-                  <XAxis dataKey="reason" tick={{ fill: AXIS, fontSize: 10 }} />
-                  <YAxis tick={{ fill: AXIS, fontSize: 11 }} width={40} allowDecimals={false} />
-                  <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
-                  <Bar dataKey="count" name="Trades">
-                    {exitDist.map((d, i) => <Cell key={i} fill={EXIT_COLORS[d.reason] || '#94a3b8'} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </Card>
-          </div>
-
-          {/* Variant comparison chart */}
-          <Card title="Net P&L by Variant" icon={BarChart3}>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={result.comparison}>
-                <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fill: AXIS, fontSize: 11 }} />
-                <YAxis tick={{ fill: AXIS, fontSize: 11 }} width={64} />
-                <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
-                <ReferenceLine y={0} stroke={AXIS} strokeOpacity={0.4} />
-                <Bar dataKey="pnl" name="Net P&L ₹">
-                  {result.comparison.map((d, i) => <Cell key={i} fill={d.pnl >= 0 ? POS : NEG} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-
-          {/* Section 3: Trade log */}
+          {/* Trade log for the selected variant */}
           <Card title={`Trade Log — ${variant.label} (${variant.total_trades})`} icon={Activity}
-            right={variant.skipped?.length > 0 && (
-              <span className="text-xs text-amber-400">{variant.skipped.length} signals skipped (no data)</span>
-            )}>
+            right={
+              <button onClick={() => downloadVariant(variant)}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-surface-3 hover:bg-surface-4 text-gray-200 border border-surface-4">
+                <Download className="w-3.5 h-3.5" /> Download CSV
+              </button>
+            }>
             {variant.trades.length === 0 ? (
               <p className="text-gray-500 text-sm py-6 text-center">
-                No tradable signals for this variant in the window (likely all contracts expired —
-                see the data-availability note).
+                No tradable signals for this variant in the window (contracts likely expired — see the note above).
               </p>
             ) : (
-              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <div className="overflow-x-auto max-h-[28rem] overflow-y-auto">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-surface-2">
                     <tr className="border-b border-surface-3 text-gray-500">
-                      {['Date', 'Entry', 'Exit', 'Direction', 'Expiry', 'Strike', 'Buy', 'Sell', 'P&L', 'Reason'].map((h) => (
+                      {['Date', 'Entry', 'Exit', 'Dir', 'Expiry', 'Strike', 'Option', 'Buy', 'Sell', 'Qty', 'P&L', 'Reason'].map((h) => (
                         <th key={h} className="text-left font-medium pb-2 pr-3 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -335,14 +394,14 @@ export default function VwapPvwapResearch() {
                         <td className="py-1.5 pr-3 text-gray-300">{t.entry_time}</td>
                         <td className="py-1.5 pr-3 text-gray-300">{t.exit_time}</td>
                         <td className="py-1.5 pr-3">
-                          <span className={t.direction === 'CALL' ? 'text-emerald-400' : 'text-red-400'}>
-                            {t.direction}
-                          </span>
+                          <span className={t.direction === 'CALL' ? 'text-emerald-400' : 'text-red-400'}>{t.direction}</span>
                         </td>
-                        <td className="py-1.5 pr-3 text-gray-400">{t.expiry_type}</td>
+                        <td className="py-1.5 pr-3 text-gray-400">{t.expiry} <span className="text-gray-600">({t.expiry_type})</span></td>
                         <td className="py-1.5 pr-3 text-gray-300">{t.strike}</td>
+                        <td className="py-1.5 pr-3 text-gray-400 font-mono text-[11px]">{t.symbol}</td>
                         <td className="py-1.5 pr-3 text-gray-300">₹{INR(t.premium_buy, 2)}</td>
                         <td className="py-1.5 pr-3 text-gray-300">₹{INR(t.premium_sell, 2)}</td>
+                        <td className="py-1.5 pr-3 text-gray-500">{t.qty}</td>
                         <td className={`py-1.5 pr-3 font-medium ${t.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                           {t.pnl >= 0 ? '+' : ''}₹{INR(t.pnl)}
                         </td>
@@ -359,7 +418,32 @@ export default function VwapPvwapResearch() {
         </>
       )}
 
-      {/* Signal visualization (independent of run) */}
+      {/* VWAP / PVWAP / crossover export for independent verification */}
+      <Card title="Export VWAP / Prev-VWAP / Crossovers" icon={Download}>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">From</label>
+            <input type="date" value={expStart} onChange={(e) => setExpStart(e.target.value)}
+              className="bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">To (blank = same day)</label>
+            <input type="date" value={expEnd} onChange={(e) => setExpEnd(e.target.value)}
+              className="bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+          </div>
+          <button onClick={exportVwap} disabled={expLoading}
+            className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50 transition">
+            {expLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download CSV
+          </button>
+          <p className="text-gray-600 text-[11px] basis-full">
+            Per-minute rows: NIFTY close, running VWAP, previous-day VWAP, and a crossover flag
+            (BULL/BEAR within the 09:30–15:15 window) — open in Excel to verify the signals yourself.
+            Blank dates export the latest trading day.
+          </p>
+        </div>
+      </Card>
+
+      {/* Signal visualization (the one chart kept — shows the actual cross) */}
       <Card title="Signal Visualization (single day)" icon={LineIcon}
         right={
           <div className="flex items-end gap-2">
@@ -367,14 +451,13 @@ export default function VwapPvwapResearch() {
               className="bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-brand-500/60" />
             <button onClick={loadSignals} disabled={sigLoading}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-surface-3 hover:bg-surface-4 text-gray-200 border border-surface-4 disabled:opacity-50">
-              {sigLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LineIcon className="w-3.5 h-3.5" />}
-              Load Day
+              {sigLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LineIcon className="w-3.5 h-3.5" />} Load Day
             </button>
           </div>
         }>
         {!signals ? (
           <p className="text-gray-500 text-sm py-6 text-center">
-            Pick a date (blank = latest trading day) to overlay NIFTY, running VWAP, previous-day VWAP, and crossover markers.
+            Pick a date (blank = latest trading day) to overlay NIFTY, running VWAP, previous-day VWAP and crossover markers.
           </p>
         ) : (
           <>

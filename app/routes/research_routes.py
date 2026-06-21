@@ -46,10 +46,18 @@ class RunRequest(BaseModel):
     days: int = 30
     variants: list[str] | None = None
     date: str | None = None  # if set, backtest only this single day (YYYY-MM-DD)
+    lots: int | None = None          # qty = 65 × lots
+    sl_points: float | None = None
+    target_points: float | None = None
 
 
 class SignalsRequest(BaseModel):
     date: str | None = None
+
+
+class ExportRequest(BaseModel):
+    start: str | None = None   # YYYY-MM-DD
+    end: str | None = None     # YYYY-MM-DD (defaults to start)
 
 
 @router.post("/vwap-pvwap/run")
@@ -72,7 +80,10 @@ async def run_vwap_pvwap(
             return {"status": "error", "message": "Invalid date (use YYYY-MM-DD)"}
     eng = _get_engine(broker, user_id)
     try:
-        return eng.run(days=payload.days, variant_keys=payload.variants, target_date=target)
+        return eng.run(
+            days=payload.days, variant_keys=payload.variants, target_date=target,
+            lots=payload.lots, sl_points=payload.sl_points, target_points=payload.target_points,
+        )
     except Exception as exc:
         logger.error("VWAP/PVWAP research run failed: %s", exc)
         return {"status": "error", "message": str(exc)}
@@ -99,4 +110,30 @@ async def vwap_pvwap_signals(
         return eng.signals(target)
     except Exception as exc:
         logger.error("VWAP/PVWAP signals failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/vwap-pvwap/export")
+async def export_vwap_pvwap(
+    payload: ExportRequest | None = None,
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    """Per-minute VWAP / prev-day VWAP / crossover rows for a date range (CSV-able)."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    payload = payload or ExportRequest()
+    try:
+        start = _date.fromisoformat(payload.start) if payload.start else None
+        end = _date.fromisoformat(payload.end) if payload.end else (start)
+    except Exception:
+        return {"status": "error", "message": "Invalid date (use YYYY-MM-DD)"}
+    eng = _get_engine(broker, user_id)
+    if start is None:
+        start = end = eng._trading_days(1)[-1]
+    try:
+        return eng.export_vwap(start, end or start)
+    except Exception as exc:
+        logger.error("VWAP/PVWAP export failed: %s", exc)
         return {"status": "error", "message": str(exc)}
