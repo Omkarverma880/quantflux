@@ -17,6 +17,7 @@ from strategies.strategy7_strike_lines import Strategy7StrikeLines
 from strategies.strategy8_reverse import Strategy8Reverse
 from strategies.strategy9_loc import Strategy9LOC
 from strategies.strategy10_equity_intraday import Strategy10EquityIntraday
+from strategies.strategy11_vwap_pvwap import Strategy11VwapPvwap
 
 # ──────────────── Strategy Registry ────────────────
 # Map strategy name → class
@@ -32,6 +33,7 @@ STRATEGY_MAP: dict[str, type] = {
     "strategy8_reverse": Strategy8Reverse,
     "strategy9_loc": Strategy9LOC,
     "strategy10_equity_intraday": Strategy10EquityIntraday,
+    "strategy11_vwap_pvwap": Strategy11VwapPvwap,
 }
 
 

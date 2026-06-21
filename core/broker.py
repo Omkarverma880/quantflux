@@ -280,11 +280,12 @@ class Broker:
 
     # ── Positions / Holdings ───────────────────────────
 
-    def get_positions(self) -> list[Position]:
-        """Get current day positions."""
+    def get_positions(self, kind: str = "day") -> list[Position]:
+        """Get positions. kind='day' (default, intraday) or 'net' (includes
+        overnight-carried F&O positions — needed for positional strategies)."""
         raw = self.kite.positions()
         positions = []
-        for p in raw.get("day", []):
+        for p in raw.get(kind, raw.get("day", [])):
             positions.append(Position(
                 tradingsymbol=p["tradingsymbol"],
                 exchange=p["exchange"],
@@ -380,6 +381,53 @@ class Broker:
             order_id=order_id,
         )
         return {"order_id": order_id, "result": result}
+
+    # ── GTT (Good-Till-Triggered) ──────────────────────
+    # Resting server-side triggers at Zerodha — survive app downtime / token
+    # expiry. Used by positional strategies (e.g. Strategy 11) for the target
+    # and the leg-2 fraction stop. Paper mode returns a fake id (no live GTT).
+
+    def place_gtt(self, *, tradingsymbol: str, exchange: str, trigger_price: float,
+                  last_price: float, quantity: int, side: str,
+                  product: str = "NRML", order_type: str = "LIMIT",
+                  price: float | None = None) -> str:
+        """Place a single-leg GTT. Returns the trigger id (or a PAPER- id)."""
+        if settings.PAPER_TRADE:
+            self._paper_order_counter += 1
+            return f"PAPER-GTT-{self._paper_order_counter:06d}"
+        order = {
+            "transaction_type": side,
+            "quantity": int(quantity),
+            "order_type": order_type,
+            "product": product,
+            "price": float(price if price is not None else trigger_price),
+        }
+        res = self.kite.place_gtt(
+            trigger_type=self.kite.GTT_TYPE_SINGLE,
+            tradingsymbol=tradingsymbol,
+            exchange=exchange,
+            trigger_values=[float(trigger_price)],
+            last_price=float(last_price),
+            orders=[order],
+        )
+        return str(res.get("trigger_id") if isinstance(res, dict) else res)
+
+    def get_gtts(self) -> list[dict]:
+        if settings.PAPER_TRADE:
+            return []
+        try:
+            return self.kite.get_gtts() or []
+        except Exception as exc:
+            logger.debug("get_gtts failed: %s", exc)
+            return []
+
+    def delete_gtt(self, trigger_id) -> None:
+        if settings.PAPER_TRADE or str(trigger_id).startswith("PAPER"):
+            return
+        try:
+            self.kite.delete_gtt(trigger_id=trigger_id)
+        except Exception as exc:
+            logger.debug("delete_gtt %s failed: %s", trigger_id, exc)
 
     # ── Instruments ────────────────────────────────────
 

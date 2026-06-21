@@ -23,6 +23,7 @@ import PortfolioAnalytics from './pages/PortfolioAnalytics';
 import AnalyticsWorld from './pages/AnalyticsWorld';
 import TradeHistory from './pages/TradeHistory';
 import ManualTrading from './pages/ManualTrading';
+import Strategy11 from './pages/Strategy11';
 import VwapPvwapResearch from './pages/research/VwapPvwap';
 
 export default function App() {
@@ -52,6 +53,7 @@ export default function App() {
           <Route path="strategy8-trade" element={<Strategy8 />} />
           <Route path="strategy9-trade" element={<Strategy9 />} />
           <Route path="strategy10-trade" element={<Strategy10 />} />
+          <Route path="strategy11-trade" element={<Strategy11 />} />
           <Route path="research/vwap-pvwap" element={<VwapPvwapResearch />} />
           <Route path="portfolio" element={<PortfolioAnalytics />} />
           <Route path="portfolio/analytics-world" element={<AnalyticsWorld />} />

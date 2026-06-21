@@ -331,6 +331,18 @@ export const api = {
   strategy10BacktestMulti: (days) =>
     request('/strategy10-trade/backtest-multi', { method: 'POST', body: JSON.stringify({ days: days || 5 }) }),
 
+  // Strategy 11 — VWAP vs Previous-Day VWAP (positional options)
+  getStrategy11Status: () => request('/strategy11-trade/status'),
+  strategy11Start: (config) =>
+    request('/strategy11-trade/start', { method: 'POST', body: JSON.stringify(config) }),
+  strategy11Stop: () => request('/strategy11-trade/stop', { method: 'POST' }),
+  strategy11UpdateConfig: (config) =>
+    request('/strategy11-trade/config', { method: 'PUT', body: JSON.stringify(config) }),
+  strategy11History: () => request('/strategy11-trade/history'),
+  strategy11SimulateEntry: () => request('/strategy11-trade/simulate-entry', { method: 'POST' }),
+  strategy11DocUnlock: (password) =>
+    request('/strategy11-trade/doc-unlock', { method: 'POST', body: JSON.stringify({ password }) }),
+
   // Research (read-only backtest modules)
   researchVwapPvwapRun: (days, variants, date, cfg) =>
     request('/research/vwap-pvwap/run', { method: 'POST', body: JSON.stringify({

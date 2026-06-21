@@ -40,6 +40,7 @@ const strategyBadge = (label) => {
     case 'Strategy 8': return 'bg-pink-600/20 text-pink-400 border border-pink-500/30';
     case 'Strategy 9': return 'bg-teal-600/20 text-teal-400 border border-teal-500/30';
     case 'Strategy 10': return 'bg-orange-600/20 text-orange-400 border border-orange-500/30';
+    case 'Strategy 11': return 'bg-violet-600/20 text-violet-400 border border-violet-500/30';
     case 'Exit All':   return 'bg-red-600/20 text-red-400 border border-red-500/30';
     default:           return 'bg-gray-600/20 text-gray-400 border border-gray-500/30';
   }

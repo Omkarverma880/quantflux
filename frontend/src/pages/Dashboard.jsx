@@ -578,6 +578,7 @@ export default function Dashboard() {
   const [s8, setS8] = useState(null);
   const [s9, setS9] = useState(null);
   const [s10, setS10] = useState(null);
+  const [s11, setS11] = useState(null);
   const [loading, setLoading] = useState(true);
   const [engineLoading, setEngineLoading] = useState(false);
   const [time, setTime] = useState(new Date());
@@ -629,6 +630,7 @@ export default function Dashboard() {
       if (d.s8) setS8(d.s8);
       if (d.s9) setS9(d.s9);
       if (d.s10) setS10(d.s10);
+      if (d.s11) setS11(d.s11);
     }
   }, []));
 
@@ -906,6 +908,12 @@ export default function Dashboard() {
             data={s10}
             onClick={() => navigate('/strategy10-trade')}
           />
+          <StrategyCard
+            label="VWAP vs Prev VWAP"
+            shortName="Strategy 11"
+            data={s11}
+            onClick={() => navigate('/strategy11-trade')}
+          />
         </div>
       </div>
 
@@ -1058,7 +1066,7 @@ export default function Dashboard() {
             <div className="flex justify-between items-center">
               <span className="text-gray-400">Strategies</span>
               <span className="text-gray-300 font-medium">
-                {[s1, s2, s3, s4, s5, s6, s7, s8, s9, s10].filter((s) => s?.is_active).length} / 10 active
+                {[s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11].filter((s) => s?.is_active).length} / 11 active
               </span>
             </div>
             <div className="flex justify-between items-center">

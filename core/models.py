@@ -123,6 +123,54 @@ class TradeLog(Base):
     user = relationship("User", back_populates="trade_logs")
 
 
+class Strategy11Leg(Base):
+    """One row per option leg for Strategy 11 (positional VWAP/prev-VWAP).
+
+    Authoritative, browseable store of every CE/PE leg — open and closed — so
+    positions survive app restarts/redeploys and are fully visible in pgAdmin
+    (e.g. ``SELECT * FROM strategy11_legs WHERE state='OPEN'``). A CE+PE entry
+    shares one ``pair_id``.
+    """
+    __tablename__ = "strategy11_legs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    pair_id = Column(String(40), nullable=False)         # groups the CE + PE of one entry
+    trade_date = Column(Date, nullable=False)
+    entry_time = Column(String(10))
+    signal = Column(String(10))                          # BULL / BEAR
+    expiry_type = Column(String(10))                     # weekly / monthly
+    expiry = Column(Date)
+    spot = Column(Numeric(12, 2))
+    option_type = Column(String(2), nullable=False)      # CE / PE
+    strike = Column(Integer)
+    symbol = Column(String(100), nullable=False)
+    token = Column(Integer)
+    qty = Column(Integer)
+    entry_price = Column(Numeric(12, 2))
+    target_price = Column(Numeric(12, 2))
+    ltp = Column(Numeric(12, 2))
+    state = Column(String(20), default="OPEN")           # OPEN/TARGET/LEG2_EXIT/EXPIRY/MANUAL_EXIT
+    leg2_armed = Column(Boolean, default=False)
+    broke_out = Column(Boolean, default=False)
+    leg2_level = Column(Numeric(12, 2))
+    target_gtt = Column(String(40))
+    leg2_gtt = Column(String(40))
+    exit_price = Column(Numeric(12, 2))
+    exit_time = Column(String(10))
+    exit_date = Column(Date)
+    pnl = Column(Numeric(12, 2))
+    exit_reason = Column(String(20))
+    paper = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "pair_id", "option_type", name="uq_s11_leg"),
+        Index("idx_s11_user_state", "user_id", "state"),
+    )
+
+
 class OrderHistory(Base):
     __tablename__ = "order_history"
 
