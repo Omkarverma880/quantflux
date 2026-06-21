@@ -48,6 +48,7 @@ const EXIT_COLORS = {
 
 export default function VwapPvwapResearch() {
   const [days, setDays] = useState(30);
+  const [runDate, setRunDate] = useState(''); // single-day backtest date
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -58,10 +59,10 @@ export default function VwapPvwapResearch() {
   const [sigLoading, setSigLoading] = useState(false);
   const [signals, setSignals] = useState(null);
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (date = null) => {
     setLoading(true); setError(''); setResult(null);
     try {
-      const res = await api.researchVwapPvwapRun(days);
+      const res = await api.researchVwapPvwapRun(days, null, date);
       if (res.status === 'ok') {
         setResult(res);
         const first = Object.keys(res.variants)[0];
@@ -110,16 +111,26 @@ export default function VwapPvwapResearch() {
             premium pts · {3} lots (×65) · max 3 trades/day · square-off 15:20. Read-only backtest.
           </p>
         </div>
-        <div className="flex items-end gap-2">
+        <div className="flex flex-wrap items-end gap-2">
           <div>
             <label className="block text-xs text-gray-400 mb-1">Lookback (days)</label>
             <input type="number" min="1" max="60" value={days}
               onChange={(e) => setDays(Math.max(1, Math.min(60, parseInt(e.target.value) || 1)))}
               className="w-24 bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
           </div>
-          <button onClick={run} disabled={loading}
+          <button onClick={() => run(null)} disabled={loading}
             className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50 transition">
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />} Run Backtest
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />} Run {days}-Day
+          </button>
+          <div className="h-8 w-px bg-surface-3 mx-1 hidden sm:block" />
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Single day</label>
+            <input type="date" value={runDate} onChange={(e) => setRunDate(e.target.value)}
+              className="bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60" />
+          </div>
+          <button onClick={() => run(runDate)} disabled={loading || !runDate}
+            className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-surface-3 hover:bg-surface-4 text-gray-200 border border-surface-4 font-semibold disabled:opacity-40 transition">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />} Run This Day
           </button>
         </div>
       </div>
@@ -149,7 +160,9 @@ export default function VwapPvwapResearch() {
 
       {!result && !loading && (
         <Card><div className="text-center py-12 text-gray-500 text-sm">
-          Set a lookback window and click <strong>Run Backtest</strong> to evaluate all four variants.
+          Click <strong>Run {days}-Day</strong> for a rolling window, or pick a date and
+          <strong> Run This Day</strong> to backtest a single session (it uses that day&apos;s own
+          previous-day VWAP). Both evaluate all four variants.
         </div></Card>
       )}
 

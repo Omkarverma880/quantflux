@@ -108,7 +108,12 @@ def _candle_dt(c: dict) -> Optional[datetime]:
             dt = datetime.fromisoformat(dt)
         except Exception:
             return None
-    return dt if isinstance(dt, datetime) else None
+    if not isinstance(dt, datetime):
+        return None
+    # Kite returns tz-aware (IST) timestamps. Strip tzinfo so every comparison
+    # in the engine (vs naive datetime.combine / dtime constants) is consistent
+    # and never raises "can't compare offset-naive and offset-aware".
+    return dt.replace(tzinfo=None)
 
 
 class VwapPvwapResearch:
@@ -218,8 +223,9 @@ class VwapPvwapResearch:
         token = self._resolve_index_token()
         if not token:
             raise RuntimeError("Could not resolve NIFTY 50 index token")
-        # one extra prior day so the first backtest day has a previous session
-        start = oldest - timedelta(days=6)
+        # extra prior days so the first backtest day has a previous session
+        # even across weekends + holidays
+        start = oldest - timedelta(days=10)
         grouped: dict[date, list[dict]] = {}
         # Kite caps minute history at ~60 days per request — fetch in 55-day chunks.
         chunk = timedelta(days=55)
@@ -540,12 +546,21 @@ class VwapPvwapResearch:
 
     # ──────────────────── Public API ─────────────────────────────
 
-    def run(self, days: int = 30, variant_keys: Optional[list[str]] = None) -> dict:
-        """Run the backtest across the requested variants. Thread-safe."""
+    def run(self, days: int = 30, variant_keys: Optional[list[str]] = None,
+            target_date: Optional[date] = None) -> dict:
+        """Run the backtest across the requested variants. Thread-safe.
+
+        If ``target_date`` is given, only that single day is backtested (using
+        its own previous-session VWAP). Otherwise a rolling window of the last
+        ``days`` trading days is used.
+        """
         with self._lock:
-            days = max(1, min(int(days), 60))
             self._opt_candle_cache.clear()
-            trading_days = self._trading_days(days)
+            if target_date is not None:
+                trading_days = [target_date]
+            else:
+                days = max(1, min(int(days), 60))
+                trading_days = self._trading_days(days)
             self._load_spot_range(trading_days[0], trading_days[-1])
 
             # crossovers are identical across variants → compute once per day
@@ -567,7 +582,9 @@ class VwapPvwapResearch:
             return {
                 "status": "ok",
                 "params": {
-                    "days_requested": days,
+                    "mode": "single_day" if target_date is not None else "rolling",
+                    "target_date": target_date.isoformat() if target_date is not None else None,
+                    "days_requested": 1 if target_date is not None else days,
                     "days_with_data": covered,
                     "lot_size": LOT_SIZE,
                     "lots": LOTS,

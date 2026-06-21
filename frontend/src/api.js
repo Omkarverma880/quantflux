@@ -332,8 +332,8 @@ export const api = {
     request('/strategy10-trade/backtest-multi', { method: 'POST', body: JSON.stringify({ days: days || 5 }) }),
 
   // Research (read-only backtest modules)
-  researchVwapPvwapRun: (days, variants) =>
-    request('/research/vwap-pvwap/run', { method: 'POST', body: JSON.stringify({ days: days || 30, variants: variants || null }) }),
+  researchVwapPvwapRun: (days, variants, date) =>
+    request('/research/vwap-pvwap/run', { method: 'POST', body: JSON.stringify({ days: days || 30, variants: variants || null, date: date || null }) }),
   researchVwapPvwapSignals: (date) =>
     request('/research/vwap-pvwap/signals', { method: 'POST', body: JSON.stringify(date ? { date } : {}) }),
 

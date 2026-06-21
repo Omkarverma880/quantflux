@@ -45,6 +45,7 @@ def _get_engine(broker: Broker, user_id: int) -> VwapPvwapResearch:
 class RunRequest(BaseModel):
     days: int = 30
     variants: list[str] | None = None
+    date: str | None = None  # if set, backtest only this single day (YYYY-MM-DD)
 
 
 class SignalsRequest(BaseModel):
@@ -63,9 +64,15 @@ async def run_vwap_pvwap(
         return {"status": "error",
                 "message": "Zerodha not authenticated — research needs historical data access"}
     payload = payload or RunRequest()
+    target = None
+    if payload.date:
+        try:
+            target = _date.fromisoformat(payload.date)
+        except Exception:
+            return {"status": "error", "message": "Invalid date (use YYYY-MM-DD)"}
     eng = _get_engine(broker, user_id)
     try:
-        return eng.run(days=payload.days, variant_keys=payload.variants)
+        return eng.run(days=payload.days, variant_keys=payload.variants, target_date=target)
     except Exception as exc:
         logger.error("VWAP/PVWAP research run failed: %s", exc)
         return {"status": "error", "message": str(exc)}
