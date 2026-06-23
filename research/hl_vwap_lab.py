@@ -188,21 +188,33 @@ class HlVwapLab:
 
     @staticmethod
     def _full_vwap(day_candles: list[dict]) -> Optional[float]:
-        pv = v = 0.0
+        # Volume-weighted when volume exists; else cumulative-average HLC3
+        # (NIFTY/index candles carry no traded volume, so we must fall back —
+        # otherwise prev-day VWAP would be None and no signals would fire).
+        pv = v = tp_sum = 0.0
+        n = 0
         for c in day_candles:
+            tp = _hlc3(c)
             vol = _f(c.get("volume"))
-            pv += _hlc3(c) * vol
+            pv += tp * vol
             v += vol
-        return (pv / v) if v > 0 else None
+            tp_sum += tp
+            n += 1
+        if n == 0:
+            return None
+        return (pv / v) if v > 0 else (tp_sum / n)
 
     @staticmethod
     def _running_vwap(day_candles: list[dict]) -> list[float]:
-        out, pv, v = [], 0.0, 0.0
+        out, pv, v, tp_sum, n = [], 0.0, 0.0, 0.0, 0
         for c in day_candles:
+            tp = _hlc3(c)
             vol = _f(c.get("volume"))
-            pv += _hlc3(c) * vol
+            pv += tp * vol
             v += vol
-            out.append((pv / v) if v > 0 else _hlc3(c))
+            tp_sum += tp
+            n += 1
+            out.append((pv / v) if v > 0 else (tp_sum / n))
         return out
 
     # ──────────────── signal generation ────────────────
