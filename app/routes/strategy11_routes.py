@@ -171,6 +171,13 @@ async def simulate_entry(user_id: int = Depends(login_required), db: Session = D
     return _get_strategy(broker, user_id).simulate_entry()
 
 
+@router.post("/reset")
+async def reset_positions(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Paper-only: clear all tracked positions + DB rows (wipe test data)."""
+    broker = get_user_broker(db, user_id)
+    return _get_strategy(broker, user_id).reset_positions()
+
+
 @router.get("/history")
 async def get_trade_history(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     # DB first (Railway-safe, pgAdmin-visible); fall back to the JSON file.

@@ -25,6 +25,8 @@ import TradeHistory from './pages/TradeHistory';
 import ManualTrading from './pages/ManualTrading';
 import Strategy11 from './pages/Strategy11';
 import VwapPvwapResearch from './pages/research/VwapPvwap';
+import OptionChainResearch from './pages/research/OptionChain';
+import HlVwapLab from './pages/research/HlVwapLab';
 
 export default function App() {
   const { isAuthenticated } = useAuth();
@@ -55,6 +57,8 @@ export default function App() {
           <Route path="strategy10-trade" element={<Strategy10 />} />
           <Route path="strategy11-trade" element={<Strategy11 />} />
           <Route path="research/vwap-pvwap" element={<VwapPvwapResearch />} />
+          <Route path="research/option-chain" element={<OptionChainResearch />} />
+          <Route path="research/hl-vwap" element={<HlVwapLab />} />
           <Route path="portfolio" element={<PortfolioAnalytics />} />
           <Route path="portfolio/analytics-world" element={<AnalyticsWorld />} />
           <Route path="strategies" element={<Strategies />} />

@@ -505,6 +505,34 @@ class Strategy11VwapPvwap:
                 return {"status": "error", "message": str(exc)}
             return {"status": "ok", **self.get_status()}
 
+    def reset_positions(self) -> dict:
+        """Paper-only: wipe all tracked pairs + DB rows (clears test positions)."""
+        with self._lock:
+            if not self.paper_trade:
+                return {"status": "error",
+                        "message": "Reset is paper-only — square off live positions manually first."}
+            self.trades = []
+            self._entered_dates = []
+            self._db_clear()
+            self._save_state()
+            logger.info("S11 paper positions cleared")
+            return {"status": "ok", **self.get_status()}
+
+    def _db_clear(self):
+        if not self.user_id:
+            return
+        from core.database import get_db_session
+        from core.models import Strategy11Leg
+        db = get_db_session()
+        try:
+            db.query(Strategy11Leg).filter_by(user_id=self.user_id).delete()
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.debug("S11 db clear failed: %s", exc)
+        finally:
+            db.close()
+
     # ──────────────────── Monitoring / exits ────────────
 
     def _book_exit(self, pair: dict, leg: dict, exit_price: float, reason: str):

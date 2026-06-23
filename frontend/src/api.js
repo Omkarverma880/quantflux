@@ -340,6 +340,7 @@ export const api = {
     request('/strategy11-trade/config', { method: 'PUT', body: JSON.stringify(config) }),
   strategy11History: () => request('/strategy11-trade/history'),
   strategy11SimulateEntry: () => request('/strategy11-trade/simulate-entry', { method: 'POST' }),
+  strategy11Reset: () => request('/strategy11-trade/reset', { method: 'POST' }),
   strategy11DocUnlock: (password) =>
     request('/strategy11-trade/doc-unlock', { method: 'POST', body: JSON.stringify({ password }) }),
 
@@ -356,6 +357,18 @@ export const api = {
     request('/research/vwap-pvwap/signals', { method: 'POST', body: JSON.stringify(date ? { date } : {}) }),
   researchVwapPvwapExport: (start, end) =>
     request('/research/vwap-pvwap/export', { method: 'POST', body: JSON.stringify({ start: start || null, end: end || null }) }),
+  researchOptionChainExpiries: () => request('/research/option-chain/expiries'),
+  researchOptionChainSnapshot: (cfg) =>
+    request('/research/option-chain/snapshot', { method: 'POST', body: JSON.stringify(cfg || {}) }),
+  researchOptionChainDownload: (token, symbol, date) =>
+    request('/research/option-chain/download', { method: 'POST', body: JSON.stringify({ token, symbol, date: date || null }) }),
+  // HL + VWAP Research Lab
+  researchHlVwapMeta: (index) => request(`/research/hl-vwap/meta?index=${encodeURIComponent(index || 'NIFTY')}`),
+  researchHlVwapRun: (params) =>
+    request('/research/hl-vwap/run', { method: 'POST', body: JSON.stringify(params || {}) }),
+  researchHlVwapChart: (day) =>
+    request('/research/hl-vwap/chart', { method: 'POST', body: JSON.stringify({ day }) }),
+  researchHlVwapUpload: (formData) => requestUpload('/research/hl-vwap/upload', formData),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),

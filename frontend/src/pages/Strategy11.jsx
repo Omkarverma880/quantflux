@@ -299,6 +299,15 @@ export default function Strategy11() {
     } catch (e) { msg(e.message || 'Simulate failed', true); }
   };
 
+  const handleReset = async () => {
+    if (!window.confirm('Clear ALL Strategy 11 paper positions and history rows? This cannot be undone.')) return;
+    try {
+      const res = await api.strategy11Reset();
+      if (res.status === 'ok' || res.open_pairs != null) { msg('Paper positions cleared.'); setStatus(res); fetchHistory(); }
+      else msg(res.message || 'Reset failed', true);
+    } catch (e) { msg(e.message || 'Reset failed', true); }
+  };
+
   useEffect(() => {
     fetchAll(); fetchHistory();
     const id = setInterval(fetchAll, REFRESH_MS);
@@ -500,7 +509,14 @@ export default function Strategy11() {
       </Card>
 
       {/* Open positions */}
-      <Card title={`Open Positions (${openLegs.length} legs)`} icon={Layers}>
+      <Card title={`Open Positions (${openLegs.length} legs)`} icon={Layers}
+        right={paper && openLegs.length > 0 && (
+          <button onClick={handleReset}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-red-600/15 text-red-400 hover:bg-red-600/25 border border-red-500/30 transition"
+            title="Paper only — clear all tracked positions">
+            <X className="w-3.5 h-3.5" /> Clear
+          </button>
+        )}>
         {openLegs.length === 0 ? (
           <p className="text-gray-500 text-sm py-6 text-center">No open positions. An entry is taken on the first VWAP crossover each trading day.</p>
         ) : (

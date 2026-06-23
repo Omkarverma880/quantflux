@@ -188,43 +188,49 @@ class Broker:
         if req.order_type == OrderType.MARKET:
             try:
                 instrument = f"{req.exchange.value}:{req.tradingsymbol}"
-                # quote() gives last_price AND the circuit band, so we can cap
-                # the buffered LIMIT inside the band — otherwise LTP±5% can
-                # breach the upper/lower circuit and Zerodha rejects the order.
-                q = (self.kite.quote([instrument]) or {}).get(instrument, {})
-                ltp = q.get("last_price") or self.kite.ltp([instrument])[instrument]["last_price"]
-                upper = q.get("upper_circuit_limit") or 0
-                lower = q.get("lower_circuit_limit") or 0
-                buffer = ltp * 0.05  # 5% buffer
+                if is_equity:
+                    # Equity: use quote() so we can cap the buffered LIMIT inside
+                    # the circuit band (some scrips trade in 0.10 ticks, e.g. CDSL).
+                    q = (self.kite.quote([instrument]) or {}).get(instrument, {})
+                    ltp = q.get("last_price") or self.kite.ltp([instrument])[instrument]["last_price"]
+                    upper = q.get("upper_circuit_limit") or 0
+                    lower = q.get("lower_circuit_limit") or 0
+                    buffer = ltp * 0.05
 
-                def floor_tick(p):
-                    return round(math.floor(round(p / tick, 6)) * tick, 2)
+                    def floor_tick(p):
+                        return round(math.floor(round(p / tick, 6)) * tick, 2)
 
-                def ceil_tick(p):
-                    return round(math.ceil(round(p / tick, 6)) * tick, 2)
+                    def ceil_tick(p):
+                        return round(math.ceil(round(p / tick, 6)) * tick, 2)
 
-                if req.side == OrderSide.BUY:
-                    target = ltp + buffer
-                    if upper and target >= upper:
-                        # Cap at the upper circuit, rounded DOWN so we stay inside it
-                        effective_price = floor_tick(upper)
+                    if req.side == OrderSide.BUY:
+                        target = ltp + buffer
+                        effective_price = floor_tick(upper) if (upper and target >= upper) else ceil_tick(target)
                     else:
-                        effective_price = ceil_tick(target)
+                        target = ltp - buffer
+                        effective_price = ceil_tick(lower) if (lower and target <= lower) else floor_tick(target)
+                        effective_price = max(effective_price, tick)
                 else:
-                    target = ltp - buffer
-                    if lower and target <= lower:
-                        # Cap at the lower circuit, rounded UP so we stay inside it
-                        effective_price = ceil_tick(lower)
+                    # F&O: original lightweight LTP + 5% buffer path (Zerodha
+                    # blocks plain MARKET orders). No circuit cap / no quote() —
+                    # option circuit bands are wide, and ltp() avoids the heavier
+                    # quote() rate limit that can stall strategy order placement.
+                    ltp = self.kite.ltp([instrument])[instrument]["last_price"]
+                    buffer = ltp * 0.05
+                    if req.side == OrderSide.BUY:
+                        raw = ltp + buffer
+                        effective_price = round((raw // tick + (1 if raw % tick else 0)) * tick, 2)
                     else:
-                        effective_price = floor_tick(target)
-                    effective_price = max(effective_price, tick)
+                        raw = max(ltp - buffer, tick)
+                        effective_price = round((raw // tick) * tick, 2)
+                        effective_price = max(effective_price, tick)
                 effective_order_type = OrderType.LIMIT
                 logger.info(
                     f"Converted MARKET → LIMIT: LTP={ltp}, tick={tick}, "
-                    f"band=[{lower},{upper}], price={effective_price} ({req.side.value})"
+                    f"price={effective_price} ({req.side.value})"
                 )
             except Exception as e:
-                logger.warning(f"Quote fetch failed, placing MARKET order as-is: {e}")
+                logger.warning(f"LTP/quote fetch failed, placing MARKET order as-is: {e}")
 
         logger.info(
             f"LIVE ORDER: {req.side.value} {req.quantity} x {req.tradingsymbol} "
@@ -325,14 +331,15 @@ class Broker:
         return self.kite.ohlc(instruments)
 
     def get_historical_data(
-        self, instrument_token: int, from_date, to_date, interval: str
+        self, instrument_token: int, from_date, to_date, interval: str, oi: bool = False
     ) -> list[dict]:
         """
         interval: minute, 3minute, 5minute, 10minute, 15minute, 30minute,
                   60minute, day, week, month
+        oi: include open-interest column (derivatives only).
         """
         return self.kite.historical_data(
-            instrument_token, from_date, to_date, interval
+            instrument_token, from_date, to_date, interval, oi=oi
         )
 
     # ── Account ────────────────────────────────────────
