@@ -18,6 +18,7 @@ from core.logger import get_logger
 from research.vwap_pvwap import VwapPvwapResearch
 from research.option_chain import OptionChain
 from research.hl_vwap_lab import HlVwapLab
+from research.sentiment_engine import SentimentEngine
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -26,6 +27,7 @@ logger = get_logger("api.research")
 _engines: dict[int, VwapPvwapResearch] = {}
 _chains: dict[int, OptionChain] = {}
 _labs: dict[int, HlVwapLab] = {}
+_sentiments: dict[int, SentimentEngine] = {}
 
 
 def _get_lab(broker: Broker, user_id: int) -> HlVwapLab:
@@ -36,6 +38,18 @@ def _get_lab(broker: Broker, user_id: int) -> HlVwapLab:
     else:
         lab.broker = broker
     return lab
+
+
+def _get_sentiment(broker: Broker, user_id: int) -> SentimentEngine:
+    s = _sentiments.get(user_id)
+    if s is None:
+        s = SentimentEngine(broker)
+        _sentiments[user_id] = s
+    else:
+        s.broker = broker
+        s._chain.broker = broker
+    s.user_id = user_id          # bind for durable DB-backed config
+    return s
 
 
 def _get_chain(broker: Broker, user_id: int) -> OptionChain:
@@ -284,4 +298,48 @@ async def hl_vwap_upload(file: UploadFile = File(...), kind: str = Form("spot"),
         return HlVwapLab.validate_csv(raw, "option" if kind == "option" else "spot")
     except Exception as exc:
         logger.error("HLVWAP upload failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+# ──────────────── Sentiment Analyzer ────────────────
+
+@router.post("/sentiment/snapshot")
+async def sentiment_snapshot(payload: dict | None = None, user_id: int = Depends(login_required),
+                             db: Session = Depends(get_db)):
+    """Overall market sentiment (macro + derivative + technical)."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    force = bool((payload or {}).get("force"))
+    try:
+        return _get_sentiment(broker, user_id).snapshot(force=force)
+    except Exception as exc:
+        logger.error("Sentiment snapshot failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/sentiment/config")
+async def sentiment_config(user_id: int = Depends(login_required),
+                           db: Session = Depends(get_db)):
+    """Return the current effective sentiment config (DB-backed, file seed)."""
+    try:
+        eng = _get_sentiment(get_user_broker(db, user_id), user_id)
+        return {"status": "ok", "config": eng.load_config()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/sentiment/config")
+async def sentiment_config_save(payload: dict | None = None,
+                                user_id: int = Depends(login_required),
+                                db: Session = Depends(get_db)):
+    """Deep-merge edits into the durable per-user config (Postgres on Railway,
+    JSON file locally) and re-run the snapshot. No redeploy required."""
+    try:
+        eng = _get_sentiment(get_user_broker(db, user_id), user_id)
+        cfg = eng.save_config(payload or {})
+        snap = eng.snapshot(force=True) if _is_authed(db, user_id) else None
+        return {"status": "ok", "config": cfg, "snapshot": snap}
+    except Exception as exc:
+        logger.error("Sentiment config save failed: %s", exc)
         return {"status": "error", "message": str(exc)}

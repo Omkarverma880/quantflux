@@ -369,6 +369,12 @@ export const api = {
   researchHlVwapChart: (day) =>
     request('/research/hl-vwap/chart', { method: 'POST', body: JSON.stringify({ day }) }),
   researchHlVwapUpload: (formData) => requestUpload('/research/hl-vwap/upload', formData),
+  // Sentiment Analyzer
+  researchSentiment: (force) =>
+    request('/research/sentiment/snapshot', { method: 'POST', body: JSON.stringify({ force: !!force }) }),
+  researchSentimentConfig: () => request('/research/sentiment/config'),
+  researchSentimentConfigSave: (partial) =>
+    request('/research/sentiment/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),

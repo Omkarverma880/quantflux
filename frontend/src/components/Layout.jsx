@@ -39,6 +39,7 @@ const NAV = [
       { to: '/research/vwap-pvwap', label: '1. VWAP vs Prev VWAP' },
       { to: '/research/option-chain', label: '2. Option Chain Data' },
       { to: '/research/hl-vwap', label: '3. HL + VWAP Lab' },
+      { to: '/research/sentiment', label: '4. Sentiment Analyzer' },
     ],
   },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },

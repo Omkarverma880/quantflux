@@ -35,7 +35,7 @@ EOD_EXIT = dtime(15, 25)
 # Spot symbol, F&O exchange, option 'name', strike step (defaults; lot_size is
 # user-configurable in the params).
 INDEX = {
-    "NIFTY":     {"spot": "NSE:NIFTY 50",          "exch": "NFO", "name": "NIFTY",     "step": 50,  "lot": 75},
+    "NIFTY":     {"spot": "NSE:NIFTY 50",          "exch": "NFO", "name": "NIFTY",     "step": 50,  "lot": 65},
     "BANKNIFTY": {"spot": "NSE:NIFTY BANK",        "exch": "NFO", "name": "BANKNIFTY", "step": 100, "lot": 15},
     "FINNIFTY":  {"spot": "NSE:NIFTY FIN SERVICE", "exch": "NFO", "name": "FINNIFTY",  "step": 50,  "lot": 40},
     "SENSEX":    {"spot": "BSE:SENSEX",            "exch": "BFO", "name": "SENSEX",     "step": 100, "lot": 10},
@@ -309,6 +309,7 @@ class HlVwapLab:
         sl = _f(params.get("stop_loss"), 30)
         tgt = _f(params.get("target"), 60)
         cap = _f(params.get("capital_per_trade"), 0)
+        lot = max(1, int(_f(params.get("lot_size"), 1)))   # = lots × per-lot qty
         trades = []
         for rec in day_records:        # chronological
             day = rec["date"]
@@ -347,7 +348,7 @@ class HlVwapLab:
                     exit_price, exit_reason = close, "EOD"
                 if exit_price is not None:
                     pts = (exit_price - active["entry_price"]) if long_ else (active["entry_price"] - exit_price)
-                    qty = int(cap / active["entry_price"]) if cap > 0 else 1
+                    qty = int(cap / active["entry_price"]) if cap > 0 else lot
                     trades.append({
                         **{k: active[k] for k in ("date", "entry_time", "signal_type", "reason", "entry_price")},
                         "exit_time": dt.strftime("%H:%M"), "exit_price": round(exit_price, 2),
@@ -360,7 +361,7 @@ class HlVwapLab:
                 close = _f(c["close"])
                 long_ = active["signal_type"] == "CE"
                 pts = (close - active["entry_price"]) if long_ else (active["entry_price"] - close)
-                qty = int(cap / active["entry_price"]) if cap > 0 else 1
+                qty = int(cap / active["entry_price"]) if cap > 0 else lot
                 trades.append({
                     **{k: active[k] for k in ("date", "entry_time", "signal_type", "reason", "entry_price")},
                     "exit_time": _candle_dt(c).strftime("%H:%M"), "exit_price": round(close, 2),

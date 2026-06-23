@@ -171,6 +171,22 @@ class Strategy11Leg(Base):
     )
 
 
+class ResearchConfig(Base):
+    """Durable per-user config for research modules (e.g. the Sentiment
+    Analyzer). UI edits land here so they survive restarts/redeploys — the
+    JSON file in the repo is only the seed/default."""
+    __tablename__ = "research_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(50), nullable=False)          # e.g. "sentiment"
+    config = Column(JSONB, nullable=False, default={})
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_research_config"),)
+
+
 class OrderHistory(Base):
     __tablename__ = "order_history"
 

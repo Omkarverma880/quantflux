@@ -1,0 +1,37 @@
+{
+  "_comment": "Market Sentiment Analyzer config. Edit thresholds/weights/rules here — no code change needed.",
+  "weights": { "macro": 0.35, "derivative": 0.35, "technical": 0.30 },
+  "classification": { "strong_bull": 7, "bull": 3, "neutral": -3, "bear": -7 },
+  "vix": { "high": 16, "elevated": 14, "low": 11 },
+  "global_change_pct": { "strong": 1.5, "mild": 0.5 },
+  "crude_change_pct": { "bear_above": 2.0, "bull_below": -2.0 },
+  "usdinr_change_pct": { "bear_above": 0.3, "bull_below": -0.3 },
+  "bond_change_pct": { "bear_above": 1.5, "bull_below": -1.5 },
+  "fii_dii": { "fii_net_cr": null, "dii_net_cr": null, "strong_cr": 2000 },
+  "gift_nifty_change_pct": null,
+  "pcr": { "bull_above": 1.2, "bear_below": 0.8 },
+  "iv": { "high": 18, "low": 11 },
+  "confidence": { "min": 40, "max": 98 },
+  "event_dates": {
+    "2026-06-25": "FOMC / Fed Meeting",
+    "2026-07-01": "Auto sales data"
+  },
+  "yahoo_symbols": {
+    "S&P 500": "^GSPC",
+    "NASDAQ": "^IXIC",
+    "Dow Jones": "^DJI",
+    "Nikkei 225": "^N225",
+    "KOSPI": "^KS11",
+    "Hang Seng": "^HSI",
+    "Brent Crude": "BZ=F",
+    "US 10Y Yield": "^TNX",
+    "USDINR": "INR=X"
+  },
+  "trade_bias": {
+    "Strong Bullish": ["Prefer long calls", "Buy dips", "Avoid aggressive CE selling"],
+    "Bullish": ["Bull put spreads", "Mild long bias", "Buy on VWAP support"],
+    "Neutral": ["Range-bound strategies", "Iron condor", "Premium selling"],
+    "Bearish": ["Prefer CE selling", "Bear call spread", "Avoid aggressive longs"],
+    "Strong Bearish": ["Strong short bias", "Protective hedges", "Sell rallies"]
+  }
+}

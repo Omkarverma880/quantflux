@@ -16,6 +16,7 @@ const INDEXES = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'];
 const INTERVALS = [['minute', '1 min'], ['3minute', '3 min'], ['5minute', '5 min']];
 const MODES = [['breakout', 'Breakout'], ['vwap_retest', 'VWAP Retest'], ['confluence', 'Confluence']];
 const STRIKES = [['ATM', 'ATM'], ['ITM', '1 ITM'], ['OTM', '1 OTM'], ['MANUAL', 'Manual']];
+const INDEX_LOT = { NIFTY: 65, BANKNIFTY: 35, FINNIFTY: 65, SENSEX: 20 };  // qty per 1 lot
 const DL_COLORS = { d1: '#f472b6', d2: '#a78bfa', d3: '#60a5fa', d4: '#34d399', d5: '#fbbf24' };
 
 const inp = 'w-full bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60';
@@ -125,7 +126,7 @@ export default function HlVwapLab() {
     instrument: 'NIFTY', start: '', end: '', interval: 'minute', data_type: 'spot',
     expiry: '', option_type: 'CE', strike_mode: 'ATM', strike: '',
     session_start_hour: 9, session_start_min: 15, first_hour_minutes: 60,
-    strategy_mode: 'breakout', stop_loss: 30, target: 60, capital_per_trade: 0, lot_size: 75,
+    strategy_mode: 'breakout', stop_loss: 30, target: 60, capital_per_trade: 0, lots: 1,
   });
   const [meta, setMeta] = useState(null);
   const [spotRows, setSpotRows] = useState(null);
@@ -142,9 +143,11 @@ export default function HlVwapLab() {
 
   const msg = (m, isErr) => { if (isErr) { setError(m); setTimeout(() => setError(''), 5000); } else { setOk(m); setTimeout(() => setOk(''), 3000); } };
   const set = (k, v) => setP((s) => ({ ...s, [k]: v }));
+  const perLot = meta?.lot ?? INDEX_LOT[p.instrument] ?? 65;
+  const lotsNum = Math.max(1, parseInt(p.lots) || 1);
 
   const loadMeta = useCallback(async () => {
-    try { const r = await api.researchHlVwapMeta(p.instrument); if (r.status === 'ok') { setMeta(r); set('lot_size', r.lot); } } catch {}
+    try { const r = await api.researchHlVwapMeta(p.instrument); if (r.status === 'ok') setMeta(r); } catch {}
   }, [p.instrument]);
   useEffect(() => { if (source === 'zerodha') loadMeta(); }, [source, loadMeta]);
 
@@ -162,7 +165,7 @@ export default function HlVwapLab() {
   const run = useCallback(async () => {
     setLoading(true); setError(''); setResult(null); setChart(null);
     try {
-      const params = { ...p, mode: source };
+      const params = { ...p, mode: source, lots: lotsNum, lot_size: lotsNum * perLot };
       if (source === 'csv') {
         if (!spotRows?.length) { msg('Upload a Spot CSV first', true); setLoading(false); return; }
         params.spot_rows = spotRows; params.option_rows = optRows || [];
@@ -245,7 +248,7 @@ export default function HlVwapLab() {
                   <Field label="Expiry"><select value={p.expiry} onChange={(e) => set('expiry', e.target.value)} className={inp}><option value="">auto (nearest)</option>{(meta?.expiries || []).map((e) => <option key={e}>{e}</option>)}</select></Field>
                   <Field label="Strike Mode"><select value={p.strike_mode} onChange={(e) => set('strike_mode', e.target.value)} className={inp}>{STRIKES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
                   {p.strike_mode === 'MANUAL' && <Field label="Strike"><input type="number" step={meta?.step || 50} value={p.strike} onChange={(e) => set('strike', e.target.value)} className={inp} /></Field>}
-                  <Field label="Lot Size"><input type="number" value={p.lot_size} onChange={(e) => set('lot_size', parseInt(e.target.value) || 1)} className={inp} /></Field>
+                  <Field label={`Lots (×${perLot}) = ${lotsNum*perLot}`}><input type="number" min="1" value={p.lots} onChange={(e) => set('lots', e.target.value)} className={inp} /></Field>
                 </div>
                 <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-amber-300 text-xs">
                   <Info className="w-4 h-4 shrink-0 mt-0.5" /> Expired option contracts are not reliably available via broker historical APIs. Use CSV upload mode for expired option research.
@@ -279,7 +282,7 @@ export default function HlVwapLab() {
               <Field label="Instrument"><select value={p.instrument} onChange={(e) => set('instrument', e.target.value)} className={inp}>{INDEXES.map((i) => <option key={i}>{i}</option>)}</select></Field>
               <Field label="Strike Mode"><select value={p.strike_mode} onChange={(e) => set('strike_mode', e.target.value)} className={inp}>{STRIKES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
               {p.strike_mode === 'MANUAL' && <Field label="Strike"><input type="number" value={p.strike} onChange={(e) => set('strike', e.target.value)} className={inp} /></Field>}
-              <Field label="Lot Size"><input type="number" value={p.lot_size} onChange={(e) => set('lot_size', parseInt(e.target.value) || 1)} className={inp} /></Field>
+              <Field label={`Lots (×${perLot}) = ${lotsNum*perLot}`}><input type="number" min="1" value={p.lots} onChange={(e) => set('lots', e.target.value)} className={inp} /></Field>
             </div>
           </div>
         )}
@@ -288,14 +291,14 @@ export default function HlVwapLab() {
       {/* Section 3 — Strategy params */}
       <Card title="Strategy Parameters" icon={Settings2}>
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-          <Field label="Sess Hr"><input type="number" value={p.session_start_hour} onChange={(e) => set('session_start_hour', parseInt(e.target.value) || 9)} className={inp} /></Field>
-          <Field label="Sess Min"><input type="number" value={p.session_start_min} onChange={(e) => set('session_start_min', parseInt(e.target.value) || 15)} className={inp} /></Field>
-          <Field label="1st Hr (min)"><input type="number" value={p.first_hour_minutes} onChange={(e) => set('first_hour_minutes', parseInt(e.target.value) || 60)} className={inp} /></Field>
+          <Field label="Sess Hr"><input type="number" value={p.session_start_hour} onChange={(e) => set('session_start_hour', e.target.value)} className={inp} /></Field>
+          <Field label="Sess Min"><input type="number" value={p.session_start_min} onChange={(e) => set('session_start_min', e.target.value)} className={inp} /></Field>
+          <Field label="1st Hr (min)"><input type="number" value={p.first_hour_minutes} onChange={(e) => set('first_hour_minutes', e.target.value)} className={inp} /></Field>
           <Field label="Mode"><select value={p.strategy_mode} onChange={(e) => set('strategy_mode', e.target.value)} className={inp}>{MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
-          <Field label="Stop Loss"><input type="number" value={p.stop_loss} onChange={(e) => set('stop_loss', parseFloat(e.target.value) || 0)} className={inp} /></Field>
-          <Field label="Target"><input type="number" value={p.target} onChange={(e) => set('target', parseFloat(e.target.value) || 0)} className={inp} /></Field>
-          <Field label="Capital/Trade"><input type="number" value={p.capital_per_trade} onChange={(e) => set('capital_per_trade', parseFloat(e.target.value) || 0)} className={inp} /></Field>
-          <Field label="Lot Size"><input type="number" value={p.lot_size} onChange={(e) => set('lot_size', parseInt(e.target.value) || 1)} className={inp} /></Field>
+          <Field label="Stop Loss"><input type="number" value={p.stop_loss} onChange={(e) => set('stop_loss', e.target.value)} className={inp} /></Field>
+          <Field label="Target"><input type="number" value={p.target} onChange={(e) => set('target', e.target.value)} className={inp} /></Field>
+          <Field label="Capital/Trade"><input type="number" value={p.capital_per_trade} onChange={(e) => set('capital_per_trade', e.target.value)} className={inp} /></Field>
+          <Field label={`Lots (×${perLot}) = ${lotsNum*perLot}`}><input type="number" min="1" value={p.lots} onChange={(e) => set('lots', e.target.value)} className={inp} /></Field>
         </div>
       </Card>
 
