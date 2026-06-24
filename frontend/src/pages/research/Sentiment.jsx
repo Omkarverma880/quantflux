@@ -1,7 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
-} from 'recharts';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   RefreshCw, Loader2, AlertCircle, AlertTriangle, Activity, TrendingUp, TrendingDown,
   Gauge, ListChecks, Lightbulb, Play, Pause, Settings2, Save, ChevronDown, ChevronUp, CheckCircle2,
@@ -9,7 +6,9 @@ import {
 } from 'lucide-react';
 import { api } from '../../api';
 
-const GRID = 'rgba(120,130,150,0.15)'; const AXIS = '#94a3b8'; const POS = '#34d399'; const NEG = '#f87171';
+const POS = '#34d399'; const NEG = '#f87171';
+const GCOL = { macro: 'text-sky-400', derivative: 'text-violet-400', technical: 'text-amber-400' };
+const GABBR = { macro: 'MAC', derivative: 'DRV', technical: 'TEC' };
 
 const SENT = {
   'Strong Bullish': { c: 'text-emerald-400', bg: 'bg-emerald-500/15', ring: 'ring-emerald-500/50', dot: 'bg-emerald-400', icon: TrendingUp },
@@ -143,6 +142,27 @@ export default function Sentiment() {
   const live = data?.market_status === 'Open';
   const Icon = meta.icon;
   const rows = data?.indicators || [];
+
+  // Additive driver decomposition: each indicator's weighted push on the final
+  // score = score × group_weight ÷ (indicators in that group). They sum to the
+  // headline score, so the longest bars are what's actually moving sentiment.
+  const drivers = useMemo(() => {
+    if (!data) return null;
+    const avail = (data.indicators || []).filter((r) => r.available && r.score);
+    const counts = {};
+    avail.forEach((r) => { counts[r.group] = (counts[r.group] || 0) + 1; });
+    const w = data.weights || {};
+    const list = avail.map((r) => ({
+      name: r.indicator, group: r.group,
+      contrib: (r.score || 0) * (w[r.group] || 0) / (counts[r.group] || 1),
+    })).filter((d) => Math.abs(d.contrib) >= 0.005);
+    const bull = list.filter((d) => d.contrib > 0).reduce((s, d) => s + d.contrib, 0);
+    const bear = list.filter((d) => d.contrib < 0).reduce((s, d) => s + d.contrib, 0);
+    const top = [...list].sort((a, b) => Math.abs(b.contrib) - Math.abs(a.contrib))
+      .slice(0, 12).sort((a, b) => b.contrib - a.contrib);
+    const maxAbs = Math.max(0.01, ...top.map((d) => Math.abs(d.contrib)));
+    return { top, bull, bear, net: bull + bear, maxAbs };
+  }, [data]);
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-7xl mx-auto">
@@ -315,21 +335,28 @@ export default function Sentiment() {
             <p className="text-[11px] text-gray-600 mt-2">Global indices/crude/yields/USDINR via Yahoo (best-effort); India VIX/NIFTY &amp; derivative (PCR/Max Pain/IV) via Zerodha. FII/DII auto-fetched from NSE; GIFT Nifty auto-derived from the near-month NIFTY future (tag shows <code>auto</code>/<code>manual</code>). Greyed rows = data unavailable — override either in the config below.</p>
           </Card>
 
-          {/* F. History trend */}
-          {data.history?.length > 1 && (
-            <Card title="Sentiment Trend (this session)" icon={Activity}>
-              <ResponsiveContainer width="100%" height={180}>
-                <LineChart data={data.history}>
-                  <CartesianGrid stroke={GRID} strokeDasharray="3 3" />
-                  <XAxis dataKey="t" tick={{ fill: AXIS, fontSize: 10 }} minTickGap={30} />
-                  <YAxis domain={[-10, 10]} tick={{ fill: AXIS, fontSize: 10 }} width={36} />
-                  <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
-                  <ReferenceLine y={0} stroke={AXIS} strokeOpacity={0.4} />
-                  <ReferenceLine y={3} stroke={POS} strokeOpacity={0.2} strokeDasharray="4 4" />
-                  <ReferenceLine y={-3} stroke={NEG} strokeOpacity={0.2} strokeDasharray="4 4" />
-                  <Line type="monotone" dataKey="score" stroke="#818cf8" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
+          {/* Score drivers — what's actually moving sentiment */}
+          {drivers && drivers.top.length > 0 && (
+            <Card title="Score Drivers — what's moving NIFTY sentiment" icon={Activity}
+              right={<span className="text-[11px] text-gray-500 whitespace-nowrap">Bulls <b className="text-emerald-400">+{drivers.bull.toFixed(2)}</b> · Bears <b className="text-red-400">{drivers.bear.toFixed(2)}</b> · Net <b className={drivers.net >= 0 ? 'text-emerald-400' : 'text-red-400'}>{drivers.net >= 0 ? '+' : ''}{drivers.net.toFixed(2)}</b></span>}>
+              <div className="space-y-1.5">
+                {drivers.top.map((d, i) => {
+                  const pos = d.contrib >= 0;
+                  const wp = Math.min(50, (Math.abs(d.contrib) / drivers.maxAbs) * 50);
+                  return (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      <span className={`w-8 shrink-0 text-[9px] font-bold ${GCOL[d.group] || 'text-gray-500'}`}>{GABBR[d.group] || ''}</span>
+                      <span className="w-32 sm:w-44 shrink-0 truncate text-gray-300 text-right">{d.name}</span>
+                      <div className="flex-1 h-4 bg-surface-3/40 rounded relative min-w-[80px]">
+                        <div className="absolute top-0 bottom-0 w-px bg-gray-600" style={{ left: '50%' }} />
+                        <div className="absolute top-1 bottom-1 rounded-sm" style={{ [pos ? 'left' : 'right']: '50%', width: `${wp}%`, background: pos ? POS : NEG }} />
+                      </div>
+                      <span className={`w-12 shrink-0 text-right font-semibold ${pos ? 'text-emerald-400' : 'text-red-400'}`}>{pos ? '+' : ''}{d.contrib.toFixed(2)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-gray-600 mt-3">Each bar is that indicator's weighted push on the final score (group weight ÷ indicators in group) — they add up to the headline score, so the longest bars are what you're really trading. <span className="text-sky-400 font-semibold">MAC</span> macro · <span className="text-violet-400 font-semibold">DRV</span> derivative · <span className="text-amber-400 font-semibold">TEC</span> technical.</p>
             </Card>
           )}
 
