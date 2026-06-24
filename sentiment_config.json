@@ -12,6 +12,15 @@
   "pcr": { "bull_above": 1.2, "bear_below": 0.8 },
   "iv": { "high": 18, "low": 11 },
   "confidence": { "min": 40, "max": 98 },
+  "action": { "strong_score": 5.0, "moderate_score": 2.5, "min_confidence": 60, "high_vix_block": 20 },
+  "market_hours": {
+    "US (S&P / Nasdaq / Dow)": { "open": "19:00", "close": "01:30", "region": "US", "relation": "Overnight cue — Wall Street's close sets global risk appetite before our open" },
+    "Japan (Nikkei)": { "open": "05:30", "close": "11:30", "region": "Asia", "relation": "First Asian read of the day; runs through our morning session" },
+    "Korea (KOSPI)": { "open": "05:30", "close": "12:00", "region": "Asia", "relation": "Live Asian peer through our morning" },
+    "Hong Kong (Hang Seng)": { "open": "07:00", "close": "13:30", "region": "Asia", "relation": "Opens ~2h before NIFTY; strong tone-setter for our session" },
+    "GIFT Nifty (SGX)": { "open": "06:30", "close": "02:45", "region": "India", "relation": "Most direct pre-open & intraday cue for NIFTY" },
+    "India (NIFTY / Sensex)": { "open": "09:15", "close": "15:30", "region": "India", "relation": "Home market" }
+  },
   "event_dates": {
     "2026-06-25": "FOMC / Fed Meeting",
     "2026-07-01": "Auto sales data"

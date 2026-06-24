@@ -48,6 +48,23 @@ DEFAULT_CFG = {
     "event_dates": {},
     "yahoo_symbols": {},
     "trade_bias": {},
+    # Entry rule — what score/confidence actually justifies a trade
+    "action": {"strong_score": 5.0, "moderate_score": 2.5, "min_confidence": 60, "high_vix_block": 20},
+    # Global market sessions in IST + how each one feeds the Indian market
+    "market_hours": {
+        "US (S&P / Nasdaq / Dow)": {"open": "19:00", "close": "01:30", "region": "US",
+            "relation": "Overnight cue — Wall Street's close sets global risk appetite before our open"},
+        "Japan (Nikkei)": {"open": "05:30", "close": "11:30", "region": "Asia",
+            "relation": "First Asian read of the day; runs through our morning session"},
+        "Korea (KOSPI)": {"open": "05:30", "close": "12:00", "region": "Asia",
+            "relation": "Live Asian peer through our morning"},
+        "Hong Kong (Hang Seng)": {"open": "07:00", "close": "13:30", "region": "Asia",
+            "relation": "Opens ~2h before NIFTY; strong tone-setter for our session"},
+        "GIFT Nifty (SGX)": {"open": "06:30", "close": "02:45", "region": "India",
+            "relation": "Most direct pre-open & intraday cue for NIFTY"},
+        "India (NIFTY / Sensex)": {"open": "09:15", "close": "15:30", "region": "India",
+            "relation": "Home market"},
+    },
 }
 
 
@@ -470,6 +487,81 @@ class SentimentEngine:
         vals = [r["score"] for r in rows if r["group"] == group and r.get("available")]
         return round(_clamp(sum(vals) / len(vals)), 2) if vals else 0.0
 
+    @staticmethod
+    def _market_sessions(cfg: dict, now: datetime) -> list[dict]:
+        """Open/closed status (IST) for each global market + its link to India."""
+        def _hm(s):
+            h, m = str(s).split(":")
+            return dtime(int(h), int(m))
+        weekend = now.weekday() >= 5
+        t = now.time()
+        out = []
+        for name, m in (cfg.get("market_hours") or {}).items():
+            try:
+                o, c = _hm(m["open"]), _hm(m["close"])
+            except Exception:
+                continue
+            inwin = (o <= t <= c) if o <= c else (t >= o or t <= c)
+            out.append({"name": name, "region": m.get("region", ""),
+                        "open": m.get("open"), "close": m.get("close"),
+                        "relation": m.get("relation", ""),
+                        "status": "Open" if (inwin and not weekend) else "Closed"})
+        return out
+
+    def _build_action(self, cfg: dict, final: float, confidence: int,
+                      event_risk: str, vix_val) -> dict:
+        """Turn score + confidence into a concrete Buy CE / Buy PE / Wait call,
+        with the exact thresholds that gate the decision."""
+        a = cfg.get("action", {})
+        strong = float(a.get("strong_score", 5))
+        mod = float(a.get("moderate_score", 2.5))
+        min_conf = float(a.get("min_confidence", 60))
+        vix_block = float(a.get("high_vix_block", 20))
+        mag = abs(final)
+        conf_ok = confidence >= min_conf
+        vix_ok = vix_val is None or float(vix_val) < vix_block
+        event_ok = event_risk != "High"
+
+        if mag < mod or not conf_ok:
+            decision, label, strength, color = "WAIT", "Wait / No clear edge", "—", "amber"
+        else:
+            bull = final > 0
+            if mag >= strong and vix_ok and event_ok:
+                strength = "Strong"
+            elif mag >= strong:
+                strength = "Cautious"      # strong score but VIX/event headwind
+            else:
+                strength = "Moderate"
+            decision = "BUY_CE" if bull else "BUY_PE"
+            label = "Buy Call (CE)" if bull else "Buy Put (PE)"
+            color = "green" if bull else "red"
+
+        checklist = [
+            {"label": f"Directional score ≥ {mod:g}", "ok": mag >= mod, "detail": f"{final:+.1f}"},
+            {"label": f"Confidence ≥ {int(min_conf)}%", "ok": conf_ok, "detail": f"{confidence}%"},
+            {"label": f"India VIX < {vix_block:g}", "ok": vix_ok,
+             "detail": (f"{float(vix_val):.1f}" if vix_val is not None else "n/a")},
+            {"label": "No major event today", "ok": event_ok,
+             "detail": ("clear" if event_ok else "event risk")},
+        ]
+        if decision == "WAIT":
+            if conf_ok and mag < mod:
+                why = (f"Score {final:+.1f} sits inside the ±{mod:g} no-trade band — no directional "
+                       f"edge. Favour range/Iron-condor or premium selling, or wait.")
+            else:
+                why = (f"Only {confidence}% of indicators agree (need ≥{int(min_conf)}%). Signals are "
+                       f"mixed — stay out or sell premium until they line up.")
+        else:
+            side = "calls" if decision == "BUY_CE" else "puts"
+            why = (f"Score {final:+.1f} ({strength.lower()}) with {confidence}% agreement → "
+                   f"buy {side} (ATM / slightly-ITM).")
+            if strength == "Cautious":
+                why += " High VIX/event — size down and keep tight stops."
+        return {"decision": decision, "label": label, "strength": strength, "color": color,
+                "headline": why, "checklist": checklist,
+                "thresholds": {"strong": strong, "moderate": mod,
+                               "min_confidence": int(min_conf), "vix_block": vix_block}}
+
     def snapshot(self, force: bool = False) -> dict:
         with self._lock:
             now = datetime.now()
@@ -524,6 +616,11 @@ class SentimentEngine:
             status = ("Pre-Open" if now.time() < MARKET_OPEN else
                       "Open" if now.time() <= MARKET_CLOSE and now.weekday() < 5 else "Closed")
 
+            vix_val = next((r["value"] for r in rows
+                            if r["indicator"] == "India VIX" and r.get("available")), None)
+            action = self._build_action(cfg, final, confidence, event_risk, vix_val)
+            markets = self._market_sessions(cfg, now)
+
             # history (per process)
             self._history.append({"t": now.strftime("%H:%M"), "score": final, "sentiment": sentiment})
             self._history = self._history[-60:]
@@ -535,6 +632,7 @@ class SentimentEngine:
                 "trade_bias": bias, "event_risk": event_risk, "event_label": ev,
                 "market_status": status, "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
                 "weights": w, "indicators": rows, "history": list(self._history),
+                "action": action, "markets": markets,
             }
             self._cache, self._cache_at = out, now
             return out
