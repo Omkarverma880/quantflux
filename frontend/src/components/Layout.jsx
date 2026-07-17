@@ -27,10 +27,12 @@ import {
   Briefcase,
   FlaskConical,
   ChevronDown,
+  Gauge,
 } from 'lucide-react';
 
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/research/market-dashboard', icon: Gauge, label: 'Market Dashboard' },
   { to: '/strategy1', icon: BarChart3, label: 'Cum. Volume' },
   { to: '/strategies', icon: TrendingUp, label: 'Strategies' },
   {
@@ -41,7 +43,6 @@ const NAV = [
       { to: '/research/hl-vwap', label: '3. HL + VWAP Lab' },
       { to: '/research/sentiment', label: '4. Sentiment Analyzer' },
       { to: '/research/nifty-sentiment', label: '5. NIFTY Sentiment' },
-      { to: '/research/market-dashboard', label: '6. Market Dashboard' },
     ],
   },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },

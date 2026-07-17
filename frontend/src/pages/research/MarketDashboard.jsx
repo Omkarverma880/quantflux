@@ -226,7 +226,28 @@ export default function MarketDashboard() {
         </div>
       </div>
 
-      {/* 10 confirmation tiles */}
+      {/* Live index strip — broader quick view */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        {(pulse?.indices || [{ name: 'NIFTY 50' }, { name: 'NIFTY BANK' }, { name: 'NIFTY 200' }, { name: 'NIFTY 500' }, { name: 'SENSEX' }]).map((ix) => {
+          const up = (ix.change_pct ?? 0) >= 0;
+          return (
+            <div key={ix.name} className="bg-surface-2 border border-surface-3 rounded-xl px-3 py-2.5 flex items-center justify-between">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-gray-500">{ix.name}</div>
+                <div className="text-lg font-bold text-gray-100">{ix.available ? INR(ix.ltp, 2) : '—'}</div>
+              </div>
+              {ix.available ? (
+                <div className={`flex items-center gap-1 text-sm font-semibold ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {up ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
+                  {up ? '+' : ''}{ix.change_pct}%
+                </div>
+              ) : <span className="text-xs text-gray-600">n/a</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 11 confirmation tiles */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         {tiles.map((t) => <Tile key={t.title} {...t} />)}
       </div>

@@ -142,31 +142,73 @@ class MarketPulse:
         return d
 
     def _vwap_block(self, token: int, spot: float) -> dict:
-        today = date.today()
-        tc = self._minute(token, today)
-        pd = self._prev_trading_day(today)
+        # Find the most recent session that actually has intraday candles. This
+        # keeps the tile populated after hours / before the open (when "today"
+        # has no candles yet) by falling back to the last traded session.
+        cur_day = date.today()
+        tc = []
+        for _ in range(6):
+            tc = self._minute(token, cur_day)
+            if tc:
+                break
+            cur_day = self._prev_trading_day(cur_day)
+        if not tc:
+            return {"available": False}
+        stale = cur_day != date.today()
+
+        pd = self._prev_trading_day(cur_day)
         pc = []
-        for _ in range(5):
+        for _ in range(6):
             pc = self._minute(token, pd)
             if pc:
                 break
             pd = self._prev_trading_day(pd)
-        vwap = self._vwap(tc) if tc else 0.0
+
+        vwap = self._vwap(tc)
         prev_vwap = self._vwap(pc) if pc else 0.0
-        price = spot or (float(tc[-1]["close"]) if tc else 0.0)
+        # after hours use the session close as the reference "price"
+        price = spot if (spot and not stale) else float(tc[-1]["close"])
         if not vwap:
             return {"available": False}
         above = price > vwap
         vwap_up = (vwap > prev_vwap) if prev_vwap else None
         score = (1 if above else -1) + (0.5 if vwap_up else -0.5 if vwap_up is False else 0)
         return {
-            "available": True, "vwap": round(vwap, 2),
+            "available": True, "stale": stale,
+            "session": cur_day.isoformat(), "vwap": round(vwap, 2),
             "prev_vwap": round(prev_vwap, 2) if prev_vwap else None,
             "price": round(price, 2), "above_vwap": above, "vwap_rising": vwap_up,
             "bias": _bias_from(score), "arrow": _arrow(_bias_from(score)),
-            "detail": f"Price {'>' if above else '<'} VWAP"
-                      + (f" · VWAP {'>' if vwap_up else '<'} P-VWAP" if prev_vwap else ""),
+            "detail": (f"Price {'>' if above else '<'} VWAP"
+                       + (f" · VWAP {'>' if vwap_up else '<'} P-VWAP" if prev_vwap else "")
+                       + (" (last session)" if stale else "")),
         }
+
+    # ── Broader index quotes (quick-view strip) ──
+    INDICES = [
+        ("NIFTY 50", "NSE:NIFTY 50"),
+        ("NIFTY BANK", "NSE:NIFTY BANK"),
+        ("NIFTY 200", "NSE:NIFTY 200"),
+        ("NIFTY 500", "NSE:NIFTY 500"),
+        ("SENSEX", "BSE:SENSEX"),
+    ]
+
+    def _indices(self) -> list[dict]:
+        keys = [k for _, k in self.INDICES]
+        try:
+            q = self.broker.get_quote(keys) or {}
+        except Exception as exc:
+            logger.debug("market_pulse indices quote failed: %s", exc)
+            q = {}
+        out = []
+        for name, key in self.INDICES:
+            d = q.get(key) or {}
+            ltp = float(d.get("last_price", 0) or 0)
+            close = float((d.get("ohlc") or {}).get("close", 0) or 0)
+            pct = ((ltp - close) / close * 100.0) if close else float(d.get("net_change", 0) or 0)
+            out.append({"name": name, "ltp": round(ltp, 2),
+                        "change_pct": round(pct, 2), "available": ltp > 0})
+        return out
 
     # ── Psychological round-number levels ──
     def _psychological(self, spot: float, prev_close: float) -> dict:
@@ -392,6 +434,7 @@ class MarketPulse:
                 "status": "ok",
                 "spot": round(spot, 2), "prev_close": round(prev_close, 2),
                 "day_change_pct": round(day_change, 2),
+                "indices": self._indices(),
                 "signals": signals,
                 "confirmation": {"bullish": bull, "bearish": bear,
                                  "neutral": len(biases) - bull - bear,
