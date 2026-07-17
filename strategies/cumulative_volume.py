@@ -24,8 +24,8 @@ logger = get_logger("strategy.cumulative_volume")
 
 MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
-BULLISH_THRESHOLD = 50_000
-BEARISH_THRESHOLD = -50_000
+BULLISH_THRESHOLD = 1_00_000
+BEARISH_THRESHOLD = -1_00_000
 
 
 class CumulativeVolumeStrategy(BaseStrategy):

@@ -24,6 +24,7 @@ import AnalyticsWorld from './pages/AnalyticsWorld';
 import TradeHistory from './pages/TradeHistory';
 import ManualTrading from './pages/ManualTrading';
 import Strategy11 from './pages/Strategy11';
+import Strategy12 from './pages/Strategy12';
 import VwapPvwapResearch from './pages/research/VwapPvwap';
 import OptionChainResearch from './pages/research/OptionChain';
 import HlVwapLab from './pages/research/HlVwapLab';
@@ -57,6 +58,7 @@ export default function App() {
           <Route path="strategy9-trade" element={<Strategy9 />} />
           <Route path="strategy10-trade" element={<Strategy10 />} />
           <Route path="strategy11-trade" element={<Strategy11 />} />
+          <Route path="strategy12-trade" element={<Strategy12 />} />
           <Route path="research/vwap-pvwap" element={<VwapPvwapResearch />} />
           <Route path="research/option-chain" element={<OptionChainResearch />} />
           <Route path="research/hl-vwap" element={<HlVwapLab />} />

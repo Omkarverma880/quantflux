@@ -9,6 +9,7 @@ research / learning. Never places orders.
 from __future__ import annotations
 
 import threading
+import time
 from datetime import date, datetime, time as dtime, timedelta
 from typing import Optional
 
@@ -92,11 +93,21 @@ class OptionChain:
     def list_expiries(self) -> dict:
         return {"status": "ok", "expiries": [e.isoformat() for e in self._expiries()]}
 
-    def _prev_oi_for(self, tokens: list[int]) -> dict[int, float]:
+    def _prev_oi_for(self, tokens: list[int], budget_seconds: float = 6.0) -> dict[int, float]:
         """Previous trading day's close OI per token (cached for the day).
 
-        One historical 'day' call per *new* token — slow only on the first
-        snapshot of the day; auto-refreshes reuse the cache.
+        One historical 'day' call per *new* token. To keep ``Load Chain``
+        responsive we **time-box** this phase: the prev-day close OI is only a
+        secondary metric (it drives the OI-change / buildup arrows), so it must
+        never delay the core chain. Once ``budget_seconds`` of wall-clock is
+        spent, the remaining tokens are left unfetched (their OI-change shows
+        "—") and are retried on the next refresh, which reuses the growing
+        daily cache. ``tokens`` should be ordered ATM-first so the most useful
+        strikes are always covered within the budget.
+
+        Zerodha's historical API is rate-limited (~3 req/s), so without this
+        cap a wide chain (e.g. 40 strikes/side → 160+ sequential calls) could
+        run for a minute and trip the gateway/proxy timeout.
         """
         today = date.today()
         if self._prev_oi_date != today:
@@ -104,14 +115,20 @@ class OptionChain:
             self._prev_oi_date = today
         frm = datetime.combine(today - timedelta(days=7), MARKET_OPEN)
         to = datetime.combine(today - timedelta(days=1), MARKET_CLOSE)
+        start = time.monotonic()
         for t in tokens:
             if t in self._prev_oi:
                 continue
+            if time.monotonic() - start > budget_seconds:
+                # Out of time budget — leave the rest for the next refresh.
+                break
             try:
                 candles = self.broker.get_historical_data(t, frm, to, "day", oi=True) or []
                 self._prev_oi[t] = float(candles[-1].get("oi", 0) or 0) if candles else 0.0
             except Exception:
-                self._prev_oi[t] = 0.0
+                # Do NOT cache a failed lookup as 0 — that would render a
+                # bogus full-OI "change". Skip so the next refresh retries.
+                continue
         return self._prev_oi
 
     @staticmethod
@@ -157,7 +174,14 @@ class OptionChain:
                 logger.error("Option chain quote failed: %s", exc)
                 quotes = {}
 
-            prev_oi = self._prev_oi_for([m[2]["token"] for m in meta.values()])
+            # Fetch prev-day OI ATM-first so the most relevant strikes are
+            # always covered inside the time budget (see _prev_oi_for).
+            oi_tokens = sorted(
+                {m[2]["token"] for m in meta.values()},
+                key=lambda tok: min((abs(s - atm) for (s, _t, o) in meta.values()
+                                     if o["token"] == tok), default=10 ** 9),
+            )
+            prev_oi = self._prev_oi_for(oi_tokens)
 
             T = max((datetime.combine(exp, EXPIRY_CLOSE) - datetime.now()).total_seconds(), 0) / (365 * 24 * 3600)
             by_strike = {s: {"strike": s, "ce": None, "pe": None,
@@ -172,7 +196,8 @@ class OptionChain:
                 oi = float(q.get("oi", 0) or 0)
                 vwap = float(q.get("average_price", 0) or 0)
                 chg = ((ltp - close) / close * 100) if close else 0.0
-                oi_chg = oi - prev_oi.get(o["token"], 0.0)
+                _prev = prev_oi.get(o["token"])
+                oi_chg = (oi - _prev) if _prev is not None else None
                 iv = implied_vol(ltp, spot, strike, T, RISK_FREE, typ == "CE")
                 g = greeks(spot, strike, T, RISK_FREE, iv, typ == "CE") if iv else {}
                 cell = {
@@ -182,7 +207,8 @@ class OptionChain:
                     "high": round(float(ohlc.get("high", 0) or 0), 2),
                     "low": round(float(ohlc.get("low", 0) or 0), 2),
                     "close": round(close, 2), "volume": int(vol), "oi": int(oi),
-                    "oi_change": int(oi_chg), "buildup": self._buildup(chg, oi_chg),
+                    "oi_change": int(oi_chg) if oi_chg is not None else None,
+                    "buildup": self._buildup(chg, oi_chg),
                     "vwap": round(vwap, 2), "iv": round(iv * 100, 2) if iv else None,
                     **g,
                 }

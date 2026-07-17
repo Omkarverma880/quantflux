@@ -344,6 +344,19 @@ export const api = {
   strategy11DocUnlock: (password) =>
     request('/strategy11-trade/doc-unlock', { method: 'POST', body: JSON.stringify({ password }) }),
 
+  // Strategy 12 — 200 EMA Pull-Back (intraday NIFTY options)
+  getStrategy12Status: () => request('/strategy12-trade/status'),
+  strategy12IndexSeries: () => request('/strategy12-trade/index-series'),
+  strategy12Start: (config) =>
+    request('/strategy12-trade/start', { method: 'POST', body: JSON.stringify(config) }),
+  strategy12Stop: () => request('/strategy12-trade/stop', { method: 'POST' }),
+  strategy12UpdateConfig: (config) =>
+    request('/strategy12-trade/config', { method: 'PUT', body: JSON.stringify(config) }),
+  strategy12History: () => request('/strategy12-trade/history'),
+  strategy12Backtest: (payload) =>
+    request('/strategy12-trade/backtest', { method: 'POST', body: JSON.stringify(payload) }),
+  strategy12RiskReset: () => request('/strategy12-trade/risk/reset', { method: 'POST' }),
+
   // Research (read-only backtest modules)
   researchVwapPvwapRun: (days, variants, date, cfg) =>
     request('/research/vwap-pvwap/run', { method: 'POST', body: JSON.stringify({

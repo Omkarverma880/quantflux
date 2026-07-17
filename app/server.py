@@ -35,6 +35,7 @@ from app.routes.strategy8_routes import router as s8_router
 from app.routes.strategy9_routes import router as s9_router
 from app.routes.strategy10_routes import router as s10_router
 from app.routes.strategy11_routes import router as s11_router
+from app.routes.strategy12_routes import router as s12_router
 from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
@@ -98,8 +99,9 @@ async def _strategy_background_loop():
                 from app.routes.strategy9_routes import _get_strategy as _get_s9
                 from app.routes.strategy10_routes import _get_strategy as _get_s10
                 from app.routes.strategy11_routes import _get_strategy as _get_s11
+                from app.routes.strategy12_routes import _get_strategy as _get_s12
                 payload = {}
-                for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3), ("s4", _get_s4), ("s5", _get_s5), ("s6", _get_s6), ("s7", _get_s7), ("s8", _get_s8), ("s9", _get_s9), ("s10", _get_s10), ("s11", _get_s11)]:
+                for label, getter in [("s1", _get_s1), ("s2", _get_s2), ("s3", _get_s3), ("s4", _get_s4), ("s5", _get_s5), ("s6", _get_s6), ("s7", _get_s7), ("s8", _get_s8), ("s9", _get_s9), ("s10", _get_s10), ("s11", _get_s11), ("s12", _get_s12)]:
                     strat = getter(user_id=active_user_ids[0])
                     try:
                         status = strat.get_status()
@@ -232,6 +234,15 @@ def _run_strategies_for_user(uid: int):
         s11 = _get_s11(broker, uid)
         if s11.is_active or s11.has_open_positions:
             s11.check()
+
+        # S12 — 200 EMA pull-back (intraday NIFTY options). Tick while active
+        # OR while a position is open so the hidden SL/Target engine and the
+        # 15:15 square-off keep running even after a manual Stop.
+        from app.routes.strategy12_routes import _get_strategy as _get_s12
+        s12 = _get_s12(broker, uid)
+        if authenticated and (s12.is_active
+                              or getattr(s12.state, "value", str(s12.state)) == "POSITION_OPEN"):
+            s12.check()
     finally:
         db.close()
 
@@ -360,6 +371,7 @@ app.include_router(s8_router, prefix="/api/strategy8-trade", tags=["Strategy8-Re
 app.include_router(s9_router, prefix="/api/strategy9-trade", tags=["Strategy9-LineOfControl"])
 app.include_router(s10_router, prefix="/api/strategy10-trade", tags=["Strategy10-EquityIntraday"])
 app.include_router(s11_router, prefix="/api/strategy11-trade", tags=["Strategy11-VwapPvwap"])
+app.include_router(s12_router, prefix="/api/strategy12-trade", tags=["Strategy12-EmaPullback"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])

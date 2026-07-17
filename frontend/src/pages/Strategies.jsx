@@ -27,6 +27,7 @@ const STRATEGY_PAGES = {
   strategy9_loc: '/strategy9-trade',
   strategy10_equity_intraday: '/strategy10-trade',
   strategy11_vwap_pvwap: '/strategy11-trade',
+  strategy12_ema_pullback: '/strategy12-trade',
 };
 
 export default function Strategies() {
