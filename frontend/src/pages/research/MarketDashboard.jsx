@@ -97,10 +97,14 @@ export default function MarketDashboard() {
   const domesticBias = sent ? (((sent.derivative_score + sent.technical_score) / 2) > 0.5 ? 'Bullish'
     : ((sent.derivative_score + sent.technical_score) / 2) < -0.5 ? 'Bearish' : 'Neutral') : 'Neutral';
 
-  // FII/DII from the sentiment engine indicator rows
+  // FII/DII — prefer MarketPulse (sticky cache), fall back to sentiment-engine rows
+  const fdPulse = pulse?.fii_dii;
   const fiiRow = sent?.indicators?.find((r) => String(r.indicator).startsWith('FII net'));
   const diiRow = sent?.indicators?.find((r) => String(r.indicator).startsWith('DII net'));
-  const fiiDiiBias = fiiRow ? (fiiRow.score > 0 ? 'Bullish' : fiiRow.score < 0 ? 'Bearish' : 'Neutral') : 'Neutral';
+  const fiiVal = fdPulse?.available ? fdPulse.fii : (fiiRow ? fiiRow.value : null);
+  const diiVal = fdPulse?.available ? fdPulse.dii : (diiRow ? diiRow.value : null);
+  const fiiDiiBias = fiiVal != null ? (fiiVal > 0 ? 'Bullish' : fiiVal < 0 ? 'Bearish' : 'Neutral')
+    : (fiiRow ? (fiiRow.score > 0 ? 'Bullish' : fiiRow.score < 0 ? 'Bearish' : 'Neutral') : 'Neutral');
   const topSector = (nifty?.sectors || [])[0];
 
   // Build the 10 confirmation tiles from the note
@@ -121,8 +125,9 @@ export default function MarketDashboard() {
       detail: news?.available ? `${news.pct_positive}% positive · ${news.total} headlines` : (sent ? 'News feeds loading…' : ''),
       sub: news?.available ? `${(news.sources || []).join(', ')}` : '' },
     { icon: ArrowRightLeft, title: 'FII / DII Net Flow', bias: fiiDiiBias,
-      value: fiiRow ? `FII ₹${INR(fiiRow.value, 0)}cr` : '—',
-      detail: diiRow ? `DII ₹${INR(diiRow.value, 0)}cr` : (fiiRow ? '' : 'NSE data unavailable') },
+      value: fiiVal != null ? `FII ₹${INR(fiiVal, 0)}cr` : '—',
+      detail: diiVal != null ? `DII ₹${INR(diiVal, 0)}cr${fdPulse?.stale ? ' · prev day' : ''}` : (fiiVal != null ? '' : 'NSE flow updates after 5:30 PM'),
+      sub: fdPulse?.data_date ? `As of ${fdPulse.data_date}` : '' },
     { icon: Activity, title: 'VWAP / P-VWAP', bias: sig.vwap?.bias,
       value: sig.vwap?.available ? sig.vwap.bias : '—', detail: sig.vwap?.detail,
       sub: sig.vwap?.available ? `VWAP ${INR(sig.vwap.vwap, 0)} · P-VWAP ${sig.vwap.prev_vwap ? INR(sig.vwap.prev_vwap, 0) : '—'}` : '' },

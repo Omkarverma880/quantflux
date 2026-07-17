@@ -193,6 +193,64 @@ class MarketPulse:
         ("SENSEX", "BSE:SENSEX"),
     ]
 
+    # ── FII / DII net flow (NSE public, robust + sticky cache) ──
+    _fii_dii_cache: Optional[dict] = None
+
+    def _fii_dii(self) -> dict:
+        today = date.today().isoformat()
+        c = MarketPulse._fii_dii_cache
+        # reuse today's good value; don't refetch once we have it
+        if c and c.get("date") == today and c.get("available"):
+            return c
+        fii = dii = fii_date = None
+        try:
+            import requests
+            s = requests.Session()
+            s.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Referer": "https://www.nseindia.com/reports/fii-dii",
+                "Connection": "keep-alive",
+            })
+            # Seed the anti-bot cookies by visiting real pages first.
+            for url in ("https://www.nseindia.com",
+                        "https://www.nseindia.com/reports/fii-dii"):
+                try:
+                    s.get(url, timeout=6)
+                except Exception:
+                    pass
+            r = s.get("https://www.nseindia.com/api/fiidiiTradeReact", timeout=8)
+            if r.status_code == 200:
+                for row in (r.json() or []):
+                    cat = (row.get("category") or "").upper()
+                    try:
+                        net = float(str(row.get("netValue", "0")).replace(",", ""))
+                    except (TypeError, ValueError):
+                        continue
+                    fii_date = row.get("date") or fii_date
+                    if "FII" in cat or "FPI" in cat:
+                        fii = net
+                    elif "DII" in cat:
+                        dii = net
+        except Exception as exc:
+            logger.debug("market_pulse FII/DII fetch failed: %s", exc)
+
+        if fii is not None or dii is not None:
+            bias = "Bullish" if (fii or 0) > 0 else "Bearish" if (fii or 0) < 0 else "Neutral"
+            MarketPulse._fii_dii_cache = {
+                "available": True, "date": today, "fii": fii, "dii": dii,
+                "data_date": fii_date, "bias": bias, "arrow": _arrow(bias), "stale": False,
+            }
+            return MarketPulse._fii_dii_cache
+        # Fetch failed — KEEP the last good value (only mark it stale) rather
+        # than blanking the tile. This is what caused FII/DII to vanish before.
+        if c and c.get("available"):
+            return {**c, "stale": True}
+        return {"available": False, "date": today, "bias": "Neutral", "arrow": "flat"}
+
     def _indices(self) -> list[dict]:
         keys = [k for _, k in self.INDICES]
         try:
@@ -435,6 +493,7 @@ class MarketPulse:
                 "spot": round(spot, 2), "prev_close": round(prev_close, 2),
                 "day_change_pct": round(day_change, 2),
                 "indices": self._indices(),
+                "fii_dii": self._fii_dii(),
                 "signals": signals,
                 "confirmation": {"bullish": bull, "bearish": bear,
                                  "neutral": len(biases) - bull - bear,
