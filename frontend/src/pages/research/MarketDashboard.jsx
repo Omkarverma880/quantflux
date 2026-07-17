@@ -8,6 +8,9 @@ import { api } from '../../api';
 
 const INR = (v, d = 2) => (v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 
+// Display-size presets (scoped to this dashboard only, via CSS zoom).
+const SIZES = { M: 1, L: 1.15, XL: 1.3, XXL: 1.5 };
+
 /* Normalise every source to a common {bias, value, detail} shape */
 const BIAS = {
   Bullish: { c: 'text-emerald-400', bg: 'bg-emerald-500/10', bd: 'border-emerald-500/40', dot: 'bg-emerald-500' },
@@ -56,7 +59,10 @@ export default function MarketDashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [updated, setUpdated] = useState('');
+  const [size, setSize] = useState(() => localStorage.getItem('mkt_dash_size') || 'M');
   const timer = useRef(null);
+
+  useEffect(() => { localStorage.setItem('mkt_dash_size', size); }, [size]);
 
   const showErr = (m) => { setError(m); setTimeout(() => setError(''), 4500); };
 
@@ -152,7 +158,7 @@ export default function MarketDashboard() {
   const spot = pulse?.spot ?? sent?.indicators?.find((r) => r.indicator?.includes('NIFTY'))?.value ?? 0;
 
   return (
-    <div className="p-4 md:p-6 space-y-4 max-w-[1500px] mx-auto">
+    <div className="p-4 md:p-6 space-y-4 max-w-[1500px] mx-auto" style={{ zoom: SIZES[size] || 1 }}>
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -163,6 +169,15 @@ export default function MarketDashboard() {
           <p className="text-gray-500 text-sm mt-0.5">One-glance NIFTY bias — every confirmation in one place. Read-only, auto-refresh 30s.</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Display-size selector (this dashboard only) */}
+          <div className="flex items-center rounded-lg border border-surface-4 overflow-hidden" title="Display size">
+            {Object.keys(SIZES).map((k) => (
+              <button key={k} onClick={() => setSize(k)}
+                className={`px-2.5 py-1.5 text-xs font-semibold transition ${size === k ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-white hover:bg-surface-3'}`}>
+                {k}
+              </button>
+            ))}
+          </div>
           <span className="text-[11px] text-gray-500">Updated {updated || '—'}</span>
           <button onClick={() => loadAll(false)} disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50">
