@@ -19,6 +19,7 @@ from research.vwap_pvwap import VwapPvwapResearch
 from research.option_chain import OptionChain
 from research.hl_vwap_lab import HlVwapLab
 from research.sentiment_engine import SentimentEngine
+from research.nifty_sentiment import NiftySentiment
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -28,6 +29,7 @@ _engines: dict[int, VwapPvwapResearch] = {}
 _chains: dict[int, OptionChain] = {}
 _labs: dict[int, HlVwapLab] = {}
 _sentiments: dict[int, SentimentEngine] = {}
+_nifty_sentiments: dict[int, NiftySentiment] = {}
 
 
 def _get_lab(broker: Broker, user_id: int) -> HlVwapLab:
@@ -60,6 +62,16 @@ def _get_chain(broker: Broker, user_id: int) -> OptionChain:
     else:
         ch.broker = broker
     return ch
+
+
+def _get_nifty_sentiment(broker: Broker, user_id: int) -> NiftySentiment:
+    eng = _nifty_sentiments.get(user_id)
+    if eng is None:
+        eng = NiftySentiment(broker)
+        _nifty_sentiments[user_id] = eng
+    else:
+        eng.broker = broker
+    return eng
 
 
 def _is_authed(db, user_id: int) -> bool:
@@ -342,4 +354,69 @@ async def sentiment_config_save(payload: dict | None = None,
         return {"status": "ok", "config": cfg, "snapshot": snap}
     except Exception as exc:
         logger.error("Sentiment config save failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+# ──────────────── NIFTY Sentiment Analyzer (constituents + sectors) ────────────────
+
+class NiftySentimentRequest(BaseModel):
+    top_n: int | None = None
+
+
+@router.post("/nifty-sentiment/snapshot")
+async def nifty_sentiment_snapshot(
+    payload: NiftySentimentRequest | None = None,
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    """Fast batched-quote market bias: top-stock + sector sentiment cards & tables."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    payload = payload or NiftySentimentRequest()
+    try:
+        return _get_nifty_sentiment(broker, user_id).snapshot(top_n=payload.top_n)
+    except Exception as exc:
+        logger.error("NIFTY sentiment snapshot failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/nifty-sentiment/analytics")
+async def nifty_sentiment_analytics(
+    payload: NiftySentimentRequest | None = None,
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    """Per-stock technicals (5-min vol, 20/200 EMA, VWAP, prev-VWAP, trend).
+    Time-boxed + TTL-cached so it never hangs or hammers the rate limit."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    payload = payload or NiftySentimentRequest()
+    try:
+        return _get_nifty_sentiment(broker, user_id).analytics(top_n=payload.top_n)
+    except Exception as exc:
+        logger.error("NIFTY sentiment analytics failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/nifty-sentiment/config")
+async def nifty_sentiment_config(user_id: int = Depends(login_required),
+                                 db: Session = Depends(get_db)):
+    try:
+        eng = _get_nifty_sentiment(get_user_broker(db, user_id), user_id)
+        return {"status": "ok", "config": eng.load_config()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/nifty-sentiment/config")
+async def nifty_sentiment_config_save(payload: dict | None = None,
+                                      user_id: int = Depends(login_required),
+                                      db: Session = Depends(get_db)):
+    try:
+        eng = _get_nifty_sentiment(get_user_broker(db, user_id), user_id)
+        return {"status": "ok", "config": eng.save_config(payload or {})}
+    except Exception as exc:
+        logger.error("NIFTY sentiment config save failed: %s", exc)
         return {"status": "error", "message": str(exc)}

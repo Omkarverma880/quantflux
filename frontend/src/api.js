@@ -388,6 +388,14 @@ export const api = {
   researchSentimentConfig: () => request('/research/sentiment/config'),
   researchSentimentConfigSave: (partial) =>
     request('/research/sentiment/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+  // NIFTY Sentiment Analyzer (constituents + sectors)
+  researchNiftySentiment: (topN) =>
+    request('/research/nifty-sentiment/snapshot', { method: 'POST', body: JSON.stringify(topN ? { top_n: topN } : {}) }),
+  researchNiftySentimentAnalytics: (topN) =>
+    request('/research/nifty-sentiment/analytics', { method: 'POST', body: JSON.stringify(topN ? { top_n: topN } : {}) }),
+  researchNiftySentimentConfig: () => request('/research/nifty-sentiment/config'),
+  researchNiftySentimentConfigSave: (partial) =>
+    request('/research/nifty-sentiment/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),

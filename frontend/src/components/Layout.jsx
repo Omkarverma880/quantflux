@@ -40,6 +40,7 @@ const NAV = [
       { to: '/research/option-chain', label: '2. Option Chain Data' },
       { to: '/research/hl-vwap', label: '3. HL + VWAP Lab' },
       { to: '/research/sentiment', label: '4. Sentiment Analyzer' },
+      { to: '/research/nifty-sentiment', label: '5. NIFTY Sentiment' },
     ],
   },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },
