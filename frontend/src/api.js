@@ -396,6 +396,9 @@ export const api = {
   researchNiftySentimentConfig: () => request('/research/nifty-sentiment/config'),
   researchNiftySentimentConfigSave: (partial) =>
     request('/research/nifty-sentiment/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+  // Market Pulse (dashboard confirmations: cum-vol, DMA, VWAP/PVWAP, psychological, Gann)
+  researchMarketPulse: () => request('/research/market-pulse/snapshot', { method: 'POST', body: '{}' }),
+  researchNewsSentiment: () => request('/research/news-sentiment/snapshot', { method: 'POST', body: '{}' }),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),

@@ -81,7 +81,7 @@ DEFAULT_CONSTITUENTS: list[dict] = [
 
 DEFAULT_CONFIG = {
     "top_n": 10,                    # top-weighted stocks treated as the 100% universe
-    "refresh_interval": 5,          # seconds (front-end auto-refresh)
+    "refresh_interval": 30,         # seconds (front-end auto-refresh) — configurable 3–300
     "sentiment_threshold": 0.05,    # |weighted %chg| below this → Neutral
     "enable_sector": True,
     "enable_trend": True,

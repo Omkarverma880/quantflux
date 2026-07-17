@@ -20,6 +20,8 @@ from research.option_chain import OptionChain
 from research.hl_vwap_lab import HlVwapLab
 from research.sentiment_engine import SentimentEngine
 from research.nifty_sentiment import NiftySentiment
+from research.market_pulse import MarketPulse
+from research.news_sentiment import NewsSentiment
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -30,6 +32,8 @@ _chains: dict[int, OptionChain] = {}
 _labs: dict[int, HlVwapLab] = {}
 _sentiments: dict[int, SentimentEngine] = {}
 _nifty_sentiments: dict[int, NiftySentiment] = {}
+_market_pulses: dict[int, MarketPulse] = {}
+_news_sentiment = NewsSentiment()   # shared (public RSS — not per-user)
 
 
 def _get_lab(broker: Broker, user_id: int) -> HlVwapLab:
@@ -69,6 +73,16 @@ def _get_nifty_sentiment(broker: Broker, user_id: int) -> NiftySentiment:
     if eng is None:
         eng = NiftySentiment(broker)
         _nifty_sentiments[user_id] = eng
+    else:
+        eng.broker = broker
+    return eng
+
+
+def _get_market_pulse(broker: Broker, user_id: int) -> MarketPulse:
+    eng = _market_pulses.get(user_id)
+    if eng is None:
+        eng = MarketPulse(broker)
+        _market_pulses[user_id] = eng
     else:
         eng.broker = broker
     return eng
@@ -420,3 +434,30 @@ async def nifty_sentiment_config_save(payload: dict | None = None,
     except Exception as exc:
         logger.error("NIFTY sentiment config save failed: %s", exc)
         return {"status": "error", "message": str(exc)}
+
+
+# ──────────────── Market Pulse (dashboard confirmations) ────────────────
+
+@router.post("/market-pulse/snapshot")
+async def market_pulse_snapshot(user_id: int = Depends(login_required),
+                                db: Session = Depends(get_db)):
+    """Cumulative-volume, 20/200 DMA, VWAP/P-VWAP, psychological & Gann level
+    confirmations for the Market Dashboard."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    try:
+        return _get_market_pulse(broker, user_id).snapshot(authenticated=True)
+    except Exception as exc:
+        logger.error("Market pulse snapshot failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/news-sentiment/snapshot")
+async def news_sentiment_snapshot(user_id: int = Depends(login_required)):
+    """Indian market news sentiment from trusted free RSS feeds (no API key)."""
+    try:
+        return _news_sentiment.snapshot()
+    except Exception as exc:
+        logger.error("News sentiment snapshot failed: %s", exc)
+        return {"status": "error", "message": str(exc), "bias": "Neutral", "available": False}
