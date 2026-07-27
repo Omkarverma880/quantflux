@@ -230,14 +230,34 @@ export default function NiftySignalGenerator() {
 
       {/* Summary bar */}
       {data && (
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm bg-surface-2 border border-surface-3 rounded-xl px-4 py-2.5">
-          <span className="text-gray-400">Market <strong className="text-brand-400">{data.market_label}</strong></span>
-          <span className="text-gray-400">Timeframe <strong className="text-gray-100">{data.timeframe_label}</strong></span>
-          <span className="text-gray-400">Session <strong className="text-gray-100">{data.session_day}</strong></span>
-          <span className="text-gray-400">Expiry <strong className="text-gray-100">{data.expiry}</strong> <span className="text-gray-600">({data.expiry_type})</span></span>
-          <span className="text-gray-400">Strikes <strong className="text-gray-100">{data.total_strikes}</strong></span>
-          <span className="text-gray-400">Candles <strong className="text-gray-100">{data.rows?.length ?? 0}</strong></span>
-          <span className="text-gray-500 text-xs ml-auto flex items-center gap-1"><Activity className="w-3 h-3" /> {data.fetched_at}</span>
+        <div className="bg-surface-2 border border-surface-3 rounded-xl px-4 py-2.5 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+            <span className="text-gray-400">Market <strong className="text-brand-400">{data.market_label}</strong></span>
+            <span className="text-gray-400">Timeframe <strong className="text-gray-100">{data.timeframe_label}</strong></span>
+            <span className="text-gray-400">Session <strong className="text-gray-100">{data.session_day}</strong></span>
+            <span className="text-gray-400">Expiry <strong className="text-gray-100">{data.expiry}</strong> <span className="text-gray-600">({data.expiry_type})</span></span>
+            <span className="text-gray-400">Candles <strong className="text-gray-100">{data.rows?.length ?? 0}</strong></span>
+            <span className="text-gray-500 text-xs ml-auto flex items-center gap-1"><Activity className="w-3 h-3" /> {data.fetched_at}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm border-t border-surface-3 pt-2">
+            <span className="text-gray-400">Current ATM <strong className="text-brand-300 text-base">{INT(data.atm)}</strong></span>
+            <span className="text-gray-400">Selected strikes <span className="text-gray-600">({data.total_strikes})</span></span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(data.strikes || []).map((s) => (
+                <span key={s}
+                  className={`px-2 py-0.5 rounded-md text-xs font-semibold border ${
+                    s === data.atm
+                      ? 'bg-brand-600/20 text-brand-300 border-brand-500/40'
+                      : 'bg-surface-3 text-gray-300 border-surface-4'
+                  }`}>
+                  {INT(s)}{s === data.atm ? ' · ATM' : ''}
+                </span>
+              ))}
+            </div>
+            <span className="text-[11px] text-gray-600 w-full">
+              ATM &amp; strikes shown are for the latest candle ({data.timeframe.match(/[dwM]/) ? data.rows?.[data.rows.length - 1]?.date : data.rows?.[data.rows.length - 1]?.time}); ATM is recomputed per candle from that candle's price.
+            </span>
+          </div>
         </div>
       )}
 

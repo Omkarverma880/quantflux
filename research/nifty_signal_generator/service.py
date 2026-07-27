@@ -336,6 +336,10 @@ class NiftySignalGenerator:
 
         exec_ms = int((time.monotonic() - t0) * 1000)
         last = rows[-1]
+        # "Current" = the most recent completed candle's ATM + its selected strikes.
+        latest_atm = last["atm"]
+        latest_strikes = calc.generate_selected_strikes(
+            latest_atm, int(cfg["strike_interval"]), int(cfg["strike_count"]))
         logger.info(
             "NiftySignalGenerator %s %s: %d rows | ATM=%s CallOI=%s PutOI=%s Diff=%s "
             "PCR=%s VWAP=%s PrevVWAP=%s LTP=%s Opt=%s VWAPsig=%s | %dms",
@@ -356,6 +360,8 @@ class NiftySignalGenerator:
             "expiry": expiry.isoformat(),
             "expiry_type": cfg["expiry_type"],
             "session_day": anchor.isoformat(),
+            "atm": latest_atm,
+            "strikes": latest_strikes,
             "oi_limited": wide,
             "fetched_at": datetime.now().strftime("%H:%M:%S"),
             "rows": rows,          # chronological (oldest → newest)
