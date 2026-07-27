@@ -43,6 +43,7 @@ const NAV = [
       { to: '/research/hl-vwap', label: '3. HL + VWAP Lab' },
       { to: '/research/sentiment', label: '4. Sentiment Analyzer' },
       { to: '/research/nifty-sentiment', label: '5. NIFTY Sentiment' },
+      { to: '/research/nifty-signal-generator', label: '6. Nifty Signal Generator' },
     ],
   },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },

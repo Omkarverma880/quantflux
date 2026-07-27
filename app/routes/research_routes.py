@@ -22,6 +22,7 @@ from research.sentiment_engine import SentimentEngine
 from research.nifty_sentiment import NiftySentiment
 from research.market_pulse import MarketPulse
 from research.news_sentiment import NewsSentiment
+from research.nifty_signal_generator import NiftySignalGenerator
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -33,6 +34,7 @@ _labs: dict[int, HlVwapLab] = {}
 _sentiments: dict[int, SentimentEngine] = {}
 _nifty_sentiments: dict[int, NiftySentiment] = {}
 _market_pulses: dict[int, MarketPulse] = {}
+_signal_generators: dict[int, NiftySignalGenerator] = {}
 _news_sentiment = NewsSentiment()   # shared (public RSS — not per-user)
 
 
@@ -85,6 +87,18 @@ def _get_market_pulse(broker: Broker, user_id: int) -> MarketPulse:
         _market_pulses[user_id] = eng
     else:
         eng.broker = broker
+    return eng
+
+
+def _get_signal_generator(broker: Broker, user_id: int) -> NiftySignalGenerator:
+    eng = _signal_generators.get(user_id)
+    if eng is None:
+        eng = NiftySignalGenerator(broker, user_id=user_id)
+        _signal_generators[user_id] = eng
+    else:
+        eng.broker = broker
+        eng._chain.broker = broker
+    eng.user_id = user_id
     return eng
 
 
@@ -461,3 +475,62 @@ async def news_sentiment_snapshot(user_id: int = Depends(login_required)):
     except Exception as exc:
         logger.error("News sentiment snapshot failed: %s", exc)
         return {"status": "error", "message": str(exc), "bias": "Neutral", "available": False}
+
+
+# ──────────────── NIFTY Signal Generator (PCR + VWAP, research-only) ────────────────
+
+class SignalGeneratorRequest(BaseModel):
+    # Optional per-request overrides (UI can preview without persisting config).
+    timeframe: str | None = None
+    strike_interval: int | None = None
+    strike_count: int | None = None
+    market: str | None = None
+    expiry_type: str | None = None
+    date: str | None = None            # backfill a specific session (YYYY-MM-DD)
+
+
+@router.post("/nifty-signal-generator/snapshot")
+async def nifty_signal_generator_snapshot(
+    payload: SignalGeneratorRequest | None = None,
+    user_id: int = Depends(login_required),
+    db: Session = Depends(get_db),
+):
+    """One row per completed candle: summed CE/PE OI → PCR signal + VWAP signal."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated — research needs historical data access"}
+    payload = payload or SignalGeneratorRequest()
+    overrides = {
+        k: v for k, v in {
+            "timeframe": payload.timeframe, "strike_interval": payload.strike_interval,
+            "strike_count": payload.strike_count, "market": payload.market,
+            "expiry_type": payload.expiry_type,
+        }.items() if v is not None
+    }
+    try:
+        return _get_signal_generator(broker, user_id).snapshot(overrides, payload.date)
+    except Exception as exc:
+        logger.error("NIFTY signal generator snapshot failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/nifty-signal-generator/config")
+async def nifty_signal_generator_config(user_id: int = Depends(login_required),
+                                        db: Session = Depends(get_db)):
+    try:
+        eng = _get_signal_generator(get_user_broker(db, user_id), user_id)
+        return {"status": "ok", "config": eng.load_config()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/nifty-signal-generator/config")
+async def nifty_signal_generator_config_save(payload: dict | None = None,
+                                             user_id: int = Depends(login_required),
+                                             db: Session = Depends(get_db)):
+    try:
+        eng = _get_signal_generator(get_user_broker(db, user_id), user_id)
+        return {"status": "ok", "config": eng.save_config(payload or {})}
+    except Exception as exc:
+        logger.error("NIFTY signal generator config save failed: %s", exc)
+        return {"status": "error", "message": str(exc)}

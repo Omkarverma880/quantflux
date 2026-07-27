@@ -31,6 +31,7 @@ import HlVwapLab from './pages/research/HlVwapLab';
 import Sentiment from './pages/research/Sentiment';
 import NiftySentiment from './pages/research/NiftySentiment';
 import MarketDashboard from './pages/research/MarketDashboard';
+import NiftySignalGenerator from './pages/research/NiftySignalGenerator';
 
 export default function App() {
   const { isAuthenticated } = useAuth();
@@ -66,6 +67,7 @@ export default function App() {
           <Route path="research/hl-vwap" element={<HlVwapLab />} />
           <Route path="research/sentiment" element={<Sentiment />} />
           <Route path="research/nifty-sentiment" element={<NiftySentiment />} />
+          <Route path="research/nifty-signal-generator" element={<NiftySignalGenerator />} />
           <Route path="research/market-dashboard" element={<MarketDashboard />} />
           <Route path="portfolio" element={<PortfolioAnalytics />} />
           <Route path="portfolio/analytics-world" element={<AnalyticsWorld />} />
