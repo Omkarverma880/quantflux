@@ -145,12 +145,14 @@ class NiftySignalGenerator:
 
     # ── candle fetching (cached; today gets a short TTL) ──────────
     def _get_candles(self, token: int, frm: datetime, to: datetime,
-                     interval: str, oi: bool) -> list[dict]:
+                     interval: str, oi: bool, force: bool = False) -> list[dict]:
         key = (token, frm, to, interval, oi)
         cached = self._candle_cache.get(key)
         is_today = to.date() >= date.today()
         now = time.monotonic()
-        if cached and (not is_today or now - cached[0] < _TODAY_TTL):
+        # ``force`` bypasses the today-TTL so a newly-completed candle is always
+        # frozen from post-close (final) data — never a stale pre-close read.
+        if cached and not force and (not is_today or now - cached[0] < _TODAY_TTL):
             return cached[1]
         try:
             candles = self.broker.get_historical_data(token, frm, to, interval, oi=oi) or []
@@ -258,11 +260,12 @@ class NiftySignalGenerator:
         return series[i - 1][1] if i > 0 else None
 
     def _option_oi_series(self, name: str, expiry: date, strike: int, opt_type: str,
-                          frm: datetime, to: datetime, interval: str) -> list[tuple[datetime, float]]:
+                          frm: datetime, to: datetime, interval: str,
+                          force: bool = False) -> list[tuple[datetime, float]]:
         o = self._market_resolve(name, expiry, float(strike), opt_type)
         if not o:
             return []
-        candles = self._get_candles(int(o["token"]), frm, to, interval, oi=True)
+        candles = self._get_candles(int(o["token"]), frm, to, interval, oi=True, force=force)
         out: list[tuple[datetime, float]] = []
         for c in candles:
             dt = _candle_dt(c)
@@ -274,7 +277,8 @@ class NiftySignalGenerator:
     # ── row assembly ──────────────────────────────────────────────
     def generate_table_row(self, bucket: dict, cfg: dict, name: str, expiry: date,
                            oi_cache: dict, frm: datetime, to: datetime,
-                           interval: str, prev_vwap: Optional[float]) -> dict:
+                           interval: str, prev_vwap: Optional[float],
+                           force_oi: bool = False) -> dict:
         interval_step = int(cfg["strike_interval"])
         count = int(cfg["strike_count"])
         price = bucket["close"]
@@ -290,7 +294,7 @@ class NiftySignalGenerator:
                 ck = (opt_type, s)
                 if ck not in oi_cache:
                     oi_cache[ck] = self._option_oi_series(
-                        name, expiry, s, opt_type, frm, to, interval)
+                        name, expiry, s, opt_type, frm, to, interval, force=force_oi)
                 res[s] = self._oi_at(oi_cache[ck], end_dt)
             return res
 
@@ -331,6 +335,13 @@ class NiftySignalGenerator:
             return {"status": "error",
                     "message": f"Could not resolve {market['label']} index token — Zerodha connected?"}
 
+        expiry = self._market_expiry_for(market["name"], cfg["expiry_type"], anchor)
+        if not expiry:
+            return {"status": "error", "message": "No option expiry resolvable for OI series."}
+
+        scope = (cfg["market"], cfg["timeframe"], cfg["strike_interval"],
+                 cfg["strike_count"], cfg["expiry_type"], anchor.isoformat())
+
         index_candles = self._get_candles(token, frm, to, interval, oi=False)
         if not index_candles:
             return {"status": "error",
@@ -340,9 +351,16 @@ class NiftySignalGenerator:
         if not buckets:
             return {"status": "error", "message": "No completed candles yet for this timeframe."}
 
-        expiry = self._market_expiry_for(market["name"], cfg["expiry_type"], anchor)
-        if not expiry:
-            return {"status": "error", "message": "No option expiry resolvable for OI series."}
+        # ── Immutable-freeze guarantee ────────────────────────────────
+        # A completed candle is computed exactly once and then frozen. If any
+        # completed candle is not yet frozen (i.e. it just closed), refetch the
+        # index — and, below, its OI — with ``force`` so the value we freeze is
+        # from FINAL post-close data, never a stale pre-close read. Candles that
+        # are already frozen are never refetched or recomputed.
+        need_fresh = any((scope, b["end_dt"].isoformat()) not in self._row_cache for b in buckets)
+        if need_fresh:
+            index_candles = self._get_candles(token, frm, to, interval, oi=False, force=True)
+            buckets = [b for b in self._build_buckets(index_candles, tf) if self._is_completed(b["end_dt"], tf)]
 
         # Pre-check the strike-union size so we never explode API usage.
         union: set[int] = set()
@@ -354,8 +372,6 @@ class NiftySignalGenerator:
             logger.warning("Strike union %d exceeds cap %d — OI limited to latest candles",
                            len(union), _MAX_STRIKES)
 
-        scope = (cfg["market"], cfg["timeframe"], cfg["strike_interval"],
-                 cfg["strike_count"], cfg["expiry_type"], anchor.isoformat())
         oi_cache: dict = {}
         rows: list[dict] = []
         prev_vwap: Optional[float] = None
@@ -372,11 +388,13 @@ class NiftySignalGenerator:
             ckey = (scope, b["end_dt"].isoformat())
             row = self._row_cache.get(ckey)
             if row is None:
-                # For a wide union, only compute OI for buckets near the end to
-                # respect the cap; earlier rows still carry price/VWAP signals.
-                row = self.generate_table_row(b, cfg, market["name"], expiry, oi_cache, frm, to, interval, prev_vwap)
+                # Newly-completed candle → compute once from fresh OI and FREEZE.
+                row = self.generate_table_row(
+                    b, cfg, market["name"], expiry, oi_cache, frm, to, interval,
+                    prev_vwap, force_oi=need_fresh)
                 self._row_cache[ckey] = row
             else:
+                # Already frozen — reuse verbatim (previous_vwap is deterministic).
                 row = {**row, "previous_vwap": prev_vwap}
             rows.append(row)
             prev_vwap = b["vwap"]
