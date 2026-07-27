@@ -1,8 +1,33 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  RefreshCw, Loader2, AlertCircle, Activity, Pause, Play, Save, Signal, Info,
+  RefreshCw, Loader2, AlertCircle, Activity, Pause, Play, Save, Signal, Info, Download,
 } from 'lucide-react';
 import { api } from '../../api';
+
+// Export rows to a CSV file the browser downloads (offline research / archival).
+function downloadCSV(filename, headers, rows) {
+  const esc = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [headers.map((h) => esc(h.label)).join(',')];
+  rows.forEach((r) => lines.push(headers.map((h) => esc(r[h.key])).join(',')));
+  const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+const CSV_HEADERS = [
+  { key: 'date', label: 'Date' }, { key: 'time', label: 'Time' },
+  { key: 'atm', label: 'ATM' }, { key: 'call_oi', label: 'Call OI' },
+  { key: 'put_oi', label: 'Put OI' }, { key: 'diff', label: 'Diff' },
+  { key: 'pcr', label: 'PCR' }, { key: 'option_signal', label: 'Option Signal' },
+  { key: 'vwap', label: 'VWAP' }, { key: 'previous_vwap', label: 'Previous VWAP' },
+  { key: 'price', label: 'Nifty Price' }, { key: 'vwap_signal', label: 'VWAP Signal' },
+];
 
 // User-facing timeframe options — keys match the backend constants.TIMEFRAMES.
 const TIMEFRAMES = [
@@ -94,6 +119,16 @@ export default function NiftySignalGenerator() {
     finally { setSaving(false); }
   };
 
+  const handleDownload = () => {
+    if (!data?.rows?.length) { showErr('Nothing to download — generate the table first.'); return; }
+    // Chronological order (oldest → newest) reads best in a spreadsheet.
+    downloadCSV(
+      `nifty_signal_generator_${data.market}_${data.timeframe}_${data.session_day}.csv`,
+      CSV_HEADERS,
+      data.rows,
+    );
+  };
+
   const showPrev = cfg.show_previous_vwap;
   const rows = data?.rows ? [...data.rows].reverse() : [];   // newest on top (like the reference)
   const cols = 10 - (showPrev ? 0 : 1);
@@ -120,6 +155,11 @@ export default function NiftySignalGenerator() {
               auto ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40' : 'bg-surface-3 text-gray-400 border-surface-4'
             }`}>
             {auto ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />} Live {auto ? 'ON' : 'OFF'}
+          </button>
+          <button onClick={handleDownload} disabled={!data?.rows?.length}
+            title="Download the signal table as CSV"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border bg-surface-3 text-gray-300 border-surface-4 hover:text-white disabled:opacity-40 transition">
+            <Download className="w-3.5 h-3.5" /> Download CSV
           </button>
           <button onClick={saveDefaults} disabled={saving}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border bg-surface-3 text-gray-300 border-surface-4 hover:text-white disabled:opacity-50 transition">
