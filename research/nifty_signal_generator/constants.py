@@ -44,36 +44,28 @@ DEFAULT_STRIKE_INTERVAL = 50
 # ── Strikes above / below ATM ─────────────────────────────────────
 DEFAULT_STRIKE_COUNT = 2          # ATM ± 2 → 5 strikes total
 
-# ── Markets (designed for easy future expansion) ──────────────────
-# Only NIFTY is wired for now; the others are declared so the UI and
-# config can already reference them without a code change later.
+# ── Markets ───────────────────────────────────────────────────────
+# Each index resolves its own spot token (NSE) and option chain (NFO `name`),
+# so instruments never mix. `default_interval` is the natural ATM grid for the
+# index (NIFTY 50, BANKNIFTY 100) — used unless the caller overrides it.
 MARKETS: dict[str, dict] = {
     "NIFTY": {
         "label": "NIFTY",
         "name": "NIFTY",                 # NFO instrument `name`
         "spot_tradingsymbol": "NIFTY 50",  # NSE index tradingsymbol
+        "default_interval": 50,
         "enabled": True,
     },
     "BANKNIFTY": {
         "label": "BANK NIFTY",
         "name": "BANKNIFTY",
         "spot_tradingsymbol": "NIFTY BANK",
-        "enabled": False,
-    },
-    "FINNIFTY": {
-        "label": "FIN NIFTY",
-        "name": "FINNIFTY",
-        "spot_tradingsymbol": "NIFTY FIN SERVICE",
-        "enabled": False,
-    },
-    "MIDCPNIFTY": {
-        "label": "MIDCAP NIFTY",
-        "name": "MIDCPNIFTY",
-        "spot_tradingsymbol": "NIFTY MID SELECT",
-        "enabled": False,
+        "default_interval": 100,
+        "enabled": True,
     },
 }
 DEFAULT_MARKET = "NIFTY"
+ENABLED_MARKETS = [k for k, v in MARKETS.items() if v.get("enabled")]
 
 # ── Signal labels + colour hints (UI reads `color` for styling) ───
 SIGNAL_BUY = "BUY"

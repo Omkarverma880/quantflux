@@ -97,7 +97,6 @@ def _get_signal_generator(broker: Broker, user_id: int) -> NiftySignalGenerator:
         _signal_generators[user_id] = eng
     else:
         eng.broker = broker
-        eng._chain.broker = broker
     eng.user_id = user_id
     return eng
 

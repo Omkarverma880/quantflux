@@ -24,9 +24,8 @@ from typing import Optional
 
 from core.broker import Broker
 from core.logger import get_logger
-from research.option_chain import OptionChain
 from research.vwap_pvwap import (
-    MARKET_OPEN, MARKET_CLOSE, INDEX_SPOT_TRADINGSYMBOL, _candle_dt, _parse_expiry,
+    MARKET_OPEN, MARKET_CLOSE, _candle_dt, _parse_expiry,
 )
 from research.nifty_signal_generator import calculations as calc
 from research.nifty_signal_generator.config import load_config, save_config, sanitize
@@ -59,9 +58,9 @@ class NiftySignalGenerator:
         self.broker = broker
         self.user_id = user_id
         self._lock = threading.Lock()
-        self._chain = OptionChain(broker)          # reuse instrument/expiry/spot logic
-        self._index_token: Optional[int] = None
+        self._index_tokens: dict[str, int] = {}     # spot tradingsymbol → token
         # caches
+        self._nfo_cache: dict[str, tuple[date, list[dict]]] = {}   # NFO name → (date, options)
         self._candle_cache: dict[tuple, tuple[float, list[dict]]] = {}   # key → (ts, candles)
         self._row_cache: dict[tuple, dict] = {}     # (scope, candle_iso) → row
 
@@ -75,7 +74,7 @@ class NiftySignalGenerator:
         self._row_cache.clear()
         return cfg
 
-    # ── instrument helpers (reuse OptionChain where possible) ─────
+    # ── instrument helpers (self-contained, market-parameterised) ──
     def _market_cfg(self, key: str) -> dict:
         m = MARKETS.get(key)
         if not m or not m.get("enabled"):
@@ -83,17 +82,65 @@ class NiftySignalGenerator:
         return m
 
     def _resolve_index_token(self, spot_tradingsymbol: str) -> Optional[int]:
-        if self._index_token and spot_tradingsymbol == INDEX_SPOT_TRADINGSYMBOL:
-            return self._index_token
+        """NSE index instrument token for the spot symbol (cached per symbol)."""
+        if spot_tradingsymbol in self._index_tokens:
+            return self._index_tokens[spot_tradingsymbol]
         try:
             for inst in self.broker.get_instruments("NSE"):
                 if inst.get("tradingsymbol") == spot_tradingsymbol:
                     tok = int(inst["instrument_token"])
-                    if spot_tradingsymbol == INDEX_SPOT_TRADINGSYMBOL:
-                        self._index_token = tok
+                    self._index_tokens[spot_tradingsymbol] = tok
                     return tok
         except Exception as exc:
             logger.error("Index token lookup failed (%s): %s", spot_tradingsymbol, exc)
+        return None
+
+    def _market_options(self, name: str) -> list[dict]:
+        """Currently-listed CE/PE option contracts for an index (NFO ``name``),
+        cached for the day. Filtering by ``name`` keeps each instrument's chain
+        fully independent — NIFTY and BANKNIFTY never mix."""
+        today = date.today()
+        cached = self._nfo_cache.get(name)
+        if cached and cached[0] == today:
+            return cached[1]
+        opts: list[dict] = []
+        try:
+            for inst in self.broker.get_instruments("NFO"):
+                if inst.get("name") != name or inst.get("instrument_type") not in ("CE", "PE"):
+                    continue
+                exp = _parse_expiry(inst.get("expiry"))
+                if not exp:
+                    continue
+                opts.append({
+                    "tradingsymbol": inst.get("tradingsymbol"),
+                    "token": int(inst["instrument_token"]),
+                    "strike": float(inst.get("strike", 0) or 0),
+                    "type": inst.get("instrument_type"),
+                    "expiry": exp,
+                })
+        except Exception as exc:
+            logger.error("NFO options fetch failed (%s): %s", name, exc)
+        self._nfo_cache[name] = (today, opts)
+        return opts
+
+    def _market_expiry_for(self, name: str, expiry_type: str, day: date) -> Optional[date]:
+        exps = sorted({o["expiry"] for o in self._market_options(name)})
+        if expiry_type == "monthly":
+            by_month: dict = {}
+            for e in exps:
+                k = (e.year, e.month)
+                if k not in by_month or e > by_month[k]:
+                    by_month[k] = e
+            exps = sorted(by_month.values())
+        for e in exps:
+            if e >= day:
+                return e
+        return exps[-1] if exps else None
+
+    def _market_resolve(self, name: str, expiry: date, strike: float, opt_type: str) -> Optional[dict]:
+        for o in self._market_options(name):
+            if o["expiry"] == expiry and o["type"] == opt_type and abs(o["strike"] - strike) < 0.5:
+                return o
         return None
 
     # ── candle fetching (cached; today gets a short TTL) ──────────
@@ -210,9 +257,9 @@ class NiftySignalGenerator:
         i = bisect_right(dts, when)
         return series[i - 1][1] if i > 0 else None
 
-    def _option_oi_series(self, expiry: date, strike: int, opt_type: str,
+    def _option_oi_series(self, name: str, expiry: date, strike: int, opt_type: str,
                           frm: datetime, to: datetime, interval: str) -> list[tuple[datetime, float]]:
-        o = self._chain._resolve(expiry, float(strike), opt_type)
+        o = self._market_resolve(name, expiry, float(strike), opt_type)
         if not o:
             return []
         candles = self._get_candles(int(o["token"]), frm, to, interval, oi=True)
@@ -225,7 +272,7 @@ class NiftySignalGenerator:
         return out
 
     # ── row assembly ──────────────────────────────────────────────
-    def generate_table_row(self, bucket: dict, cfg: dict, expiry: date,
+    def generate_table_row(self, bucket: dict, cfg: dict, name: str, expiry: date,
                            oi_cache: dict, frm: datetime, to: datetime,
                            interval: str, prev_vwap: Optional[float]) -> dict:
         interval_step = int(cfg["strike_interval"])
@@ -243,7 +290,7 @@ class NiftySignalGenerator:
                 ck = (opt_type, s)
                 if ck not in oi_cache:
                     oi_cache[ck] = self._option_oi_series(
-                        expiry, s, opt_type, frm, to, interval)
+                        name, expiry, s, opt_type, frm, to, interval)
                 res[s] = self._oi_at(oi_cache[ck], end_dt)
             return res
 
@@ -293,7 +340,7 @@ class NiftySignalGenerator:
         if not buckets:
             return {"status": "error", "message": "No completed candles yet for this timeframe."}
 
-        expiry = self._chain._expiry_for(cfg["expiry_type"], anchor)
+        expiry = self._market_expiry_for(market["name"], cfg["expiry_type"], anchor)
         if not expiry:
             return {"status": "error", "message": "No option expiry resolvable for OI series."}
 
@@ -327,7 +374,7 @@ class NiftySignalGenerator:
             if row is None:
                 # For a wide union, only compute OI for buckets near the end to
                 # respect the cap; earlier rows still carry price/VWAP signals.
-                row = self.generate_table_row(b, cfg, expiry, oi_cache, frm, to, interval, prev_vwap)
+                row = self.generate_table_row(b, cfg, market["name"], expiry, oi_cache, frm, to, interval, prev_vwap)
                 self._row_cache[ckey] = row
             else:
                 row = {**row, "previous_vwap": prev_vwap}
