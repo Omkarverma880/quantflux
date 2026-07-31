@@ -23,6 +23,8 @@ from research.nifty_sentiment import NiftySentiment
 from research.market_pulse import MarketPulse
 from research.news_sentiment import NewsSentiment
 from research.nifty_signal_generator import NiftySignalGenerator
+from research.pmvwap_straddle import PMVwapStraddleResearch
+from research.pmvwap_straddle import log as pmvwap_log
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -35,6 +37,7 @@ _sentiments: dict[int, SentimentEngine] = {}
 _nifty_sentiments: dict[int, NiftySentiment] = {}
 _market_pulses: dict[int, MarketPulse] = {}
 _signal_generators: dict[int, NiftySignalGenerator] = {}
+_pmvwap_straddles: dict[int, PMVwapStraddleResearch] = {}
 _news_sentiment = NewsSentiment()   # shared (public RSS — not per-user)
 
 
@@ -97,6 +100,18 @@ def _get_signal_generator(broker: Broker, user_id: int) -> NiftySignalGenerator:
         _signal_generators[user_id] = eng
     else:
         eng.broker = broker
+    eng.user_id = user_id
+    return eng
+
+
+def _get_pmvwap_straddle(broker: Broker, user_id: int) -> PMVwapStraddleResearch:
+    eng = _pmvwap_straddles.get(user_id)
+    if eng is None:
+        eng = PMVwapStraddleResearch(broker, user_id=user_id)
+        _pmvwap_straddles[user_id] = eng
+    else:
+        eng.broker = broker
+        eng.universe.broker = broker
     eng.user_id = user_id
     return eng
 
@@ -532,4 +547,85 @@ async def nifty_signal_generator_config_save(payload: dict | None = None,
         return {"status": "ok", "config": eng.save_config(payload or {})}
     except Exception as exc:
         logger.error("NIFTY signal generator config save failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+# ──────────────── Prev-Month-VWAP Straddle Research (options, read-only) ────────────────
+
+class PMVwapBacktestRequest(BaseModel):
+    overrides: dict | None = None       # per-run config overrides (not persisted)
+    symbol: str | None = None           # set → single-stock; None → whole F&O universe
+    start: str | None = None            # YYYY-MM-DD (defaults to latest trading day)
+    end: str | None = None              # YYYY-MM-DD (defaults to start)
+    persist: bool = True                # append rows to the durable research log
+
+
+@router.get("/pmvwap-straddle/config")
+async def pmvwap_straddle_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_pmvwap_straddle(get_user_broker(db, user_id), user_id).load_config()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/pmvwap-straddle/config")
+async def pmvwap_straddle_config_save(payload: dict | None = None,
+                                      user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_pmvwap_straddle(get_user_broker(db, user_id), user_id).save_config(payload or {})}
+    except Exception as exc:
+        logger.error("PMVWAP straddle config save failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/pmvwap-straddle/universe")
+async def pmvwap_straddle_universe(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    try:
+        return _get_pmvwap_straddle(broker, user_id).list_universe()
+    except Exception as exc:
+        logger.error("PMVWAP straddle universe failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/pmvwap-straddle/backtest")
+async def pmvwap_straddle_backtest(payload: PMVwapBacktestRequest | None = None,
+                                   user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Run the straddle backtest (single stock or whole F&O universe) and append
+    the resulting research-log rows to the durable, append-only log."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated — research needs historical data"}
+    payload = payload or PMVwapBacktestRequest()
+    try:
+        eng = _get_pmvwap_straddle(broker, user_id)
+        res = eng.backtest(payload.overrides, symbol=payload.symbol,
+                           start=payload.start, end=payload.end)
+        if res.get("status") == "ok" and payload.persist and res.get("rows"):
+            run_id = pmvwap_log.new_run_id()
+            stored = pmvwap_log.persist_rows(db, user_id, run_id, res["mode"], res["rows"])
+            res["run_id"] = run_id
+            res["stored"] = stored
+        return res
+    except Exception as exc:
+        logger.error("PMVWAP straddle backtest failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/pmvwap-straddle/runs")
+async def pmvwap_straddle_runs(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "runs": pmvwap_log.list_runs(db, user_id)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/pmvwap-straddle/log")
+async def pmvwap_straddle_log_rows(run_id: str | None = None, date: str | None = None,
+                                   user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "rows": pmvwap_log.fetch_rows(db, user_id, run_id, date)}
+    except Exception as exc:
         return {"status": "error", "message": str(exc)}

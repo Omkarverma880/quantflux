@@ -405,6 +405,16 @@ export const api = {
   researchSignalGeneratorConfig: () => request('/research/nifty-signal-generator/config'),
   researchSignalGeneratorConfigSave: (partial) =>
     request('/research/nifty-signal-generator/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+  // Prev-Month VWAP Straddle Research (options, read-only)
+  researchPMVwapStraddleConfig: () => request('/research/pmvwap-straddle/config'),
+  researchPMVwapStraddleConfigSave: (partial) =>
+    request('/research/pmvwap-straddle/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+  researchPMVwapStraddleUniverse: () => request('/research/pmvwap-straddle/universe'),
+  researchPMVwapStraddleBacktest: (body) =>
+    request('/research/pmvwap-straddle/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
+  researchPMVwapStraddleRuns: () => request('/research/pmvwap-straddle/runs'),
+  researchPMVwapStraddleLog: (runId, date) =>
+    request(`/research/pmvwap-straddle/log?${runId ? `run_id=${encodeURIComponent(runId)}` : ''}${date ? `&date=${encodeURIComponent(date)}` : ''}`),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),

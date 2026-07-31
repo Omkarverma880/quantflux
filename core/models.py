@@ -326,3 +326,38 @@ class Strategy10StockList(Base):
     stock_count = Column(Integer, default=0)
     uploaded_by = Column(Integer)  # user_id (audit only; list is global)
     uploaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class PMVwapStraddleTrade(Base):
+    """Append-only research log for the Prev-Month-VWAP Straddle Research.
+
+    One row per simulated straddle signal (never overwritten). Grouped by
+    ``run_id`` so backtest runs can be compared side-by-side and the live-day
+    scan simply keeps appending. Purely virtual — no order is ever placed.
+    Auto-created at startup via ``Base.metadata.create_all`` (no migration).
+    """
+    __tablename__ = "pmvwap_straddle_trades"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    run_id = Column(String(40), nullable=False)          # groups one backtest/live run
+    mode = Column(String(10))                            # single | multi | live
+    trade_date = Column(Date, nullable=False)
+    signal_time = Column(String(10))
+    underlying = Column(String(40), nullable=False)
+    atm_strike = Column(Numeric(12, 2))
+    ce_symbol = Column(String(100))
+    pe_symbol = Column(String(100))
+    lot_size = Column(Integer)
+    combined_premium = Column(Numeric(12, 2))
+    target_premium = Column(Numeric(12, 2))
+    combined_mtm = Column(Numeric(14, 2))
+    targets_hit = Column(Integer, default=0)
+    status = Column(String(20), default="FULL EXIT")
+    data = Column(JSONB, nullable=False, default=dict)   # full research-log row
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("idx_pmvwap_user_run", "user_id", "run_id"),
+        Index("idx_pmvwap_user_date", "user_id", "trade_date"),
+    )
