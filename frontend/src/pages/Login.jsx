@@ -136,42 +136,35 @@ export default function Login() {
   const isLogin = mode === 'login';
 
   return (
-    <div className="min-h-screen flex bg-surface-0">
+    <div className="min-h-screen flex relative overflow-hidden bg-gradient-to-br from-black via-[#050807] to-surface-1">
+      {/* Ambient glows + grid span the whole page — one cohesive canvas, no hard seam */}
+      <div className="absolute -top-32 -left-24 w-[32rem] h-[32rem] rounded-full bg-brand-500/10 blur-3xl animate-pulse pointer-events-none" />
+      <div className="absolute top-1/3 left-[46%] -translate-x-1/2 w-[38rem] h-[38rem] rounded-full bg-brand-600/10 blur-3xl animate-pulse pointer-events-none" style={{ animationDelay: '1.2s' }} />
+      <div
+        className="absolute inset-0 opacity-[0.035] pointer-events-none"
+        style={{
+          backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
+          backgroundSize: '46px 46px',
+        }}
+      />
+
       {/* ══ Left hero (desktop only) ══ */}
-      <div className="hidden lg:flex lg:w-[52%] relative overflow-hidden border-r border-surface-3 bg-gradient-to-br from-black via-surface-0 to-surface-1">
-        {/* ambient glows */}
-        <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-brand-500/10 blur-3xl animate-pulse" />
-        <div className="absolute -bottom-20 right-0 w-[30rem] h-[30rem] rounded-full bg-brand-600/10 blur-3xl animate-pulse" style={{ animationDelay: '1.2s' }} />
-        {/* faint grid */}
-        <div
-          className="absolute inset-0 opacity-[0.04]"
-          style={{
-            backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
-            backgroundSize: '42px 42px',
-          }}
-        />
-
-        <div className="relative z-10 flex flex-col justify-between p-12 w-full">
-          <div>
-            {/* Devotional blessing */}
-            <div className="text-center mb-8">
-              <div className="flex items-center justify-center gap-3 mb-2">
-                <span className="h-px w-12 bg-gradient-to-r from-transparent to-amber-400/50" />
-                <span className="text-amber-300/80 text-sm">✦</span>
-                <span className="h-px w-12 bg-gradient-to-l from-transparent to-amber-400/50" />
-              </div>
-              <p className="text-2xl font-semibold tracking-wide bg-gradient-to-r from-amber-200 via-yellow-100 to-amber-300 bg-clip-text text-transparent drop-shadow-[0_0_14px_rgba(251,191,36,0.35)]">
-                Jae Shri Radhe Govinda
-              </p>
-              <p className="text-sm text-amber-200/70 mt-1.5 tracking-[0.35em] uppercase">Ram Ram</p>
+      <div className="hidden lg:flex lg:w-[54%] relative z-10">
+        <div className="flex flex-col justify-between p-12 w-full">
+          {/* Devotional blessing — ✦ divider above and below */}
+          <div className="text-center">
+            <div className="flex items-center justify-center gap-3 mb-3">
+              <span className="h-px w-14 bg-gradient-to-r from-transparent to-amber-400/50" />
+              <span className="text-amber-300/80 text-sm">✦</span>
+              <span className="h-px w-14 bg-gradient-to-l from-transparent to-amber-400/50" />
             </div>
-
-            {/* Brand */}
-            <div className="flex items-center gap-3">
-              <LogoIcon size={40} className="shadow-lg shadow-brand-500/20" />
-              <span className="text-2xl font-bold bg-gradient-to-r from-brand-400 to-brand-600 bg-clip-text text-transparent">
-                QuantFlux
-              </span>
+            <p className="text-2xl font-semibold tracking-wide bg-gradient-to-r from-amber-200 via-yellow-100 to-amber-300 bg-clip-text text-transparent drop-shadow-[0_0_14px_rgba(251,191,36,0.35)]">
+              Jae Shri Radhe Govinda
+            </p>
+            <div className="flex items-center justify-center gap-3 mt-3">
+              <span className="h-px w-14 bg-gradient-to-r from-transparent to-amber-400/50" />
+              <span className="text-amber-300/80 text-sm">✦</span>
+              <span className="h-px w-14 bg-gradient-to-l from-transparent to-amber-400/50" />
             </div>
           </div>
 
@@ -289,27 +282,36 @@ export default function Login() {
         </div>
       </div>
 
-      {/* ══ Right: form column ══ */}
-      <div className="flex-1 flex items-center justify-center px-4 py-10">
+      {/* ══ Right: sign-in column ══ */}
+      <div className="flex-1 flex items-center justify-center px-4 py-10 relative z-10">
         <div className="w-full max-w-md">
-        {/* Devotional blessing (mobile — hero shows it on desktop) */}
-        <div className="text-center mb-5 lg:hidden">
-          <p className="text-xl font-semibold tracking-wide bg-gradient-to-r from-amber-200 via-yellow-100 to-amber-300 bg-clip-text text-transparent drop-shadow-[0_0_12px_rgba(251,191,36,0.3)]">
-            Jae Shri Radhe Govinda
-          </p>
-          <p className="text-[11px] text-amber-200/70 mt-1 tracking-[0.35em] uppercase">Ram Ram</p>
-        </div>
-
-        {/* Logo (mobile / compact — hero shows branding on desktop) */}
-        <div className="text-center mb-8 lg:hidden">
-          <div className="flex justify-center mb-4">
-            <LogoIcon size={56} className="shadow-lg shadow-brand-500/20" />
+          {/* Devotional blessing (mobile only — hero shows it on desktop) */}
+          <div className="text-center mb-6 lg:hidden">
+            <div className="flex items-center justify-center gap-3 mb-2">
+              <span className="h-px w-10 bg-gradient-to-r from-transparent to-amber-400/50" />
+              <span className="text-amber-300/80 text-sm">✦</span>
+              <span className="h-px w-10 bg-gradient-to-l from-transparent to-amber-400/50" />
+            </div>
+            <p className="text-xl font-semibold tracking-wide bg-gradient-to-r from-amber-200 via-yellow-100 to-amber-300 bg-clip-text text-transparent drop-shadow-[0_0_12px_rgba(251,191,36,0.3)]">
+              Jae Shri Radhe Govinda
+            </p>
+            <div className="flex items-center justify-center gap-3 mt-2">
+              <span className="h-px w-10 bg-gradient-to-r from-transparent to-amber-400/50" />
+              <span className="text-amber-300/80 text-sm">✦</span>
+              <span className="h-px w-10 bg-gradient-to-l from-transparent to-amber-400/50" />
+            </div>
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-brand-400 to-brand-600 bg-clip-text text-transparent">
-            QuantFlux
-          </h1>
-          <p className="text-sm text-gray-500 mt-2">Multi-User Automated Trading System</p>
-        </div>
+
+          {/* Brand — sits atop the sign-in panel */}
+          <div className="flex items-center justify-center gap-3 mb-8">
+            <LogoIcon size={46} className="shadow-lg shadow-brand-500/20" />
+            <div className="leading-tight text-left">
+              <div className="text-2xl font-bold bg-gradient-to-r from-brand-400 to-brand-600 bg-clip-text text-transparent">
+                QuantFlux
+              </div>
+              <div className="text-[11px] text-gray-500 tracking-wide">Multi-User Automated Trading</div>
+            </div>
+          </div>
 
         {/* Card */}
         <div className="card">
