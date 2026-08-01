@@ -45,6 +45,7 @@ const NAV = [
       { to: '/research/nifty-sentiment', label: '5. NIFTY Sentiment' },
       { to: '/research/nifty-signal-generator', label: '6. Nifty Signal Generator' },
       { to: '/research/pmvwap-straddle', label: '7. Prev-Month VWAP Straddle' },
+      { to: '/research/pmvwap-equity', label: '8. Prev-Month VWAP Equity' },
     ],
   },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },

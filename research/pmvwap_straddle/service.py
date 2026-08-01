@@ -24,7 +24,7 @@ from typing import Optional
 
 from core.broker import Broker
 from core.logger import get_logger
-from research.prev_period_vwap import compute_prev_period_vwaps, _candle_dt
+from research.prev_period_vwap import compute_prev_period_vwaps, _candle_dt, daily_gap_map
 from research.pmvwap_straddle import calculations as calc
 from research.pmvwap_straddle.config import load_config, save_config, sanitize
 from research.pmvwap_straddle.constants import (
@@ -126,6 +126,7 @@ class PMVwapStraddleResearch:
         if not candles:
             return []
         vwaps = compute_prev_period_vwaps(candles)
+        gaps = daily_gap_map(candles)
 
         rows: list[dict] = []
         for day in days:
@@ -136,6 +137,7 @@ class PMVwapStraddleResearch:
             for sig in signals:
                 row = self._simulate_signal(name, token, lot, tf, day, sig, vwaps, candles, squareoff, cfg)
                 if row:
+                    row["gap_pct"] = gaps.get(day)
                     rows.append(row)
         return rows
 
@@ -197,8 +199,21 @@ class PMVwapStraddleResearch:
             "targets_hit": sim["targets_hit"],
             "status": sim["status"],
             "signal_age": signal_age,
-            "notes": f"{sim['targets_hit']}/2 legs hit target",
+            "notes": self._exit_note(sim),
         }
+
+    @staticmethod
+    def _exit_note(sim: dict) -> str:
+        """Plain-language summary of how each leg closed (no SL in research)."""
+        ce_t = sim["ce_exit_reason"] == calc.EXIT_TARGET
+        pe_t = sim["pe_exit_reason"] == calc.EXIT_TARGET
+        if ce_t and pe_t:
+            return "Both legs hit target"
+        if ce_t:
+            return "CE hit target · PE squared off"
+        if pe_t:
+            return "PE hit target · CE squared off"
+        return "No target — both squared off at close"
 
     # ── top-level backtest (single stock or whole universe) ──
     def backtest(self, overrides: Optional[dict] = None, *, symbol: Optional[str] = None,

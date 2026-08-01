@@ -25,6 +25,9 @@ from research.news_sentiment import NewsSentiment
 from research.nifty_signal_generator import NiftySignalGenerator
 from research.pmvwap_straddle import PMVwapStraddleResearch
 from research.pmvwap_straddle import log as pmvwap_log
+from research.pmvwap_equity import PMVwapEquityResearch
+from research.pmvwap_equity import log as pmveq_log
+from research import pmvwap_report
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -38,6 +41,7 @@ _nifty_sentiments: dict[int, NiftySentiment] = {}
 _market_pulses: dict[int, MarketPulse] = {}
 _signal_generators: dict[int, NiftySignalGenerator] = {}
 _pmvwap_straddles: dict[int, PMVwapStraddleResearch] = {}
+_pmvwap_equities: dict[int, PMVwapEquityResearch] = {}
 _news_sentiment = NewsSentiment()   # shared (public RSS — not per-user)
 
 
@@ -109,6 +113,18 @@ def _get_pmvwap_straddle(broker: Broker, user_id: int) -> PMVwapStraddleResearch
     if eng is None:
         eng = PMVwapStraddleResearch(broker, user_id=user_id)
         _pmvwap_straddles[user_id] = eng
+    else:
+        eng.broker = broker
+        eng.universe.broker = broker
+    eng.user_id = user_id
+    return eng
+
+
+def _get_pmvwap_equity(broker: Broker, user_id: int) -> PMVwapEquityResearch:
+    eng = _pmvwap_equities.get(user_id)
+    if eng is None:
+        eng = PMVwapEquityResearch(broker, user_id=user_id)
+        _pmvwap_equities[user_id] = eng
     else:
         eng.broker = broker
         eng.universe.broker = broker
@@ -627,5 +643,210 @@ async def pmvwap_straddle_log_rows(run_id: str | None = None, date: str | None =
                                    user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "rows": pmvwap_log.fetch_rows(db, user_id, run_id, date)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/pmvwap-straddle/scan")
+async def pmvwap_straddle_scan(payload: dict | None = None,
+                               user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Live-day scan: run today's backtest and APPEND only new signals to a
+    stable per-day live run (rows keep accumulating; no duplicates)."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    today = _date.today().isoformat()
+    run_id = f"live_{today}"
+    try:
+        eng = _get_pmvwap_straddle(broker, user_id)
+        eng._opt_cache.clear()          # today's premiums move — refetch fresh
+        res = eng.backtest((payload or {}).get("overrides"),
+                           symbol=(payload or {}).get("symbol"), start=today, end=today)
+        if res.get("status") == "ok":
+            res["stored_new"] = pmvwap_log.persist_new(db, user_id, run_id, "live", res.get("rows") or [])
+            res["run_id"] = run_id
+        return res
+    except Exception as exc:
+        logger.error("PMVWAP straddle scan failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+# ──────────────── Prev-Month-VWAP Equity-Holding Research (cash, read-only) ────────────────
+
+class PMVEqBacktestRequest(BaseModel):
+    overrides: dict | None = None
+    symbol: str | None = None
+    start: str | None = None
+    end: str | None = None
+    persist: bool = True
+
+
+@router.get("/pmvwap-equity/config")
+async def pmvwap_equity_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_pmvwap_equity(get_user_broker(db, user_id), user_id).load_config()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/pmvwap-equity/config")
+async def pmvwap_equity_config_save(payload: dict | None = None,
+                                    user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_pmvwap_equity(get_user_broker(db, user_id), user_id).save_config(payload or {})}
+    except Exception as exc:
+        logger.error("PMVWAP equity config save failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/pmvwap-equity/universe")
+async def pmvwap_equity_universe(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    try:
+        return _get_pmvwap_equity(broker, user_id).list_universe()
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/pmvwap-equity/backtest")
+async def pmvwap_equity_backtest(payload: PMVEqBacktestRequest | None = None,
+                                 user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated — research needs historical data"}
+    payload = payload or PMVEqBacktestRequest()
+    try:
+        eng = _get_pmvwap_equity(broker, user_id)
+        res = eng.backtest(payload.overrides, symbol=payload.symbol, start=payload.start, end=payload.end)
+        if res.get("status") == "ok" and payload.persist and res.get("rows"):
+            run_id = pmveq_log.new_run_id()
+            res["run_id"] = run_id
+            res["stored"] = pmveq_log.persist_rows(db, user_id, run_id, res["mode"], res["rows"])
+        return res
+    except Exception as exc:
+        logger.error("PMVWAP equity backtest failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/pmvwap-equity/runs")
+async def pmvwap_equity_runs(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "runs": pmveq_log.list_runs(db, user_id)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/pmvwap-equity/log")
+async def pmvwap_equity_log_rows(run_id: str | None = None, date: str | None = None,
+                                 user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "rows": pmveq_log.fetch_rows(db, user_id, run_id, date)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/pmvwap-equity/scan")
+async def pmvwap_equity_scan(payload: dict | None = None,
+                             user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Live-day scan: run today's backtest and APPEND only new holding signals."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    today = _date.today().isoformat()
+    run_id = f"live_{today}"
+    try:
+        eng = _get_pmvwap_equity(broker, user_id)
+        eng._ul_cache.clear()           # today's candles grow — refetch fresh
+        res = eng.backtest((payload or {}).get("overrides"),
+                           symbol=(payload or {}).get("symbol"), start=today, end=today)
+        if res.get("status") == "ok":
+            res["stored_new"] = pmveq_log.persist_new(db, user_id, run_id, "live", res.get("rows") or [])
+            res["run_id"] = run_id
+        return res
+    except Exception as exc:
+        logger.error("PMVWAP equity scan failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+# ──────────────── Research Summary Report + run comparison ────────────────
+
+def _sector_map(db, user_id: int) -> dict:
+    """Best-effort underlying → sector map (large-cap constituents + per-user
+    overrides). Unmapped names fall back to 'Unknown' inside the report."""
+    smap: dict = {}
+    try:
+        from research.nifty_sentiment import DEFAULT_CONSTITUENTS
+        for c in DEFAULT_CONSTITUENTS:
+            smap[c["symbol"]] = c.get("sector", "Unknown")
+    except Exception:
+        pass
+    try:
+        from core.models import SectorOverride
+        for o in db.query(SectorOverride).filter(SectorOverride.user_id == user_id).all():
+            if getattr(o, "tradingsymbol", None) and getattr(o, "sector", None):
+                smap[o.tradingsymbol] = o.sector
+    except Exception:
+        pass
+    return smap
+
+
+class PMVReportRequest(BaseModel):
+    run_id: str | None = None
+    date: str | None = None
+
+
+class PMVCompareRequest(BaseModel):
+    run_a: str
+    run_b: str
+
+
+@router.post("/pmvwap-straddle/report")
+async def pmvwap_straddle_report(payload: PMVReportRequest, user_id: int = Depends(login_required),
+                                 db: Session = Depends(get_db)):
+    try:
+        rows = pmvwap_log.fetch_rows(db, user_id, payload.run_id, payload.date)
+        return {"status": "ok", "count": len(rows),
+                "report": pmvwap_report.build_report(rows, mtm_key="combined_mtm",
+                                                     sector_map=_sector_map(db, user_id))}
+    except Exception as exc:
+        logger.error("PMVWAP straddle report failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/pmvwap-straddle/compare")
+async def pmvwap_straddle_compare(payload: PMVCompareRequest, user_id: int = Depends(login_required),
+                                  db: Session = Depends(get_db)):
+    try:
+        a = pmvwap_log.fetch_rows(db, user_id, payload.run_a)
+        b = pmvwap_log.fetch_rows(db, user_id, payload.run_b)
+        return {"status": "ok", "comparison": pmvwap_report.compare(
+            a, b, mtm_key="combined_mtm", label_a=payload.run_a[:8], label_b=payload.run_b[:8])}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/pmvwap-equity/report")
+async def pmvwap_equity_report(payload: PMVReportRequest, user_id: int = Depends(login_required),
+                               db: Session = Depends(get_db)):
+    try:
+        rows = pmveq_log.fetch_rows(db, user_id, payload.run_id, payload.date)
+        return {"status": "ok", "count": len(rows),
+                "report": pmvwap_report.build_report(rows, mtm_key="mtm",
+                                                     sector_map=_sector_map(db, user_id))}
+    except Exception as exc:
+        logger.error("PMVWAP equity report failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/pmvwap-equity/compare")
+async def pmvwap_equity_compare(payload: PMVCompareRequest, user_id: int = Depends(login_required),
+                                db: Session = Depends(get_db)):
+    try:
+        a = pmveq_log.fetch_rows(db, user_id, payload.run_a)
+        b = pmveq_log.fetch_rows(db, user_id, payload.run_b)
+        return {"status": "ok", "comparison": pmvwap_report.compare(
+            a, b, mtm_key="mtm", label_a=payload.run_a[:8], label_b=payload.run_b[:8])}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}

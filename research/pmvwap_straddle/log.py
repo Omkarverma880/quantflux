@@ -50,6 +50,21 @@ def persist_rows(db, user_id: int, run_id: str, mode: str, rows: list[dict]) -> 
     return n
 
 
+def persist_new(db, user_id: int, run_id: str, mode: str, rows: list[dict]) -> int:
+    """Append only rows not already stored for this run (dedupe key = date +
+    underlying + signal_time). Used by the live-day scan so re-runs don't
+    duplicate signals — rows just keep accumulating as new ones appear."""
+    existing = {
+        (t.trade_date.isoformat(), t.underlying, t.signal_time)
+        for t in db.query(PMVwapStraddleTrade.trade_date, PMVwapStraddleTrade.underlying,
+                          PMVwapStraddleTrade.signal_time)
+                   .filter(PMVwapStraddleTrade.user_id == user_id,
+                           PMVwapStraddleTrade.run_id == run_id).all()
+    }
+    fresh = [r for r in rows if (r["date"], r["underlying"], r.get("time")) not in existing]
+    return persist_rows(db, user_id, run_id, mode, fresh)
+
+
 def list_runs(db, user_id: int, limit: int = 50) -> list[dict]:
     q = (db.query(
             PMVwapStraddleTrade.run_id, PMVwapStraddleTrade.mode,

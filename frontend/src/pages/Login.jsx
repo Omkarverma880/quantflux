@@ -136,10 +136,98 @@ export default function Login() {
   const isLogin = mode === 'login';
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-surface-0 px-4">
-      <div className="w-full max-w-md">
-        {/* Logo */}
-        <div className="text-center mb-8">
+    <div className="min-h-screen flex bg-surface-0">
+      {/* ══ Left hero (desktop only) ══ */}
+      <div className="hidden lg:flex lg:w-[52%] relative overflow-hidden border-r border-surface-3 bg-gradient-to-br from-black via-surface-0 to-surface-1">
+        {/* ambient glows */}
+        <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-brand-500/10 blur-3xl animate-pulse" />
+        <div className="absolute -bottom-20 right-0 w-[30rem] h-[30rem] rounded-full bg-brand-600/10 blur-3xl animate-pulse" style={{ animationDelay: '1.2s' }} />
+        {/* faint grid */}
+        <div
+          className="absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
+            backgroundSize: '42px 42px',
+          }}
+        />
+
+        <div className="relative z-10 flex flex-col justify-between p-12 w-full">
+          {/* Brand */}
+          <div className="flex items-center gap-3">
+            <LogoIcon size={40} className="shadow-lg shadow-brand-500/20" />
+            <span className="text-2xl font-bold bg-gradient-to-r from-brand-400 to-brand-600 bg-clip-text text-transparent">
+              QuantFlux
+            </span>
+          </div>
+
+          {/* Illustration + headline */}
+          <div className="py-8">
+            <div className="flex justify-center mb-10">
+              <svg viewBox="0 0 360 300" className="w-full max-w-md" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <defs>
+                  <linearGradient id="barA" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stopColor="#86efac" />
+                    <stop offset="1" stopColor="#16a34a" />
+                  </linearGradient>
+                  <linearGradient id="barB" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stopColor="#4ade80" />
+                    <stop offset="1" stopColor="#15803d" />
+                  </linearGradient>
+                  <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stopColor="#e5e7eb" />
+                    <stop offset="0.5" stopColor="#9ca3af" />
+                    <stop offset="1" stopColor="#4b5563" />
+                  </linearGradient>
+                  <radialGradient id="glowg" cx="0.5" cy="0.5" r="0.5">
+                    <stop offset="0" stopColor="#22c55e" stopOpacity="0.35" />
+                    <stop offset="1" stopColor="#22c55e" stopOpacity="0" />
+                  </radialGradient>
+                </defs>
+                <ellipse cx="180" cy="150" rx="155" ry="150" fill="url(#glowg)" />
+                {/* orbit ring */}
+                <ellipse cx="180" cy="160" rx="150" ry="54" stroke="url(#ring)" strokeWidth="3" transform="rotate(-18 180 160)" opacity="0.75" />
+                <circle cx="304" cy="118" r="7" fill="url(#ring)" />
+                <circle cx="66" cy="196" r="6" fill="url(#ring)" />
+                {/* bars */}
+                <rect x="118" y="150" width="24" height="60" rx="6" fill="url(#barB)" />
+                <rect x="150" y="95" width="24" height="115" rx="6" fill="url(#barA)" />
+                <rect x="182" y="125" width="24" height="85" rx="6" fill="url(#barB)" />
+                <rect x="214" y="70" width="24" height="140" rx="6" fill="url(#barA)" />
+                <rect x="246" y="140" width="24" height="70" rx="6" fill="url(#barB)" />
+                {/* pedestal */}
+                <ellipse cx="180" cy="214" rx="112" ry="15" fill="#000" opacity="0.55" />
+                <rect x="72" y="209" width="216" height="6" rx="3" fill="#1f2937" />
+              </svg>
+            </div>
+
+            <span className="inline-block px-3 py-1 rounded-full bg-brand-600/15 text-brand-400 text-xs font-semibold border border-brand-500/25">
+              Automated Trading &amp; Research
+            </span>
+            <h2 className="text-4xl font-extrabold leading-tight text-white mt-4">
+              Trade with{' '}
+              <span className="bg-gradient-to-r from-brand-400 to-brand-600 bg-clip-text text-transparent">QuantFlux</span>
+            </h2>
+            <p className="text-gray-400 mt-3 max-w-md leading-relaxed">
+              Automated strategies, deep Option-Chain &amp; VWAP research, backtesting and live risk controls — one precision platform.
+            </p>
+            <div className="flex flex-wrap gap-2 mt-6">
+              {['Automated Strategies', 'VWAP Research', 'Backtesting', 'Risk Analysis'].map((c) => (
+                <span key={c} className="px-3 py-1.5 rounded-lg bg-surface-2 border border-surface-3 text-xs text-gray-300">
+                  {c}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <p className="text-xs text-gray-600">Multi-User Automated Trading System</p>
+        </div>
+      </div>
+
+      {/* ══ Right: form column ══ */}
+      <div className="flex-1 flex items-center justify-center px-4 py-10">
+        <div className="w-full max-w-md">
+        {/* Logo (mobile / compact — hero shows branding on desktop) */}
+        <div className="text-center mb-8 lg:hidden">
           <div className="flex justify-center mb-4">
             <LogoIcon size={56} className="shadow-lg shadow-brand-500/20" />
           </div>
@@ -452,6 +540,7 @@ export default function Login() {
         <p className="text-center text-xs text-gray-600 mt-6">
           QuantFlux · Multi-User Automated Trading
         </p>
+        </div>
       </div>
     </div>
   );

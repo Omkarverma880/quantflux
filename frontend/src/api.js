@@ -415,6 +415,28 @@ export const api = {
   researchPMVwapStraddleRuns: () => request('/research/pmvwap-straddle/runs'),
   researchPMVwapStraddleLog: (runId, date) =>
     request(`/research/pmvwap-straddle/log?${runId ? `run_id=${encodeURIComponent(runId)}` : ''}${date ? `&date=${encodeURIComponent(date)}` : ''}`),
+  researchPMVwapStraddleScan: (body) =>
+    request('/research/pmvwap-straddle/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
+  researchPMVwapStraddleReport: (runId, date) =>
+    request('/research/pmvwap-straddle/report', { method: 'POST', body: JSON.stringify({ run_id: runId || null, date: date || null }) }),
+  researchPMVwapStraddleCompare: (runA, runB) =>
+    request('/research/pmvwap-straddle/compare', { method: 'POST', body: JSON.stringify({ run_a: runA, run_b: runB }) }),
+  // Prev-Month VWAP Equity Holding Research (cash, read-only)
+  researchPMVwapEquityConfig: () => request('/research/pmvwap-equity/config'),
+  researchPMVwapEquityConfigSave: (partial) =>
+    request('/research/pmvwap-equity/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+  researchPMVwapEquityUniverse: () => request('/research/pmvwap-equity/universe'),
+  researchPMVwapEquityBacktest: (body) =>
+    request('/research/pmvwap-equity/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
+  researchPMVwapEquityRuns: () => request('/research/pmvwap-equity/runs'),
+  researchPMVwapEquityLog: (runId, date) =>
+    request(`/research/pmvwap-equity/log?${runId ? `run_id=${encodeURIComponent(runId)}` : ''}${date ? `&date=${encodeURIComponent(date)}` : ''}`),
+  researchPMVwapEquityScan: (body) =>
+    request('/research/pmvwap-equity/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
+  researchPMVwapEquityReport: (runId, date) =>
+    request('/research/pmvwap-equity/report', { method: 'POST', body: JSON.stringify({ run_id: runId || null, date: date || null }) }),
+  researchPMVwapEquityCompare: (runA, runB) =>
+    request('/research/pmvwap-equity/compare', { method: 'POST', body: JSON.stringify({ run_a: runA, run_b: runB }) }),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),

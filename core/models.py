@@ -361,3 +361,33 @@ class PMVwapStraddleTrade(Base):
         Index("idx_pmvwap_user_run", "user_id", "run_id"),
         Index("idx_pmvwap_user_date", "user_id", "trade_date"),
     )
+
+
+class PMVwapEquityTrade(Base):
+    """Append-only research log for the Prev-Month-VWAP Equity-Holding Research.
+
+    One row per simulated equity holding (never overwritten), grouped by
+    ``run_id`` for run comparison and live-day appends. Purely virtual — no
+    order is ever placed. Auto-created at startup via ``create_all``.
+    """
+    __tablename__ = "pmvwap_equity_trades"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    run_id = Column(String(40), nullable=False)
+    mode = Column(String(10))                            # single | multi | live
+    trade_date = Column(Date, nullable=False)
+    signal_time = Column(String(10))
+    underlying = Column(String(40), nullable=False)
+    entry_price = Column(Numeric(12, 2))
+    exit_price = Column(Numeric(12, 2))
+    mtm = Column(Numeric(14, 2))
+    return_pct = Column(Numeric(8, 2))
+    status = Column(String(20), default="CLOSED")
+    data = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("idx_pmveq_user_run", "user_id", "run_id"),
+        Index("idx_pmveq_user_date", "user_id", "trade_date"),
+    )

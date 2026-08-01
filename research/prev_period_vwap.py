@@ -153,6 +153,33 @@ def _round(v: Optional[float]) -> Optional[float]:
 
 # ── Crossing detectors (Pine crossover/crossunder semantics) ──────────────
 
+def daily_gap_map(candles: list[dict]) -> dict:
+    """Per-day open-gap % = (day open − previous day's close) / prev close × 100.
+
+    Used by the research Summary Report for gap-up vs gap-down analysis. Keyed
+    by ``date``; the first session in the set has no prior close → omitted.
+    """
+    first_open: dict = {}
+    last_close: dict = {}
+    order: list = []
+    for c in candles:
+        dt = _candle_dt(c)
+        if dt is None:
+            continue
+        d = dt.date()
+        if d not in first_open:
+            first_open[d] = float(c["open"])
+            order.append(d)
+        last_close[d] = float(c["close"])
+    gaps: dict = {}
+    for i in range(1, len(order)):
+        prev_c = last_close.get(order[i - 1])
+        op = first_open.get(order[i])
+        if prev_c:
+            gaps[order[i]] = round((op - prev_c) / prev_c * 100.0, 2)
+    return gaps
+
+
 def crossed_up(prev_close: Optional[float], cur_high: float, cur_close: float,
                level: Optional[float], buffer: float = 0.0) -> bool:
     """True when a bar touches/crosses ``level`` from BELOW.

@@ -33,6 +33,7 @@ import NiftySentiment from './pages/research/NiftySentiment';
 import MarketDashboard from './pages/research/MarketDashboard';
 import NiftySignalGenerator from './pages/research/NiftySignalGenerator';
 import PMVwapStraddle from './pages/research/PMVwapStraddle';
+import PMVwapEquity from './pages/research/PMVwapEquity';
 
 export default function App() {
   const { isAuthenticated } = useAuth();
@@ -70,6 +71,7 @@ export default function App() {
           <Route path="research/nifty-sentiment" element={<NiftySentiment />} />
           <Route path="research/nifty-signal-generator" element={<NiftySignalGenerator />} />
           <Route path="research/pmvwap-straddle" element={<PMVwapStraddle />} />
+          <Route path="research/pmvwap-equity" element={<PMVwapEquity />} />
           <Route path="research/market-dashboard" element={<MarketDashboard />} />
           <Route path="portfolio" element={<PortfolioAnalytics />} />
           <Route path="portfolio/analytics-world" element={<AnalyticsWorld />} />
