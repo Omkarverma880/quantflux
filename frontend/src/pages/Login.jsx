@@ -136,7 +136,7 @@ export default function Login() {
   const isLogin = mode === 'login';
 
   return (
-    <div className="min-h-screen flex relative overflow-hidden bg-gradient-to-br from-black via-[#050807] to-surface-1">
+    <div className="h-screen flex relative overflow-hidden bg-gradient-to-br from-black via-[#050807] to-surface-1">
       {/* Ambient glows + grid span the whole page — one cohesive canvas, no hard seam */}
       <div className="absolute -top-32 -left-24 w-[32rem] h-[32rem] rounded-full bg-brand-500/10 blur-3xl animate-pulse pointer-events-none" />
       <div className="absolute top-1/3 left-[46%] -translate-x-1/2 w-[38rem] h-[38rem] rounded-full bg-brand-600/10 blur-3xl animate-pulse pointer-events-none" style={{ animationDelay: '1.2s' }} />
@@ -150,7 +150,7 @@ export default function Login() {
 
       {/* ══ Left hero (desktop only) ══ */}
       <div className="hidden lg:flex lg:w-[54%] relative z-10">
-        <div className="flex flex-col justify-between p-12 w-full">
+        <div className="flex flex-col justify-between p-10 w-full h-full overflow-hidden">
           {/* Devotional blessing — ✦ divider above and below */}
           <div className="text-center">
             <div className="flex items-center justify-center gap-3 mb-3">
@@ -168,10 +168,9 @@ export default function Login() {
             </div>
           </div>
 
-          {/* Illustration + headline */}
-          <div className="py-8">
-            <div className="flex justify-center mb-10">
-              <svg viewBox="0 0 400 360" className="w-full max-w-md drop-shadow-2xl" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          {/* Illustration — flexes to fill remaining height so the page never scrolls */}
+          <div className="flex-1 min-h-0 flex items-center justify-center py-3">
+            <svg viewBox="0 0 400 360" className="h-full w-auto max-h-[42vh] drop-shadow-2xl" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <defs>
                   <linearGradient id="qfGreenF" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0" stopColor="#bbf7d0" />
@@ -257,19 +256,21 @@ export default function Login() {
                 <circle cx="112" cy="250" r="10" fill="url(#qfSphere)" />
                 <circle cx="322" cy="232" r="8" fill="url(#qfSphere)" />
               </svg>
-            </div>
+          </div>
 
+          {/* Headline */}
+          <div className="shrink-0">
             <span className="inline-block px-3 py-1 rounded-full bg-brand-600/15 text-brand-400 text-xs font-semibold border border-brand-500/25">
               Automated Trading &amp; Research
             </span>
-            <h2 className="text-4xl font-extrabold leading-tight text-white mt-4">
+            <h2 className="text-3xl xl:text-4xl font-extrabold leading-tight text-white mt-3">
               Trade with{' '}
               <span className="bg-gradient-to-r from-brand-400 to-brand-600 bg-clip-text text-transparent">QuantFlux</span>
             </h2>
-            <p className="text-gray-400 mt-3 max-w-md leading-relaxed">
+            <p className="text-sm text-gray-400 mt-2 max-w-md leading-relaxed">
               Automated strategies, deep Option-Chain &amp; VWAP research, backtesting and live risk controls — one precision platform.
             </p>
-            <div className="flex flex-wrap gap-2 mt-6">
+            <div className="flex flex-wrap gap-2 mt-4">
               {['Automated Strategies', 'VWAP Research', 'Backtesting', 'Risk Analysis'].map((c) => (
                 <span key={c} className="px-3 py-1.5 rounded-lg bg-surface-2 border border-surface-3 text-xs text-gray-300">
                   {c}
@@ -277,14 +278,12 @@ export default function Login() {
               ))}
             </div>
           </div>
-
-          <p className="text-xs text-gray-600">Multi-User Automated Trading System</p>
         </div>
       </div>
 
       {/* ══ Right: sign-in column ══ */}
-      <div className="flex-1 flex items-center justify-center px-4 py-10 relative z-10">
-        <div className="w-full max-w-md">
+      <div className="flex-1 flex justify-center overflow-y-auto px-4 relative z-10">
+        <div className="w-full max-w-md my-auto py-8">
           {/* Devotional blessing (mobile only — hero shows it on desktop) */}
           <div className="text-center mb-6 lg:hidden">
             <div className="flex items-center justify-center gap-3 mb-2">
