@@ -19,6 +19,8 @@ from typing import Optional
 from core.broker import Broker
 from core.logger import get_logger
 from research.prev_period_vwap import compute_prev_period_vwaps, _candle_dt, daily_gap_map
+from research import costs
+from research.portfolio_sim import simulate_portfolio
 from research.pmvwap_straddle.universe import Universe
 from research.pmvwap_equity import calculations as calc
 from research.pmvwap_equity.config import load_config, save_config, sanitize
@@ -76,7 +78,7 @@ class PMVwapEquityResearch:
 
     def backtest_stock(self, name: str, days: list[date], cfg: dict) -> list[dict]:
         tf = cfg["timeframe"]
-        token = self.universe.nse_token(name)
+        token, _exch = self.universe.resolve_equity_token(name)   # any NSE or BSE equity
         if not token:
             return []
         # History for VWAP + forward room for the holding to reach its exit.
@@ -105,24 +107,35 @@ class PMVwapEquityResearch:
                     entry_price, forward, target_pct=float(cfg["target_pct"]),
                     stop_pct=float(cfg["stop_pct"]), max_hold_days=int(cfg["max_hold_days"]),
                     exit_on=cfg["exit_on"], qty=qty, entry_day=day)
+                # Net-of-costs: brokerage + STT + slippage on a round-trip delivery trade.
+                cap = round(entry_price * qty, 2)
+                gross = sim["mtm"]
+                cost = 0.0
+                if cfg.get("apply_costs"):
+                    cost = costs.roundtrip_cost(entry_price, sim["exit_price"], qty,
+                                                **costs.cost_config(cfg, "equity"))
+                net = round(gross - cost, 2)
+                use_net = bool(cfg.get("apply_costs"))
                 rows.append({
                     "research_id": RESEARCH_ID,
                     "date": day.isoformat(), "time": entry_dt.strftime("%H:%M"),
                     "underlying": name, "entry_price": entry_price,
                     "prev_month_vwap": sig["prev_month_vwap"], "prev_week_vwap": sig["prev_week_vwap"],
-                    "direction": sig["direction"], "qty": qty,
-                    "capital": round(entry_price * qty, 2),
+                    "direction": sig["direction"], "qty": qty, "capital": cap,
                     "target_price": sim["target_price"], "stop_price": sim["stop_price"],
                     "exit_price": sim["exit_price"], "exit_date": sim["exit_date"],
                     "exit_time": sim["exit_time"], "exit_reason": sim["exit_reason"],
-                    "hold_days": sim["hold_days"], "return_pct": sim["return_pct"],
-                    "mtm": sim["mtm"], "status": sim["status"],
+                    "hold_days": sim["hold_days"],
+                    "return_pct": round(net / cap * 100.0, 2) if (use_net and cap) else sim["return_pct"],
+                    "mtm": net if use_net else gross,
+                    "gross_mtm": gross, "cost": cost, "status": sim["status"],
                     "gap_pct": gaps.get(day),
                     "notes": f"green {'>' if sig['prev_week_vwap'] and sig['prev_week_vwap'] > sig['prev_month_vwap'] else '<='} purple",
                 })
         return rows
 
     def backtest(self, overrides: Optional[dict] = None, *, symbol: Optional[str] = None,
+                 symbols: Optional[list[str]] = None,
                  start: Optional[str] = None, end: Optional[str] = None) -> dict:
         with self._lock:
             cfg = sanitize({**self.load_config(), **(overrides or {})})
@@ -137,10 +150,16 @@ class PMVwapEquityResearch:
             if not days:
                 return {"status": "error", "message": "No trading days in range."}
 
-            if symbol:
-                names = [symbol.upper()]
-            else:
+            if symbol:                                   # single stock
+                names, mode = [symbol.strip().upper()], "single"
+            elif symbols:                                # watchlist
+                names = [str(x).strip().upper() for x in symbols if str(x).strip()]
+                mode = "watchlist"
+                if int(cfg["max_stocks"]) > 0:
+                    names = names[: int(cfg["max_stocks"])]
+            else:                                        # whole F&O universe
                 names = [x["name"] for x in self.universe.equities()]
+                mode = "multi"
                 if int(cfg["max_stocks"]) > 0:
                     names = names[: int(cfg["max_stocks"])]
             if not names:
@@ -158,13 +177,19 @@ class PMVwapEquityResearch:
 
             rows.sort(key=lambda r: (r["date"], r["time"], r["underlying"]))
             stats = self._stats(rows)
+            # Portfolio overlay — true ROI on a fixed, recycled capital pool.
+            portfolio = None
+            if bool(cfg.get("portfolio_mode")) and rows:
+                portfolio = simulate_portfolio(
+                    rows, pool=float(cfg["portfolio_capital"]), max_concurrent=int(cfg["max_concurrent"]))
             logger.info("PMVWAP equity backtest: %d holdings across %d stocks / %d days | %dms",
                         len(rows), scanned, len(days), int((_time.monotonic() - t0) * 1000))
             return {
                 "status": "ok", "research_id": RESEARCH_ID,
-                "mode": "single" if symbol else "multi", "symbol": symbol,
+                "mode": mode, "symbol": symbol,
                 "start": s.isoformat(), "end": e.isoformat(),
                 "stocks_scanned": scanned, "config": cfg, "stats": stats, "rows": rows,
+                "portfolio": portfolio,
                 "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
 
@@ -180,7 +205,7 @@ class PMVwapEquityResearch:
         n = len(rows)
         if not n:
             return {"total_signals": 0, "win_rate": 0.0, "wins": 0, "losses": 0,
-                    "total_mtm": 0.0, "avg_return_pct": 0.0, "avg_hold_days": 0.0,
+                    "total_mtm": 0.0, "total_cost": 0.0, "avg_return_pct": 0.0, "avg_hold_days": 0.0,
                     "highest_winner": 0.0, "largest_drawdown": 0.0, "open": 0,
                     "total_capital": 0.0, "avg_capital": 0.0, "roi_pct": 0.0}
         wins = [r for r in rows if r["mtm"] > 0]
@@ -189,10 +214,11 @@ class PMVwapEquityResearch:
         # Total capital deployed across all holdings (sum of each trade's entry ×
         # qty) and the overall return on that capital for the tested period.
         total_capital = sum(float(r.get("capital") or 0) for r in rows)
+        total_cost = sum(float(r.get("cost") or 0) for r in rows)
         return {
             "total_signals": n, "wins": len(wins), "losses": n - len(wins),
             "win_rate": round(len(wins) / n * 100.0, 1),
-            "total_mtm": round(total_mtm, 2),
+            "total_mtm": round(total_mtm, 2), "total_cost": round(total_cost, 2),
             "avg_return_pct": round(sum(r["return_pct"] for r in rows) / n, 2),
             "avg_hold_days": round(sum(r["hold_days"] for r in rows) / n, 1),
             "highest_winner": round(max(mtms), 2),

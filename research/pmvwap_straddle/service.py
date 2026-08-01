@@ -25,6 +25,7 @@ from typing import Optional
 from core.broker import Broker
 from core.logger import get_logger
 from research.prev_period_vwap import compute_prev_period_vwaps, _candle_dt, daily_gap_map
+from research import costs
 from research.pmvwap_straddle import calculations as calc
 from research.pmvwap_straddle.config import load_config, save_config, sanitize
 from research.pmvwap_straddle.constants import (
@@ -178,6 +179,16 @@ class PMVwapStraddleResearch:
             last = max(datetime.strptime(t, "%H:%M").time() for t in exits)
             signal_age = int((datetime.combine(day, last) - entry_dt).total_seconds() // 60)
 
+        # Net-of-costs: brokerage + STT + slippage on each option leg (buy+sell).
+        gross_comb = sim["combined_mtm"]
+        cost = 0.0
+        if cfg.get("apply_costs"):
+            cc = costs.cost_config(cfg, "option")
+            cost = round(costs.roundtrip_cost(ce_entry, sim["ce_exit"], int(lot or 0), **cc)
+                         + costs.roundtrip_cost(pe_entry, sim["pe_exit"], int(lot or 0), **cc), 2)
+        use_net = bool(cfg.get("apply_costs"))
+        net_comb = round(gross_comb - cost, 2)
+
         return {
             "research_id": RESEARCH_ID,
             "date": day.isoformat(),
@@ -195,7 +206,9 @@ class PMVwapStraddleResearch:
             "ce_exit_reason": sim["ce_exit_reason"], "pe_exit_reason": sim["pe_exit_reason"],
             "combined_premium": sim["combined_entry"],
             "target_premium": sim["target_premium"],
-            "ce_mtm": sim["ce_mtm"], "pe_mtm": sim["pe_mtm"], "combined_mtm": sim["combined_mtm"],
+            "ce_mtm": sim["ce_mtm"], "pe_mtm": sim["pe_mtm"],
+            "combined_mtm": net_comb if use_net else gross_comb,
+            "gross_combined_mtm": gross_comb, "cost": cost,
             "targets_hit": sim["targets_hit"],
             "status": sim["status"],
             "signal_age": signal_age,
@@ -217,6 +230,7 @@ class PMVwapStraddleResearch:
 
     # ── top-level backtest (single stock or whole universe) ──
     def backtest(self, overrides: Optional[dict] = None, *, symbol: Optional[str] = None,
+                 symbols: Optional[list[str]] = None,
                  start: Optional[str] = None, end: Optional[str] = None) -> dict:
         with self._lock:
             cfg = sanitize({**self.load_config(), **(overrides or {})})
@@ -231,11 +245,17 @@ class PMVwapStraddleResearch:
             if not days:
                 return {"status": "error", "message": "No trading days in the selected range."}
 
-            if symbol:
-                names = [symbol.upper()]
-            else:
+            if symbol:                                   # single stock
+                names, mode = [symbol.strip().upper()], "single"
+            elif symbols:                                # watchlist (user-curated → no filters)
+                names = [str(x).strip().upper() for x in symbols if str(x).strip()]
+                mode = "watchlist"
+                if int(cfg["max_stocks"]) > 0:
+                    names = names[: int(cfg["max_stocks"])]
+            else:                                        # whole F&O universe (+ filters)
                 names = [x["name"] for x in self.universe.equities()]
                 names = self._apply_universe_filters(names, cfg)
+                mode = "multi"
                 if int(cfg["max_stocks"]) > 0:
                     names = names[: int(cfg["max_stocks"])]
             if not names:
@@ -261,7 +281,7 @@ class PMVwapStraddleResearch:
                         len(rows), scanned, len(days), int((_time.monotonic() - t0) * 1000))
             return {
                 "status": "ok", "research_id": RESEARCH_ID,
-                "mode": "single" if symbol else "multi",
+                "mode": mode,
                 "symbol": symbol, "start": s.isoformat(), "end": e.isoformat(),
                 "stocks_scanned": scanned, "config": cfg,
                 "stats": stats, "rows": rows,
@@ -322,7 +342,7 @@ class PMVwapStraddleResearch:
             return {"total_signals": 0, "win_rate": 0.0, "wins": 0, "losses": 0,
                     "avg_combined_premium": 0.0, "avg_time_to_target": None,
                     "highest_winner": 0.0, "largest_drawdown": 0.0, "total_mtm": 0.0,
-                    "full_exit": 0, "half_exit": 0}
+                    "total_cost": 0.0, "full_exit": 0, "half_exit": 0}
         wins = [r for r in rows if r["combined_mtm"] > 0]
         ages = [r["signal_age"] for r in rows if r.get("signal_age") is not None and r["targets_hit"] > 0]
         mtms = [r["combined_mtm"] for r in rows]
@@ -335,6 +355,7 @@ class PMVwapStraddleResearch:
             "highest_winner": round(max(mtms), 2),
             "largest_drawdown": round(min(mtms), 2),
             "total_mtm": round(sum(mtms), 2),
+            "total_cost": round(sum(float(r.get("cost") or 0) for r in rows), 2),
             "full_exit": sum(1 for r in rows if r["status"] == calc.STATE_FULL),
             "half_exit": sum(1 for r in rows if r.get("targets_hit") == 1),
         }

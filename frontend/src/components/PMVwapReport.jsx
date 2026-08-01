@@ -73,6 +73,33 @@ function Histogram({ bins }) {
   );
 }
 
+function EquityCurve({ curve }) {
+  if (!curve || curve.length < 2) return null;
+  const w = 600, h = 150, pad = 10;
+  const ys = curve.map((p) => p.pnl);
+  const min = Math.min(0, ...ys), max = Math.max(0, ...ys);
+  const span = (max - min) || 1;
+  const x = (i) => pad + (i / (curve.length - 1)) * (w - 2 * pad);
+  const y = (v) => h - pad - ((v - min) / span) * (h - 2 * pad);
+  const pts = curve.map((p, i) => `${x(i).toFixed(1)},${y(p.pnl).toFixed(1)}`).join(' ');
+  const area = `${x(0).toFixed(1)},${y(0).toFixed(1)} ${pts} ${x(curve.length - 1).toFixed(1)},${y(0).toFixed(1)}`;
+  const last = ys[ys.length - 1];
+  const col = last >= 0 ? '#10b981' : '#ef4444';
+  return (
+    <div className="bg-surface-2 border border-surface-3 rounded-xl p-3">
+      <div className="text-xs font-semibold text-gray-200 mb-2">Equity Curve — cumulative realised P&amp;L</div>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" preserveAspectRatio="none">
+        <line x1="0" y1={y(0)} x2={w} y2={y(0)} stroke="#374151" strokeWidth="1" strokeDasharray="3 3" />
+        <polygon points={area} fill={col} opacity="0.12" />
+        <polyline points={pts} fill="none" stroke={col} strokeWidth="2" />
+      </svg>
+      <div className="flex justify-between text-[10px] text-gray-600 mt-1">
+        <span>{curve[0].t}</span><span>{curve[curve.length - 1].t}</span>
+      </div>
+    </div>
+  );
+}
+
 function Heatmap({ heatmap }) {
   if (!heatmap?.rows?.length) return null;
   const all = heatmap.rows.flatMap((r) => r.cells.map((c) => Math.abs(c.total_mtm)));
@@ -114,8 +141,8 @@ function exportXls(filename, report) {
   const rank = (items) => items.map((x) => [x.key, x.signals, x.win_rate, x.total_mtm]);
   const html =
     `<html><head><meta charset="utf-8"></head><body>` +
-    tbl('Overall', ['Signals', 'Win %', 'Capital Used', 'Total MTM', 'ROI on Capital %', 'Avg MTM', 'Best', 'Worst', 'Profit Factor'],
-        [[o.signals, o.win_rate, o.total_capital, o.total_mtm, o.roi_pct, o.avg_mtm, o.best, o.worst, o.profit_factor]]) +
+    tbl('Overall', ['Signals', 'Win %', 'Capital Used', 'Total MTM', 'ROI on Capital %', 'CAGR %', 'Max Drawdown %', 'NIFTY B&H %', 'Avg MTM', 'Best', 'Worst', 'Profit Factor'],
+        [[o.signals, o.win_rate, o.total_capital, o.total_mtm, o.roi_pct, report.cagr_pct, report.max_drawdown_pct, report.benchmark?.return_pct ?? '', o.avg_mtm, o.best, o.worst, o.profit_factor]]) +
     tbl('Stock Ranking', ['Stock', 'Signals', 'Win %', 'Total MTM'], rank(report.stock_ranking)) +
     tbl('Day of Week', ['Day', 'Signals', 'Win %', 'Total MTM'], rank(report.day_of_week)) +
     tbl('Time of Day', ['Slot', 'Signals', 'Win %', 'Total MTM'], rank(report.time_of_day)) +
@@ -205,9 +232,27 @@ export default function PMVwapReport({ kind }) {
             {o.total_capital > 0 && <Stat label="ROI on Capital" value={`${o.roi_pct}%`} tone={o.roi_pct >= 0 ? 'up' : 'down'} />}
             <Stat label="Avg MTM" value={NUM(o.avg_mtm)} tone={o.avg_mtm >= 0 ? 'up' : 'down'} />
             <Stat label="Profit Factor" value={o.profit_factor} tone={o.profit_factor >= 1 ? 'up' : 'down'} />
+            <Stat label="Max Drawdown" value={`${report.max_drawdown_pct}%`} tone="down" />
+            {report.cagr_pct != null && <Stat label="CAGR" value={`${report.cagr_pct}%`} tone={report.cagr_pct >= 0 ? 'up' : 'down'} />}
             <Stat label="Best" value={NUM(o.best)} tone="up" />
             <Stat label="Worst" value={NUM(o.worst)} tone="down" />
           </div>
+
+          {/* Benchmark vs strategy */}
+          {report.benchmark && (
+            <div className="bg-surface-2 border border-surface-3 rounded-xl px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+              <span className="text-gray-400">{report.benchmark.label} <strong className={report.benchmark.return_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}>{report.benchmark.return_pct}%</strong></span>
+              {o.total_capital > 0 && (
+                <span className="text-gray-400">Strategy ROI on capital <strong className={o.roi_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}>{o.roi_pct}%</strong></span>
+              )}
+              {o.total_capital > 0 && (
+                <span className="text-gray-400">Edge vs NIFTY <strong className={(o.roi_pct - report.benchmark.return_pct) >= 0 ? 'text-emerald-400' : 'text-red-400'}>{NUM(o.roi_pct - report.benchmark.return_pct)}%</strong></span>
+              )}
+              <span className="text-gray-600 text-xs">{report.benchmark.start} → {report.benchmark.end}</span>
+            </div>
+          )}
+
+          <EquityCurve curve={report.equity_curve} />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <Histogram bins={report.pnl_distribution} />

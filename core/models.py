@@ -391,3 +391,26 @@ class PMVwapEquityTrade(Base):
         Index("idx_pmveq_user_run", "user_id", "run_id"),
         Index("idx_pmveq_user_date", "user_id", "trade_date"),
     )
+
+
+class ResearchWatchlist(Base):
+    """User-defined watchlist for the research modules (shared across them).
+
+    A named list of equity symbols the user can backtest instead of the whole
+    F&O universe. Editable from the UI or via file upload/download, and stored
+    durably so it survives restarts. Auto-created at startup via ``create_all``.
+    """
+    __tablename__ = "research_watchlists"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(80), nullable=False)
+    symbols = Column(JSONB, nullable=False, default=list)     # list[str] of tradingsymbols
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_research_watchlist"),
+        Index("idx_research_watchlist_user", "user_id"),
+    )

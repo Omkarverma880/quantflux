@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { api } from '../../api';
 import PMVwapReport from '../../components/PMVwapReport';
+import WatchlistBar from '../../components/WatchlistBar';
 
 const selCls =
   'bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60';
@@ -43,8 +44,7 @@ function Stat({ label, value, tone }) {
 
 export default function PMVwapEquity() {
   const [cfg, setCfg] = useState(null);
-  const [mode, setMode] = useState('single');
-  const [symbol, setSymbol] = useState('');
+  const [sel, setSel] = useState({ mode: 'all', symbol: null, symbols: null });
   const [universe, setUniverse] = useState([]);
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
@@ -64,31 +64,36 @@ export default function PMVwapEquity() {
   useEffect(() => {
     api.researchPMVwapEquityConfig().then((r) => { if (r.status === 'ok') setCfg(r.config); }).catch(() => setCfg({}));
     api.researchPMVwapEquityUniverse()
-      .then((r) => { if (r.status === 'ok') { setUniverse(r.stocks || []); if (r.stocks?.[0]) setSymbol(r.stocks[0].name); } })
+      .then((r) => { if (r.status === 'ok') setUniverse(r.stocks || []); })
       .catch(() => {});
   }, []);
 
   const runBacktest = useCallback(async () => {
     if (!cfg) return;
-    if (mode === 'single' && !symbol) { showErr('Pick a stock'); return; }
+    if (sel.mode === 'single' && !sel.symbol) { showErr('Type a stock symbol'); return; }
+    if (sel.mode === 'watchlist' && !(sel.symbols?.length)) { showErr('Selected watchlist is empty'); return; }
     setLoading(true); setData(null);
     try {
       const res = await api.researchPMVwapEquityBacktest({
-        overrides: cfg, symbol: mode === 'single' ? symbol : null,
+        overrides: cfg, symbol: sel.mode === 'single' ? sel.symbol : null,
+        symbols: sel.mode === 'watchlist' ? sel.symbols : null,
         start: start || null, end: end || start || null, persist: true,
       });
       if (res.status === 'ok') setData(res); else showErr(res.message || 'Backtest failed');
     } catch (e) { showErr(e.message || 'Backtest failed'); }
     finally { setLoading(false); }
-  }, [cfg, mode, symbol, start, end]);
+  }, [cfg, sel, start, end]);
 
   const liveScan = useCallback(async () => {
     if (!cfg) return;
     try {
-      const res = await api.researchPMVwapEquityScan({ overrides: cfg, symbol: mode === 'single' ? symbol : null });
+      const res = await api.researchPMVwapEquityScan({
+        overrides: cfg, symbol: sel.mode === 'single' ? sel.symbol : null,
+        symbols: sel.mode === 'watchlist' ? sel.symbols : null,
+      });
       if (res.status === 'ok') setData(res);
     } catch { /* keep prior data on transient errors */ }
-  }, [cfg, mode, symbol]);
+  }, [cfg, sel]);
 
   useEffect(() => {
     if (timer.current) clearInterval(timer.current);
@@ -159,19 +164,7 @@ export default function PMVwapEquity() {
       {tab === 'report' ? <PMVwapReport kind="equity" /> : (<>
       <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-lg overflow-hidden border border-surface-4">
-            {['single', 'multi'].map((m) => (
-              <button key={m} onClick={() => setMode(m)}
-                className={`px-3 py-1.5 text-xs font-semibold ${mode === m ? 'bg-brand-600 text-white' : 'bg-surface-3 text-gray-400'}`}>
-                {m === 'single' ? 'Single Stock' : `All F&O (${universe.length})`}
-              </button>
-            ))}
-          </div>
-          {mode === 'single' && (
-            <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className={selCls}>
-              {universe.map((u) => <option key={u.name} value={u.name}>{u.name}</option>)}
-            </select>
-          )}
+          <WatchlistBar universe={universe} count={universe.length} onChange={setSel} />
           <div><label className={lbl}>From</label><input type="date" value={start} onChange={(e) => setStart(e.target.value)} className={selCls} /></div>
           <div><label className={lbl}>To</label><input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className={selCls} /></div>
           <button onClick={runBacktest} disabled={loading || live}
@@ -212,6 +205,21 @@ export default function PMVwapEquity() {
             <input type="checkbox" checked={cfg.one_signal_per_day} onChange={(e) => patch('one_signal_per_day', e.target.checked)} className="accent-brand-500" /> One signal/day
           </label>
         </div>
+
+        {/* Realistic costs + portfolio pool */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-2 border-t border-surface-3 items-end">
+          <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+            <input type="checkbox" checked={cfg.apply_costs} onChange={(e) => patch('apply_costs', e.target.checked)} className="accent-brand-500" /> Net of costs
+          </label>
+          <div><label className={lbl}>Slippage (bps)</label>{num('slippage_bps', 0, 1)}</div>
+          <div><label className={lbl}>Brokerage/order</label>{num('brokerage_per_order', 0, 1)}</div>
+          <div><label className={lbl}>Charges %</label>{num('charges_pct', 0, 0.01)}</div>
+          <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+            <input type="checkbox" checked={cfg.portfolio_mode} onChange={(e) => patch('portfolio_mode', e.target.checked)} className="accent-brand-500" /> Portfolio pool
+          </label>
+          <div><label className={lbl}>Pool Capital</label>{num('portfolio_capital', 0, 10000)}</div>
+          <div><label className={lbl}>Max Concurrent</label>{num('max_concurrent', 1, 1)}</div>
+        </div>
       </div>
 
       {s && (
@@ -227,6 +235,23 @@ export default function PMVwapEquity() {
           <Stat label="Best" value={NUM(s.highest_winner)} tone="up" />
           <Stat label="Worst" value={NUM(s.largest_drawdown)} tone="down" />
           <Stat label="Still Open" value={INT(s.open)} />
+          {cfg.apply_costs && <Stat label="Total Costs" value={NUM(s.total_cost)} tone="down" />}
+        </div>
+      )}
+
+      {/* Portfolio pool result (fixed capital, recycled, max concurrent) */}
+      {data?.portfolio && (
+        <div className="bg-surface-2 border border-brand-500/25 rounded-xl p-3">
+          <div className="text-xs font-semibold text-brand-300 mb-2">Portfolio Pool — ₹{NUM(data.portfolio.pool, 0)} · max {data.portfolio.max_concurrent} concurrent · ₹{NUM(data.portfolio.alloc_per_trade, 0)}/trade</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+            <Stat label="Taken" value={INT(data.portfolio.trades_taken)} />
+            <Stat label="Skipped" value={INT(data.portfolio.trades_skipped)} />
+            <Stat label="Net P&L" value={NUM(data.portfolio.total_pnl)} tone={data.portfolio.total_pnl >= 0 ? 'up' : 'down'} />
+            <Stat label="Final Equity" value={`₹${NUM(data.portfolio.final_equity, 0)}`} />
+            <Stat label="Portfolio ROI" value={`${data.portfolio.roi_pct}%`} tone={data.portfolio.roi_pct >= 0 ? 'up' : 'down'} />
+            <Stat label="CAGR" value={data.portfolio.cagr_pct == null ? '—' : `${data.portfolio.cagr_pct}%`} tone={(data.portfolio.cagr_pct || 0) >= 0 ? 'up' : 'down'} />
+            <Stat label="Max Drawdown" value={`${data.portfolio.max_drawdown_pct}%`} tone="down" />
+          </div>
         </div>
       )}
 

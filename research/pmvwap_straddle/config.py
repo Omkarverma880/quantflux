@@ -40,6 +40,11 @@ DEFAULT_CONFIG: dict = {
     "high_vol_only": False,
     "high_vol_metric": "atr_pct",         # atr_pct | range_pct
     "high_vol_threshold": 3.0,            # % threshold
+    # ── realistic costs (net-of-costs toggle) ──
+    "apply_costs": False,                 # net premium P&L after brokerage + STT + slippage
+    "slippage_bps": 20.0,                 # per side, on premium
+    "brokerage_per_order": 20.0,          # ₹ per order (4 orders per straddle)
+    "charges_pct": 0.10,                  # STT+exchange+GST, % of premium turnover
     # ── performance / display ──
     "max_stocks": 0,                      # 0 = all; cap for multi-scan
     "scan_interval": 60,                  # live poll seconds (3–600)
@@ -49,7 +54,8 @@ DEFAULT_CONFIG: dict = {
 
 _NUM_KEYS = {"target_pct", "vwap_buffer", "history_days", "min_price", "max_price",
              "min_volume", "min_adv", "min_atr", "min_atr_pct", "high_vol_threshold",
-             "max_stocks", "scan_interval", "per_stock_budget_ms"}
+             "max_stocks", "scan_interval", "per_stock_budget_ms",
+             "slippage_bps", "brokerage_per_order", "charges_pct"}
 
 
 def sanitize(cfg: dict) -> dict:
@@ -71,7 +77,7 @@ def sanitize(cfg: dict) -> dict:
         out["high_vol_metric"] = "atr_pct"
     if not isinstance(out["sectors"], list):
         out["sectors"] = []
-    for b in ("one_signal_per_day", "ignore_ban", "high_vol_only", "lot_size_display"):
+    for b in ("one_signal_per_day", "ignore_ban", "high_vol_only", "lot_size_display", "apply_costs"):
         out[b] = bool(out[b])
     return out
 

@@ -39,13 +39,24 @@ DEFAULT_CONFIG: dict = {
     "min_price": 0, "max_price": 0, "min_volume": 0,
     "sectors": [], "ignore_ban": True,
     "high_vol_only": False, "high_vol_metric": "atr_pct", "high_vol_threshold": 3.0,
+    # ── realistic costs (net-of-costs toggle) ──
+    "apply_costs": False,                   # net P&L after brokerage + STT + slippage
+    "slippage_bps": 5.0,                    # per side
+    "brokerage_per_order": 0.0,             # ₹ per order (delivery often free)
+    "charges_pct": 0.12,                    # STT+exchange+SEBI+stamp+GST, % of turnover
+    # ── portfolio capital model (true ROI on a fixed pool) ──
+    "portfolio_mode": False,
+    "portfolio_capital": 1000000,           # ₹ pool
+    "max_concurrent": 10,                   # max simultaneous holdings
     # ── performance / display ──
     "max_stocks": 0, "scan_interval": 60,
 }
 
 _INT_KEYS = {"history_days", "capital_per_trade", "fixed_qty", "max_hold_days",
-             "min_price", "max_price", "min_volume", "max_stocks", "scan_interval"}
-_FLOAT_KEYS = {"vwap_buffer", "target_pct", "stop_pct", "high_vol_threshold"}
+             "min_price", "max_price", "min_volume", "max_stocks", "scan_interval",
+             "portfolio_capital", "max_concurrent"}
+_FLOAT_KEYS = {"vwap_buffer", "target_pct", "stop_pct", "high_vol_threshold",
+               "slippage_bps", "brokerage_per_order", "charges_pct"}
 
 
 def sanitize(cfg: dict) -> dict:
@@ -70,9 +81,12 @@ def sanitize(cfg: dict) -> dict:
     out["scan_interval"] = max(3, min(600, out["scan_interval"]))
     out["history_days"] = max(35, min(400, out["history_days"]))
     out["max_hold_days"] = max(1, min(250, out["max_hold_days"]))
+    out["max_concurrent"] = max(1, min(500, out["max_concurrent"]))
+    out["portfolio_capital"] = max(0, out["portfolio_capital"])
     if not isinstance(out["sectors"], list):
         out["sectors"] = []
-    for b in ("require_pw_above_pm", "one_signal_per_day", "ignore_ban", "high_vol_only"):
+    for b in ("require_pw_above_pm", "one_signal_per_day", "ignore_ban", "high_vol_only",
+              "apply_costs", "portfolio_mode"):
         out[b] = bool(out[b])
     return out
 

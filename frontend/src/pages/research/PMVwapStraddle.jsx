@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { api } from '../../api';
 import PMVwapReport from '../../components/PMVwapReport';
+import WatchlistBar from '../../components/WatchlistBar';
 
 const selCls =
   'bg-surface-3 border border-surface-4 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60';
@@ -48,8 +49,7 @@ function Stat({ label, value, tone }) {
 
 export default function PMVwapStraddle() {
   const [cfg, setCfg] = useState(null);
-  const [mode, setMode] = useState('single');      // single | multi
-  const [symbol, setSymbol] = useState('');
+  const [sel, setSel] = useState({ mode: 'all', symbol: null, symbols: null });
   const [universe, setUniverse] = useState([]);
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
@@ -69,32 +69,37 @@ export default function PMVwapStraddle() {
   useEffect(() => {
     api.researchPMVwapStraddleConfig().then((r) => { if (r.status === 'ok') setCfg(r.config); }).catch(() => setCfg({}));
     api.researchPMVwapStraddleUniverse()
-      .then((r) => { if (r.status === 'ok') { setUniverse(r.stocks || []); if (r.stocks?.[0]) setSymbol(r.stocks[0].name); } })
+      .then((r) => { if (r.status === 'ok') setUniverse(r.stocks || []); })
       .catch(() => {});
   }, []);
 
   const runBacktest = useCallback(async () => {
     if (!cfg) return;
-    if (mode === 'single' && !symbol) { showErr('Pick a stock for single-stock mode'); return; }
+    if (sel.mode === 'single' && !sel.symbol) { showErr('Type a stock symbol'); return; }
+    if (sel.mode === 'watchlist' && !(sel.symbols?.length)) { showErr('Selected watchlist is empty'); return; }
     setLoading(true); setData(null);
     try {
       const res = await api.researchPMVwapStraddleBacktest({
-        overrides: cfg, symbol: mode === 'single' ? symbol : null,
+        overrides: cfg, symbol: sel.mode === 'single' ? sel.symbol : null,
+        symbols: sel.mode === 'watchlist' ? sel.symbols : null,
         start: start || null, end: end || start || null, persist: true,
       });
       if (res.status === 'ok') setData(res);
       else showErr(res.message || 'Backtest failed');
     } catch (e) { showErr(e.message || 'Backtest failed'); }
     finally { setLoading(false); }
-  }, [cfg, mode, symbol, start, end]);
+  }, [cfg, sel, start, end]);
 
   const liveScan = useCallback(async () => {
     if (!cfg) return;
     try {
-      const res = await api.researchPMVwapStraddleScan({ overrides: cfg, symbol: mode === 'single' ? symbol : null });
+      const res = await api.researchPMVwapStraddleScan({
+        overrides: cfg, symbol: sel.mode === 'single' ? sel.symbol : null,
+        symbols: sel.mode === 'watchlist' ? sel.symbols : null,
+      });
       if (res.status === 'ok') setData(res);
     } catch { /* keep prior data on transient errors */ }
-  }, [cfg, mode, symbol]);
+  }, [cfg, sel]);
 
   useEffect(() => {
     if (timer.current) clearInterval(timer.current);
@@ -171,19 +176,7 @@ export default function PMVwapStraddle() {
       {/* Run controls */}
       <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-lg overflow-hidden border border-surface-4">
-            {['single', 'multi'].map((m) => (
-              <button key={m} onClick={() => setMode(m)}
-                className={`px-3 py-1.5 text-xs font-semibold ${mode === m ? 'bg-brand-600 text-white' : 'bg-surface-3 text-gray-400'}`}>
-                {m === 'single' ? 'Single Stock' : `All F&O (${universe.length})`}
-              </button>
-            ))}
-          </div>
-          {mode === 'single' && (
-            <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className={selCls}>
-              {universe.map((u) => <option key={u.name} value={u.name}>{u.name} · lot {u.lot_size}</option>)}
-            </select>
-          )}
+          <WatchlistBar universe={universe} count={universe.length} onChange={setSel} />
           <div><label className={lbl}>From</label><input type="date" value={start} onChange={(e) => setStart(e.target.value)} className={selCls} /></div>
           <div><label className={lbl}>To</label><input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className={selCls} /></div>
           <button onClick={runBacktest} disabled={loading}
@@ -225,6 +218,16 @@ export default function PMVwapStraddle() {
             <input type="checkbox" checked={cfg.ignore_ban} onChange={(e) => patch('ignore_ban', e.target.checked)} className="accent-brand-500" /> Ignore ban stocks
           </label>
         </div>
+
+        {/* Realistic costs (per option leg: brokerage + STT + slippage) */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-2 border-t border-surface-3 items-end">
+          <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+            <input type="checkbox" checked={cfg.apply_costs} onChange={(e) => patch('apply_costs', e.target.checked)} className="accent-brand-500" /> Net of costs
+          </label>
+          <div><label className={lbl}>Slippage (bps)</label>{num('slippage_bps', 0, 1)}</div>
+          <div><label className={lbl}>Brokerage/order</label>{num('brokerage_per_order', 0, 1)}</div>
+          <div><label className={lbl}>Charges %</label>{num('charges_pct', 0, 0.01)}</div>
+        </div>
       </div>
 
       {/* Stats */}
@@ -232,7 +235,8 @@ export default function PMVwapStraddle() {
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
           <Stat label="Signals" value={INT(s.total_signals)} />
           <Stat label="Win %" value={`${s.win_rate}%`} tone={s.win_rate >= 50 ? 'up' : 'down'} />
-          <Stat label="Total MTM" value={NUM(s.total_mtm)} tone={s.total_mtm >= 0 ? 'up' : 'down'} />
+          <Stat label={cfg.apply_costs ? 'Total MTM (net)' : 'Total MTM'} value={NUM(s.total_mtm)} tone={s.total_mtm >= 0 ? 'up' : 'down'} />
+          {cfg.apply_costs && <Stat label="Total Costs" value={NUM(s.total_cost)} tone="down" />}
           <Stat label="Avg Combined" value={NUM(s.avg_combined_premium)} />
           <Stat label="Avg Time→Tgt" value={s.avg_time_to_target == null ? '—' : `${s.avg_time_to_target}m`} />
           <Stat label="Best Winner" value={NUM(s.highest_winner)} tone="up" />

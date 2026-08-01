@@ -28,6 +28,7 @@ from research.pmvwap_straddle import log as pmvwap_log
 from research.pmvwap_equity import PMVwapEquityResearch
 from research.pmvwap_equity import log as pmveq_log
 from research import pmvwap_report
+from research import research_watchlist as rwl
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -570,7 +571,8 @@ async def nifty_signal_generator_config_save(payload: dict | None = None,
 
 class PMVwapBacktestRequest(BaseModel):
     overrides: dict | None = None       # per-run config overrides (not persisted)
-    symbol: str | None = None           # set → single-stock; None → whole F&O universe
+    symbol: str | None = None           # set → single-stock
+    symbols: list[str] | None = None    # set → watchlist (subset of universe)
     start: str | None = None            # YYYY-MM-DD (defaults to latest trading day)
     end: str | None = None              # YYYY-MM-DD (defaults to start)
     persist: bool = True                # append rows to the durable research log
@@ -617,7 +619,7 @@ async def pmvwap_straddle_backtest(payload: PMVwapBacktestRequest | None = None,
     payload = payload or PMVwapBacktestRequest()
     try:
         eng = _get_pmvwap_straddle(broker, user_id)
-        res = eng.backtest(payload.overrides, symbol=payload.symbol,
+        res = eng.backtest(payload.overrides, symbol=payload.symbol, symbols=payload.symbols,
                            start=payload.start, end=payload.end)
         if res.get("status") == "ok" and payload.persist and res.get("rows"):
             run_id = pmvwap_log.new_run_id()
@@ -661,7 +663,8 @@ async def pmvwap_straddle_scan(payload: dict | None = None,
         eng = _get_pmvwap_straddle(broker, user_id)
         eng._opt_cache.clear()          # today's premiums move — refetch fresh
         res = eng.backtest((payload or {}).get("overrides"),
-                           symbol=(payload or {}).get("symbol"), start=today, end=today)
+                           symbol=(payload or {}).get("symbol"), symbols=(payload or {}).get("symbols"),
+                           start=today, end=today)
         if res.get("status") == "ok":
             res["stored_new"] = pmvwap_log.persist_new(db, user_id, run_id, "live", res.get("rows") or [])
             res["run_id"] = run_id
@@ -676,6 +679,7 @@ async def pmvwap_straddle_scan(payload: dict | None = None,
 class PMVEqBacktestRequest(BaseModel):
     overrides: dict | None = None
     symbol: str | None = None
+    symbols: list[str] | None = None
     start: str | None = None
     end: str | None = None
     persist: bool = True
@@ -719,7 +723,8 @@ async def pmvwap_equity_backtest(payload: PMVEqBacktestRequest | None = None,
     payload = payload or PMVEqBacktestRequest()
     try:
         eng = _get_pmvwap_equity(broker, user_id)
-        res = eng.backtest(payload.overrides, symbol=payload.symbol, start=payload.start, end=payload.end)
+        res = eng.backtest(payload.overrides, symbol=payload.symbol, symbols=payload.symbols,
+                           start=payload.start, end=payload.end)
         if res.get("status") == "ok" and payload.persist and res.get("rows"):
             run_id = pmveq_log.new_run_id()
             res["run_id"] = run_id
@@ -760,7 +765,8 @@ async def pmvwap_equity_scan(payload: dict | None = None,
         eng = _get_pmvwap_equity(broker, user_id)
         eng._ul_cache.clear()           # today's candles grow — refetch fresh
         res = eng.backtest((payload or {}).get("overrides"),
-                           symbol=(payload or {}).get("symbol"), start=today, end=today)
+                           symbol=(payload or {}).get("symbol"), symbols=(payload or {}).get("symbols"),
+                           start=today, end=today)
         if res.get("status") == "ok":
             res["stored_new"] = pmveq_log.persist_new(db, user_id, run_id, "live", res.get("rows") or [])
             res["run_id"] = run_id
@@ -792,6 +798,42 @@ def _sector_map(db, user_id: int) -> dict:
     return smap
 
 
+_nifty_token_cache: dict = {}
+
+
+def _nifty_benchmark(broker, rows: list[dict]):
+    """NIFTY 50 buy-and-hold return over the run's date span (for the report)."""
+    dates = [r.get("exit_date") or r.get("date") for r in rows if (r.get("exit_date") or r.get("date"))]
+    if not dates:
+        return None
+    start, end = min(dates), max(dates)
+    try:
+        from datetime import datetime as _dt
+        tok = _nifty_token_cache.get("t")
+        if not tok:
+            for inst in broker.get_instruments("NSE"):
+                if inst.get("tradingsymbol") == "NIFTY 50":
+                    tok = int(inst["instrument_token"])
+                    _nifty_token_cache["t"] = tok
+                    break
+        if not tok:
+            return None
+        frm = _dt.fromisoformat(f"{start}T09:15:00")
+        to = _dt.fromisoformat(f"{end}T15:30:00")
+        candles = broker.get_historical_data(tok, frm, to, "day") or []
+        if len(candles) < 2:
+            return None
+        first = float(candles[0]["close"])
+        last = float(candles[-1]["close"])
+        if first <= 0:
+            return None
+        return {"label": "NIFTY 50 (buy & hold)", "return_pct": round((last - first) / first * 100.0, 2),
+                "start": start, "end": end, "start_close": round(first, 2), "end_close": round(last, 2)}
+    except Exception as exc:
+        logger.warning("benchmark failed: %s", exc)
+        return None
+
+
 class PMVReportRequest(BaseModel):
     run_id: str | None = None
     date: str | None = None
@@ -807,9 +849,10 @@ async def pmvwap_straddle_report(payload: PMVReportRequest, user_id: int = Depen
                                  db: Session = Depends(get_db)):
     try:
         rows = pmvwap_log.fetch_rows(db, user_id, payload.run_id, payload.date)
-        return {"status": "ok", "count": len(rows),
-                "report": pmvwap_report.build_report(rows, mtm_key="combined_mtm",
-                                                     sector_map=_sector_map(db, user_id))}
+        report = pmvwap_report.build_report(rows, mtm_key="combined_mtm", sector_map=_sector_map(db, user_id))
+        if _is_authed(db, user_id):
+            report["benchmark"] = _nifty_benchmark(get_user_broker(db, user_id), rows)
+        return {"status": "ok", "count": len(rows), "report": report}
     except Exception as exc:
         logger.error("PMVWAP straddle report failed: %s", exc)
         return {"status": "error", "message": str(exc)}
@@ -832,9 +875,10 @@ async def pmvwap_equity_report(payload: PMVReportRequest, user_id: int = Depends
                                db: Session = Depends(get_db)):
     try:
         rows = pmveq_log.fetch_rows(db, user_id, payload.run_id, payload.date)
-        return {"status": "ok", "count": len(rows),
-                "report": pmvwap_report.build_report(rows, mtm_key="mtm",
-                                                     sector_map=_sector_map(db, user_id))}
+        report = pmvwap_report.build_report(rows, mtm_key="mtm", sector_map=_sector_map(db, user_id))
+        if _is_authed(db, user_id):
+            report["benchmark"] = _nifty_benchmark(get_user_broker(db, user_id), rows)
+        return {"status": "ok", "count": len(rows), "report": report}
     except Exception as exc:
         logger.error("PMVWAP equity report failed: %s", exc)
         return {"status": "error", "message": str(exc)}
@@ -849,4 +893,102 @@ async def pmvwap_equity_compare(payload: PMVCompareRequest, user_id: int = Depen
         return {"status": "ok", "comparison": pmvwap_report.compare(
             a, b, mtm_key="mtm", label_a=payload.run_a[:8], label_b=payload.run_b[:8])}
     except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+# ──────────────── Research Watchlists (shared by Straddle #7 & Equity #8) ────────────────
+
+class WatchlistCreate(BaseModel):
+    name: str
+    symbols: list[str] | None = None
+
+
+class WatchlistUpdate(BaseModel):
+    name: str | None = None
+    symbols: list[str] | None = None
+
+
+class WatchlistSymbols(BaseModel):
+    add: list[str] | None = None
+    remove: list[str] | None = None
+
+
+@router.get("/symbol-search")
+async def symbol_search(q: str = "", exchange: str = "ALL", limit: int = 20,
+                        user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Type-ahead over the full NSE + BSE cash-equity universe (single-stock
+    search — not limited to F&O or watchlists)."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    try:
+        uni = _get_pmvwap_straddle(broker, user_id).universe
+        return {"status": "ok",
+                "results": uni.search_equities(q, (exchange or "ALL").upper(), min(50, max(1, int(limit))))}
+    except Exception as exc:
+        logger.error("symbol search failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/watchlists")
+async def watchlists_list(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "watchlists": rwl.list_watchlists(db, user_id)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/watchlists")
+async def watchlists_create(payload: WatchlistCreate, user_id: int = Depends(login_required),
+                            db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "watchlist": rwl.create_watchlist(db, user_id, payload.name, payload.symbols)}
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    except Exception as exc:
+        logger.error("watchlist create failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/watchlists/{wid}")
+async def watchlists_get(wid: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    w = rwl.get_watchlist(db, user_id, wid)
+    return {"status": "ok", "watchlist": w} if w else {"status": "error", "message": "Watchlist not found"}
+
+
+@router.put("/watchlists/{wid}")
+async def watchlists_update(wid: int, payload: WatchlistUpdate, user_id: int = Depends(login_required),
+                            db: Session = Depends(get_db)):
+    try:
+        w = rwl.update_watchlist(db, user_id, wid, payload.name, payload.symbols)
+        return {"status": "ok", "watchlist": w} if w else {"status": "error", "message": "Watchlist not found"}
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/watchlists/{wid}/symbols")
+async def watchlists_modify(wid: int, payload: WatchlistSymbols, user_id: int = Depends(login_required),
+                            db: Session = Depends(get_db)):
+    w = rwl.modify_symbols(db, user_id, wid, payload.add, payload.remove)
+    return {"status": "ok", "watchlist": w} if w else {"status": "error", "message": "Watchlist not found"}
+
+
+@router.delete("/watchlists/{wid}")
+async def watchlists_delete(wid: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    return {"status": "ok", "deleted": rwl.delete_watchlist(db, user_id, wid)}
+
+
+@router.post("/watchlists/upload")
+async def watchlists_upload(file: UploadFile = File(...), name: str = Form(...),
+                            user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Create a watchlist from an uploaded TXT/CSV, or replace an existing
+    same-named list's symbols (the download → edit → upload flow)."""
+    try:
+        raw = await file.read()
+        text = raw.decode("utf-8", errors="ignore")
+        return {"status": "ok", "watchlist": rwl.upsert_from_upload(db, user_id, name, text)}
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    except Exception as exc:
+        logger.error("watchlist upload failed: %s", exc)
         return {"status": "error", "message": str(exc)}

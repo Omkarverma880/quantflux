@@ -437,6 +437,20 @@ export const api = {
     request('/research/pmvwap-equity/report', { method: 'POST', body: JSON.stringify({ run_id: runId || null, date: date || null }) }),
   researchPMVwapEquityCompare: (runA, runB) =>
     request('/research/pmvwap-equity/compare', { method: 'POST', body: JSON.stringify({ run_a: runA, run_b: runB }) }),
+  // Full NSE+BSE equity search (single-stock type-ahead)
+  researchSymbolSearch: (q, exchange) =>
+    request(`/research/symbol-search?q=${encodeURIComponent(q || '')}${exchange ? `&exchange=${encodeURIComponent(exchange)}` : ''}`),
+  // Research Watchlists (shared by Straddle #7 & Equity #8)
+  researchWatchlists: () => request('/research/watchlists'),
+  researchWatchlistGet: (id) => request(`/research/watchlists/${id}`),
+  researchWatchlistCreate: (name, symbols) =>
+    request('/research/watchlists', { method: 'POST', body: JSON.stringify({ name, symbols: symbols || null }) }),
+  researchWatchlistUpdate: (id, body) =>
+    request(`/research/watchlists/${id}`, { method: 'PUT', body: JSON.stringify(body || {}) }),
+  researchWatchlistModify: (id, add, remove) =>
+    request(`/research/watchlists/${id}/symbols`, { method: 'POST', body: JSON.stringify({ add: add || null, remove: remove || null }) }),
+  researchWatchlistDelete: (id) => request(`/research/watchlists/${id}`, { method: 'DELETE' }),
+  researchWatchlistUpload: (formData) => requestUpload('/research/watchlists/upload', formData),
 
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),

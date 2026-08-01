@@ -107,6 +107,46 @@ def _heatmap(rows: list[dict], mtm_key: str) -> dict:
     return {"hours": hours, "rows": matrix}
 
 
+def _close_key(r: dict) -> tuple:
+    return (r.get("exit_date") or r.get("date") or "", r.get("time") or "")
+
+
+def _equity_curve(rows: list[dict], mtm_key: str, base_capital: float) -> dict:
+    """Realised cumulative-P&L curve ordered by each trade's close, plus the
+    peak-to-trough max drawdown (₹ and %) and CAGR when capital is known."""
+    ordered = sorted(rows, key=_close_key)
+    cum = peak = maxdd = 0.0
+    curve: list[dict] = []
+    for r in ordered:
+        cum += float(r.get(mtm_key) or 0)
+        curve.append({"t": r.get("exit_date") or r.get("date"), "pnl": round(cum, 2)})
+        peak = max(peak, cum)
+        maxdd = max(maxdd, peak - cum)
+    # down-sample so the payload/chart stays light
+    if len(curve) > 250:
+        step = len(curve) // 250 + 1
+        curve = curve[::step] + [curve[-1]]
+    denom = (base_capital + peak) if base_capital else (peak or 1.0)
+    max_dd_pct = round(maxdd / denom * 100.0, 2) if denom else 0.0
+
+    cagr = None
+    period_days = 0
+    if ordered:
+        try:
+            d0 = date.fromisoformat(_close_key(ordered[0])[0])
+            d1 = date.fromisoformat(_close_key(ordered[-1])[0])
+            period_days = max((d1 - d0).days, 0)
+        except Exception:
+            period_days = 0
+        if base_capital > 0 and period_days >= 1:
+            final = base_capital + cum
+            if final > 0:
+                yrs = period_days / 365.0
+                cagr = round(((final / base_capital) ** (1.0 / yrs) - 1.0) * 100.0, 2)
+    return {"equity_curve": curve, "max_drawdown": round(maxdd, 2),
+            "max_drawdown_pct": max_dd_pct, "cagr_pct": cagr, "period_days": period_days}
+
+
 def build_report(rows: list[dict], *, mtm_key: str, sector_map: dict | None = None) -> dict:
     """Full summary report for a run's research-log rows."""
     sector_map = sector_map or {}
@@ -120,8 +160,10 @@ def build_report(rows: list[dict], *, mtm_key: str, sector_map: dict | None = No
         return items
 
     overall = _agg(rows, mtm_key)
+    curve = _equity_curve(rows, mtm_key, overall.get("total_capital", 0.0))
     return {
         "overall": overall,
+        **curve,
         "pnl_distribution": _pnl_distribution(rows, mtm_key),
         "stock_ranking": _rank(_group(rows, lambda r: r.get("underlying", "?"), mtm_key)),
         "day_of_week": _rank(_group(rows, lambda r: _WEEKDAYS[date.fromisoformat(r["date"]).weekday()], mtm_key), _WEEKDAYS),
