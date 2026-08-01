@@ -181,16 +181,24 @@ class PMVwapEquityResearch:
         if not n:
             return {"total_signals": 0, "win_rate": 0.0, "wins": 0, "losses": 0,
                     "total_mtm": 0.0, "avg_return_pct": 0.0, "avg_hold_days": 0.0,
-                    "highest_winner": 0.0, "largest_drawdown": 0.0, "open": 0}
+                    "highest_winner": 0.0, "largest_drawdown": 0.0, "open": 0,
+                    "total_capital": 0.0, "avg_capital": 0.0, "roi_pct": 0.0}
         wins = [r for r in rows if r["mtm"] > 0]
         mtms = [r["mtm"] for r in rows]
+        total_mtm = sum(mtms)
+        # Total capital deployed across all holdings (sum of each trade's entry ×
+        # qty) and the overall return on that capital for the tested period.
+        total_capital = sum(float(r.get("capital") or 0) for r in rows)
         return {
             "total_signals": n, "wins": len(wins), "losses": n - len(wins),
             "win_rate": round(len(wins) / n * 100.0, 1),
-            "total_mtm": round(sum(mtms), 2),
+            "total_mtm": round(total_mtm, 2),
             "avg_return_pct": round(sum(r["return_pct"] for r in rows) / n, 2),
             "avg_hold_days": round(sum(r["hold_days"] for r in rows) / n, 1),
             "highest_winner": round(max(mtms), 2),
             "largest_drawdown": round(min(mtms), 2),
             "open": sum(1 for r in rows if r["status"] == calc.STATE_OPEN),
+            "total_capital": round(total_capital, 2),
+            "avg_capital": round(total_capital / n, 2) if total_capital else 0.0,
+            "roi_pct": round(total_mtm / total_capital * 100.0, 2) if total_capital else 0.0,
         }

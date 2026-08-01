@@ -114,8 +114,8 @@ function exportXls(filename, report) {
   const rank = (items) => items.map((x) => [x.key, x.signals, x.win_rate, x.total_mtm]);
   const html =
     `<html><head><meta charset="utf-8"></head><body>` +
-    tbl('Overall', ['Signals', 'Win %', 'Total MTM', 'Avg MTM', 'Best', 'Worst', 'Profit Factor'],
-        [[o.signals, o.win_rate, o.total_mtm, o.avg_mtm, o.best, o.worst, o.profit_factor]]) +
+    tbl('Overall', ['Signals', 'Win %', 'Capital Used', 'Total MTM', 'ROI on Capital %', 'Avg MTM', 'Best', 'Worst', 'Profit Factor'],
+        [[o.signals, o.win_rate, o.total_capital, o.total_mtm, o.roi_pct, o.avg_mtm, o.best, o.worst, o.profit_factor]]) +
     tbl('Stock Ranking', ['Stock', 'Signals', 'Win %', 'Total MTM'], rank(report.stock_ranking)) +
     tbl('Day of Week', ['Day', 'Signals', 'Win %', 'Total MTM'], rank(report.day_of_week)) +
     tbl('Time of Day', ['Slot', 'Signals', 'Win %', 'Total MTM'], rank(report.time_of_day)) +
@@ -200,7 +200,9 @@ export default function PMVwapReport({ kind }) {
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
             <Stat label="Signals" value={o.signals} />
             <Stat label="Win %" value={`${o.win_rate}%`} tone={o.win_rate >= 50 ? 'up' : 'down'} />
+            {o.total_capital > 0 && <Stat label="Capital Used" value={`₹${NUM(o.total_capital, 0)}`} />}
             <Stat label="Total MTM" value={NUM(o.total_mtm)} tone={o.total_mtm >= 0 ? 'up' : 'down'} />
+            {o.total_capital > 0 && <Stat label="ROI on Capital" value={`${o.roi_pct}%`} tone={o.roi_pct >= 0 ? 'up' : 'down'} />}
             <Stat label="Avg MTM" value={NUM(o.avg_mtm)} tone={o.avg_mtm >= 0 ? 'up' : 'down'} />
             <Stat label="Profit Factor" value={o.profit_factor} tone={o.profit_factor >= 1 ? 'up' : 'down'} />
             <Stat label="Best" value={NUM(o.best)} tone="up" />

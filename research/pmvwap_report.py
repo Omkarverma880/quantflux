@@ -26,13 +26,20 @@ def _agg(rows: list[dict], mtm_key: str) -> dict:
     losses = [m for m in mtms if m < 0]
     gross_win = sum(wins)
     gross_loss = abs(sum(losses))
+    total_mtm = sum(mtms)
+    # Capital deployed (equity holdings carry `capital` = entry × qty). Absent
+    # for the options straddle, where it stays 0 and the ROI card is hidden.
+    total_capital = sum(float(r.get("capital") or 0) for r in rows)
     return {
         "signals": n, "wins": len(wins), "losses": len(losses),
         "win_rate": round(len(wins) / n * 100.0, 1),
-        "total_mtm": round(sum(mtms), 2), "avg_mtm": round(sum(mtms) / n, 2),
+        "total_mtm": round(total_mtm, 2), "avg_mtm": round(total_mtm / n, 2),
         "best": round(max(mtms), 2), "worst": round(min(mtms), 2),
         "profit_factor": round(gross_win / gross_loss, 2) if gross_loss else (gross_win and 999.0 or 0.0),
-        "expectancy": round(sum(mtms) / n, 2),
+        "expectancy": round(total_mtm / n, 2),
+        "total_capital": round(total_capital, 2),
+        "avg_capital": round(total_capital / n, 2) if total_capital else 0.0,
+        "roi_pct": round(total_mtm / total_capital * 100.0, 2) if total_capital else 0.0,
     }
 
 

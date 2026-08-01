@@ -152,51 +152,117 @@ export default function Login() {
         />
 
         <div className="relative z-10 flex flex-col justify-between p-12 w-full">
-          {/* Brand */}
-          <div className="flex items-center gap-3">
-            <LogoIcon size={40} className="shadow-lg shadow-brand-500/20" />
-            <span className="text-2xl font-bold bg-gradient-to-r from-brand-400 to-brand-600 bg-clip-text text-transparent">
-              QuantFlux
-            </span>
+          <div>
+            {/* Devotional blessing */}
+            <div className="text-center mb-8">
+              <div className="flex items-center justify-center gap-3 mb-2">
+                <span className="h-px w-12 bg-gradient-to-r from-transparent to-amber-400/50" />
+                <span className="text-amber-300/80 text-sm">✦</span>
+                <span className="h-px w-12 bg-gradient-to-l from-transparent to-amber-400/50" />
+              </div>
+              <p className="text-2xl font-semibold tracking-wide bg-gradient-to-r from-amber-200 via-yellow-100 to-amber-300 bg-clip-text text-transparent drop-shadow-[0_0_14px_rgba(251,191,36,0.35)]">
+                Jae Shri Radhe Govinda
+              </p>
+              <p className="text-sm text-amber-200/70 mt-1.5 tracking-[0.35em] uppercase">Ram Ram</p>
+            </div>
+
+            {/* Brand */}
+            <div className="flex items-center gap-3">
+              <LogoIcon size={40} className="shadow-lg shadow-brand-500/20" />
+              <span className="text-2xl font-bold bg-gradient-to-r from-brand-400 to-brand-600 bg-clip-text text-transparent">
+                QuantFlux
+              </span>
+            </div>
           </div>
 
           {/* Illustration + headline */}
           <div className="py-8">
             <div className="flex justify-center mb-10">
-              <svg viewBox="0 0 360 300" className="w-full max-w-md" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <svg viewBox="0 0 400 360" className="w-full max-w-md drop-shadow-2xl" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <defs>
-                  <linearGradient id="barA" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stopColor="#86efac" />
-                    <stop offset="1" stopColor="#16a34a" />
+                  <linearGradient id="qfGreenF" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stopColor="#bbf7d0" />
+                    <stop offset="0.5" stopColor="#22c55e" />
+                    <stop offset="1" stopColor="#14532d" />
                   </linearGradient>
-                  <linearGradient id="barB" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stopColor="#4ade80" />
-                    <stop offset="1" stopColor="#15803d" />
+                  <linearGradient id="qfGreenT" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stopColor="#f0fdf4" />
+                    <stop offset="1" stopColor="#4ade80" />
                   </linearGradient>
-                  <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+                  <linearGradient id="qfGreenS" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stopColor="#166534" />
+                    <stop offset="1" stopColor="#052e16" />
+                  </linearGradient>
+                  <linearGradient id="qfSilver" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stopColor="#f9fafb" />
+                    <stop offset="0.5" stopColor="#9ca3af" />
+                    <stop offset="1" stopColor="#374151" />
+                  </linearGradient>
+                  <linearGradient id="qfPed" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0" stopColor="#e5e7eb" />
                     <stop offset="0.5" stopColor="#9ca3af" />
-                    <stop offset="1" stopColor="#4b5563" />
+                    <stop offset="1" stopColor="#1f2937" />
                   </linearGradient>
-                  <radialGradient id="glowg" cx="0.5" cy="0.5" r="0.5">
-                    <stop offset="0" stopColor="#22c55e" stopOpacity="0.35" />
+                  <radialGradient id="qfSphere" cx="0.35" cy="0.3" r="0.75">
+                    <stop offset="0" stopColor="#ffffff" />
+                    <stop offset="0.45" stopColor="#9ca3af" />
+                    <stop offset="1" stopColor="#111827" />
+                  </radialGradient>
+                  <radialGradient id="qfGlow" cx="0.5" cy="0.5" r="0.5">
+                    <stop offset="0" stopColor="#22c55e" stopOpacity="0.4" />
                     <stop offset="1" stopColor="#22c55e" stopOpacity="0" />
                   </radialGradient>
                 </defs>
-                <ellipse cx="180" cy="150" rx="155" ry="150" fill="url(#glowg)" />
-                {/* orbit ring */}
-                <ellipse cx="180" cy="160" rx="150" ry="54" stroke="url(#ring)" strokeWidth="3" transform="rotate(-18 180 160)" opacity="0.75" />
-                <circle cx="304" cy="118" r="7" fill="url(#ring)" />
-                <circle cx="66" cy="196" r="6" fill="url(#ring)" />
-                {/* bars */}
-                <rect x="118" y="150" width="24" height="60" rx="6" fill="url(#barB)" />
-                <rect x="150" y="95" width="24" height="115" rx="6" fill="url(#barA)" />
-                <rect x="182" y="125" width="24" height="85" rx="6" fill="url(#barB)" />
-                <rect x="214" y="70" width="24" height="140" rx="6" fill="url(#barA)" />
-                <rect x="246" y="140" width="24" height="70" rx="6" fill="url(#barB)" />
-                {/* pedestal */}
-                <ellipse cx="180" cy="214" rx="112" ry="15" fill="#000" opacity="0.55" />
-                <rect x="72" y="209" width="216" height="6" rx="3" fill="#1f2937" />
+
+                {/* ambient glow */}
+                <ellipse cx="200" cy="180" rx="185" ry="175" fill="url(#qfGlow)" />
+
+                {/* tilted orbit ring (behind) */}
+                <g transform="rotate(-22 205 200)">
+                  <ellipse cx="205" cy="200" rx="168" ry="58" stroke="url(#qfSilver)" strokeWidth="6" opacity="0.92" />
+                  <ellipse cx="205" cy="200" rx="168" ry="58" stroke="#000000" strokeWidth="1" opacity="0.2" />
+                </g>
+
+                {/* thin metallic rods (behind the bars) */}
+                <g stroke="url(#qfSilver)" strokeWidth="3" strokeLinecap="round">
+                  <line x1="168" y1="300" x2="168" y2="70" />
+                  <line x1="250" y1="300" x2="250" y2="95" />
+                  <line x1="300" y1="300" x2="300" y2="132" />
+                </g>
+
+                {/* reflective pedestal */}
+                <ellipse cx="200" cy="320" rx="122" ry="26" fill="#000000" opacity="0.35" />
+                <ellipse cx="200" cy="309" rx="120" ry="26" fill="url(#qfPed)" />
+                <ellipse cx="200" cy="303" rx="106" ry="20" fill="#d1d5db" opacity="0.6" />
+                <ellipse cx="200" cy="301" rx="88" ry="15" fill="#f3f4f6" opacity="0.5" />
+
+                {/* Bar A — green */}
+                <polygon points="150,150 163,140 199,140 186,150" fill="url(#qfGreenT)" />
+                <polygon points="186,150 199,140 199,286 186,296" fill="url(#qfGreenS)" />
+                <rect x="150" y="150" width="36" height="146" fill="url(#qfGreenF)" />
+                <rect x="156" y="156" width="6" height="132" rx="3" fill="#ffffff" opacity="0.22" />
+
+                {/* Bar B — green (tallest) */}
+                <polygon points="200,108 213,98 249,98 236,108" fill="url(#qfGreenT)" />
+                <polygon points="236,108 249,98 249,286 236,296" fill="url(#qfGreenS)" />
+                <rect x="200" y="108" width="36" height="188" fill="url(#qfGreenF)" />
+                <rect x="206" y="114" width="6" height="174" rx="3" fill="#ffffff" opacity="0.22" />
+
+                {/* Bar C — clear glass (short) */}
+                <polygon points="250,205 261,197 289,197 278,205" fill="#e2e8f0" opacity="0.35" />
+                <polygon points="278,205 289,197 289,286 278,294" fill="#94a3b8" opacity="0.35" />
+                <rect x="250" y="205" width="28" height="91" fill="#e2e8f0" opacity="0.16" />
+                <rect x="250" y="205" width="28" height="91" fill="none" stroke="#e2e8f0" strokeOpacity="0.5" />
+                <rect x="255" y="211" width="5" height="79" rx="2" fill="#ffffff" opacity="0.3" />
+
+                {/* chrome spheres atop the rods */}
+                <circle cx="168" cy="70" r="8" fill="url(#qfSphere)" />
+                <circle cx="250" cy="95" r="7" fill="url(#qfSphere)" />
+                <circle cx="300" cy="132" r="6" fill="url(#qfSphere)" />
+
+                {/* floating spheres */}
+                <circle cx="112" cy="250" r="10" fill="url(#qfSphere)" />
+                <circle cx="322" cy="232" r="8" fill="url(#qfSphere)" />
               </svg>
             </div>
 
@@ -226,6 +292,14 @@ export default function Login() {
       {/* ══ Right: form column ══ */}
       <div className="flex-1 flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-md">
+        {/* Devotional blessing (mobile — hero shows it on desktop) */}
+        <div className="text-center mb-5 lg:hidden">
+          <p className="text-xl font-semibold tracking-wide bg-gradient-to-r from-amber-200 via-yellow-100 to-amber-300 bg-clip-text text-transparent drop-shadow-[0_0_12px_rgba(251,191,36,0.3)]">
+            Jae Shri Radhe Govinda
+          </p>
+          <p className="text-[11px] text-amber-200/70 mt-1 tracking-[0.35em] uppercase">Ram Ram</p>
+        </div>
+
         {/* Logo (mobile / compact — hero shows branding on desktop) */}
         <div className="text-center mb-8 lg:hidden">
           <div className="flex justify-center mb-4">
