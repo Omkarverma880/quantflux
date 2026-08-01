@@ -227,15 +227,16 @@ export default function PMVwapEquity() {
           <Stat label="Signals" value={INT(s.total_signals)} />
           <Stat label="Win %" value={`${s.win_rate}%`} tone={s.win_rate >= 50 ? 'up' : 'down'} />
           <Stat label="Capital Used" value={`₹${NUM(s.total_capital, 0)}`} />
-          <Stat label="Total MTM" value={NUM(s.total_mtm)} tone={s.total_mtm >= 0 ? 'up' : 'down'} />
-          <Stat label="ROI on Capital" value={`${s.roi_pct}%`} tone={s.roi_pct >= 0 ? 'up' : 'down'} />
+          {cfg.apply_costs && <Stat label="Gross MTM" value={NUM(s.total_mtm + s.total_cost)} tone={(s.total_mtm + s.total_cost) >= 0 ? 'up' : 'down'} />}
+          {cfg.apply_costs && <Stat label="Total Costs" value={`-${NUM(s.total_cost)}`} tone="down" />}
+          <Stat label={cfg.apply_costs ? 'Net Earning (MTM)' : 'Total MTM'} value={NUM(s.total_mtm)} tone={s.total_mtm >= 0 ? 'up' : 'down'} />
+          <Stat label={cfg.apply_costs ? 'Net ROI on Capital' : 'ROI on Capital'} value={`${s.roi_pct}%`} tone={s.roi_pct >= 0 ? 'up' : 'down'} />
           <Stat label="Avg Return / Trade" value={`${s.avg_return_pct}%`} tone={s.avg_return_pct >= 0 ? 'up' : 'down'} />
           <Stat label="Avg Capital / Trade" value={`₹${NUM(s.avg_capital, 0)}`} />
           <Stat label="Avg Hold" value={`${s.avg_hold_days}d`} />
           <Stat label="Best" value={NUM(s.highest_winner)} tone="up" />
           <Stat label="Worst" value={NUM(s.largest_drawdown)} tone="down" />
           <Stat label="Still Open" value={INT(s.open)} />
-          {cfg.apply_costs && <Stat label="Total Costs" value={NUM(s.total_cost)} tone="down" />}
         </div>
       )}
 
