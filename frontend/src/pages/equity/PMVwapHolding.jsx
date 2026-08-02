@@ -61,7 +61,8 @@ export default function PMVwapHolding() {
 
   const picked = selToSymbols(sel, universe);
   // Keep previously-saved symbols if you haven't re-picked a watchlist this time.
-  const symbols = picked.length ? picked : (cfg.symbols || []);
+  // NB: cfg is null before the first status load — guard against it.
+  const symbols = picked.length ? picked : (cfg?.symbols || []);
 
   const saveConfig = async () => {
     setBusy('save');

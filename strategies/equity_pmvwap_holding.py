@@ -308,7 +308,14 @@ class EquityPMVwapHolding:
                         self._close(p, p["stop_price"], "STOP", now); continue
                 elif active_gtts is not None:               # GTT reconciliation (OCO or single)
                     gid = p.get("target_gtt")
-                    if gid and str(gid) not in active_gtts:
+                    if not gid:
+                        # Exit GTT missing (placement failed at entry) → protect the
+                        # position ourselves via tick management until it exits.
+                        if ltp >= p["target_price"]:
+                            self._close(p, p["target_price"], "TARGET", now); continue
+                        if p.get("stop_price") and ltp <= p["stop_price"]:
+                            self._close(p, p["stop_price"], "STOP", now); continue
+                    elif str(gid) not in active_gtts:       # a GTT leg fired → one exit only
                         if p.get("stop_price") and ltp <= float(p["stop_price"]) * 1.003:
                             self._close(p, p["stop_price"], "STOP", now)
                         else:
@@ -427,6 +434,11 @@ class EquityPMVwapHolding:
                 pos["oco"] = bool(oco)
             else:
                 pos["target_gtt"] = self._place_gtt(sym, exch, target, ltp, qty, "TARGET")
+            if not pos["target_gtt"]:
+                # GTT didn't place — the position is protected by tick-management
+                # fallback in _manage_open, but surface it so you can act.
+                self.last_error = f"{sym}: exit GTT not placed — managing exit in-app (check connectivity)"
+                logger.warning(self.last_error)
 
         self.positions.append(pos)
         self._entered_today.add(sym)
@@ -498,7 +510,9 @@ class EquityPMVwapHolding:
     def _close(self, p: dict, price: float, reason: str, now: datetime):
         if not self.cfg["paper_trade"]:
             exit_on = self.cfg.get("exit_on", "high_low")
-            gtt_filled = (exit_on == "high_low" and reason in ("TARGET", "STOP"))
+            # Only treat it as GTT-filled if a GTT actually exists for this leg;
+            # otherwise (Close-mode, or a failed GTT) we must exit at market.
+            gtt_filled = (exit_on == "high_low" and reason in ("TARGET", "STOP") and bool(p.get("target_gtt")))
             if gtt_filled:
                 # A resting GTT fired server-side. For OCO the broker already
                 # cancelled the other leg; for a single GTT there's no sibling.
