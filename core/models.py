@@ -458,3 +458,42 @@ class EquityHoldingPosition(Base):
         Index("idx_eqhold_user_state", "user_id", "state"),
         Index("idx_eqhold_user_date", "user_id", "trade_date"),
     )
+
+
+class OPEIRecommendation(Base):
+    """Logged premium entry recommendation from the OPEI research engine.
+
+    Every institutional-grade (or activated) recommendation is stored with its
+    outcome fields (triggered / target / SL / MFE / MAE) for later win-rate and
+    CSV analysis. Research-only — no orders. Auto-created via ``create_all``.
+    """
+    __tablename__ = "opei_recommendations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    trade_date = Column(Date, nullable=False)
+    signal_time = Column(String(12))
+    side = Column(String(2))                    # CE | PE
+    symbol = Column(String(100))
+    strike = Column(Integer)
+    premium = Column(Numeric(12, 2))
+    level = Column(Numeric(12, 2))
+    confidence = Column(Numeric(6, 2))
+    band = Column(String(30))
+    sl = Column(Numeric(12, 2))
+    target1 = Column(Numeric(12, 2))
+    reasons = Column(JSONB, default=list)
+    # outcome (updated by the tracker)
+    triggered = Column(Boolean, default=False)
+    succeeded = Column(Boolean)
+    target_hit = Column(Boolean, default=False)
+    sl_hit = Column(Boolean, default=False)
+    duration_min = Column(Integer)
+    mfe = Column(Numeric(12, 2))                 # max favourable excursion
+    mae = Column(Numeric(12, 2))                 # max adverse excursion
+    data = Column(JSONB, default=dict)
+
+    __table_args__ = (
+        Index("idx_opei_user_date", "user_id", "trade_date"),
+    )

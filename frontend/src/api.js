@@ -440,6 +440,12 @@ export const api = {
   // Full NSE+BSE equity search (single-stock type-ahead)
   researchSymbolSearch: (q, exchange) =>
     request(`/research/symbol-search?q=${encodeURIComponent(q || '')}${exchange ? `&exchange=${encodeURIComponent(exchange)}` : ''}`),
+  // Option Premium Entry Intelligence Engine (OPEI)
+  researchOPEISnapshot: (overrides) => request('/research/opei/snapshot', { method: 'POST', body: JSON.stringify(overrides || {}) }),
+  researchOPEIConfig: () => request('/research/opei/config'),
+  researchOPEIConfigSave: (partial) => request('/research/opei/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+  researchOPEITelegramTest: (bot_token, chat_id) => request('/research/opei/telegram-test', { method: 'POST', body: JSON.stringify({ bot_token, chat_id }) }),
+  researchOPEILog: (date) => request(`/research/opei/log${date ? `?date=${encodeURIComponent(date)}` : ''}`),
   // Research Watchlists (shared by Straddle #7 & Equity #8)
   researchWatchlists: () => request('/research/watchlists'),
   researchWatchlistGet: (id) => request(`/research/watchlists/${id}`),

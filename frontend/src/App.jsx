@@ -34,6 +34,7 @@ import MarketDashboard from './pages/research/MarketDashboard';
 import NiftySignalGenerator from './pages/research/NiftySignalGenerator';
 import PMVwapStraddle from './pages/research/PMVwapStraddle';
 import PMVwapEquity from './pages/research/PMVwapEquity';
+import OPEI from './pages/research/OPEI';
 import EquityPMVwapHolding from './pages/equity/PMVwapHolding';
 
 export default function App() {
@@ -73,6 +74,7 @@ export default function App() {
           <Route path="research/nifty-signal-generator" element={<NiftySignalGenerator />} />
           <Route path="research/pmvwap-straddle" element={<PMVwapStraddle />} />
           <Route path="research/pmvwap-equity" element={<PMVwapEquity />} />
+          <Route path="research/opei" element={<OPEI />} />
           <Route path="equity-strategy/pmvwap-holding" element={<EquityPMVwapHolding />} />
           <Route path="research/market-dashboard" element={<MarketDashboard />} />
           <Route path="portfolio" element={<PortfolioAnalytics />} />

@@ -29,6 +29,9 @@ from research.pmvwap_equity import PMVwapEquityResearch
 from research.pmvwap_equity import log as pmveq_log
 from research import pmvwap_report
 from research import research_watchlist as rwl
+from research.opei import OPEIEngine
+from research.opei import log as opei_log
+from research.opei import telegram as opei_tg
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -43,6 +46,7 @@ _market_pulses: dict[int, MarketPulse] = {}
 _signal_generators: dict[int, NiftySignalGenerator] = {}
 _pmvwap_straddles: dict[int, PMVwapStraddleResearch] = {}
 _pmvwap_equities: dict[int, PMVwapEquityResearch] = {}
+_opei_engines: dict[int, OPEIEngine] = {}
 _news_sentiment = NewsSentiment()   # shared (public RSS — not per-user)
 
 
@@ -117,6 +121,18 @@ def _get_pmvwap_straddle(broker: Broker, user_id: int) -> PMVwapStraddleResearch
     else:
         eng.broker = broker
         eng.universe.broker = broker
+    eng.user_id = user_id
+    return eng
+
+
+def _get_opei(broker: Broker, user_id: int) -> OPEIEngine:
+    eng = _opei_engines.get(user_id)
+    if eng is None:
+        eng = OPEIEngine(broker, user_id=user_id)
+        _opei_engines[user_id] = eng
+    else:
+        eng.broker = broker
+        eng._chain.broker = broker
     eng.user_id = user_id
     return eng
 
@@ -991,4 +1007,88 @@ async def watchlists_upload(file: UploadFile = File(...), name: str = Form(...),
         return {"status": "error", "message": str(exc)}
     except Exception as exc:
         logger.error("watchlist upload failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+# ──────────────── Option Premium Entry Intelligence Engine (OPEI) ────────────────
+
+class OPEISnapshotRequest(BaseModel):
+    strike: str | None = None
+    timeframe: str | None = None
+    expiry_type: str | None = None
+
+
+@router.post("/opei/snapshot")
+async def opei_snapshot(payload: OPEISnapshotRequest | None = None,
+                        user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Live premium-expansion scores + top entry levels for the selected CE/PE."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    payload = payload or OPEISnapshotRequest()
+    overrides = {k: v for k, v in {
+        "strike": payload.strike, "timeframe": payload.timeframe, "expiry_type": payload.expiry_type,
+    }.items() if v is not None}
+    try:
+        eng = _get_opei(broker, user_id)
+        snap = eng.snapshot(overrides)
+        if snap.get("status") == "ok":
+            from datetime import datetime as _dt
+            _now = _dt.now()
+            # Track how already-logged levels are actually performing (points/MFE/MAE).
+            for _side in ("CE", "PE"):
+                _sd = snap["sides"].get(_side) or {}
+                opei_log.update_outcomes(db, user_id, _side, _sd.get("premium"), _now)
+            recs = eng.institutional_recs(snap)
+            if recs:
+                # log the institutional-grade best levels for later analysis
+                for side in ("CE", "PE"):
+                    sd = snap["sides"].get(side) or {}
+                    side_recs = [r for r in recs if r["side"] == side]
+                    if side_recs:
+                        opei_log.log_recommendations(db, user_id, side, sd.get("symbol"),
+                                                     sd.get("strike"), sd.get("premium"),
+                                                     side_recs, snap["fetched_at"])
+                # Telegram push (if enabled)
+                cfg = snap["config"]
+                if cfg.get("telegram_enabled") and cfg.get("alert_on_institutional"):
+                    for r in recs:
+                        opei_tg.send_message(cfg["telegram_bot_token"], cfg["telegram_chat_id"],
+                                             opei_tg.format_entry({**r, "time": snap["fetched_at"]}))
+        return snap
+    except Exception as exc:
+        logger.error("OPEI snapshot failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/opei/config")
+async def opei_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_opei(get_user_broker(db, user_id), user_id).load_config()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/opei/config")
+async def opei_config_save(payload: dict | None = None,
+                           user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_opei(get_user_broker(db, user_id), user_id).save_config(payload or {})}
+    except Exception as exc:
+        logger.error("OPEI config save failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/opei/telegram-test")
+async def opei_telegram_test(payload: dict | None = None, user_id: int = Depends(login_required)):
+    p = payload or {}
+    return opei_tg.test_connection(p.get("bot_token", ""), p.get("chat_id", ""))
+
+
+@router.get("/opei/log")
+async def opei_log_rows(date: str | None = None, user_id: int = Depends(login_required),
+                        db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "rows": opei_log.fetch_log(db, user_id, date)}
+    except Exception as exc:
         return {"status": "error", "message": str(exc)}

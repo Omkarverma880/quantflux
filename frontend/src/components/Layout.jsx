@@ -47,6 +47,7 @@ const NAV = [
       { to: '/research/nifty-signal-generator', label: '6. Nifty Signal Generator' },
       { to: '/research/pmvwap-straddle', label: '7. Prev-Month VWAP Straddle' },
       { to: '/research/pmvwap-equity', label: '8. Prev-Month VWAP Equity' },
+      { to: '/research/opei', label: '9. Option Premium Entry (OPEI)' },
     ],
   },
   {
