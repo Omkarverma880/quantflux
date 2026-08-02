@@ -431,8 +431,10 @@ class Broker:
             return f"PAPER-OCO-{self._paper_order_counter:06d}"
         lower, upper = sorted([float(stop_trigger), float(target_trigger)])
         # order[i] pairs with trigger_values[i]; lower=stop (MARKET), upper=target (LIMIT).
+        # MARKET stop guarantees the exit fills on a drop; price mirrors the trigger
+        # (Kite ignores it for MARKET but expects a valid field — same as Strategy 11).
         stop_order = {"transaction_type": side, "quantity": int(quantity),
-                      "order_type": "MARKET", "product": product, "price": 0}
+                      "order_type": "MARKET", "product": product, "price": float(lower)}
         target_order = {"transaction_type": side, "quantity": int(quantity),
                         "order_type": "LIMIT", "product": product, "price": float(upper)}
         res = self.kite.place_gtt(

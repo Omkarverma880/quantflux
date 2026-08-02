@@ -308,9 +308,9 @@ class EquityPMVwapHolding:
                         self._close(p, p["stop_price"], "STOP", now); continue
                 elif active_gtts is not None:               # GTT reconciliation (OCO or single)
                     gid = p.get("target_gtt")
-                    if not gid:
-                        # Exit GTT missing (placement failed at entry) → protect the
-                        # position ourselves via tick management until it exits.
+                    if not gid or str(gid).startswith("PAPER"):
+                        # No real GTT (placement failed, or global paper mode) →
+                        # protect the position ourselves via tick management.
                         if ltp >= p["target_price"]:
                             self._close(p, p["target_price"], "TARGET", now); continue
                         if p.get("stop_price") and ltp <= p["stop_price"]:
