@@ -36,6 +36,7 @@ from app.routes.strategy9_routes import router as s9_router
 from app.routes.strategy10_routes import router as s10_router
 from app.routes.strategy11_routes import router as s11_router
 from app.routes.strategy12_routes import router as s12_router
+from app.routes.equity_strategy_routes import router as equity_strategy_router
 from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
@@ -243,6 +244,13 @@ def _run_strategies_for_user(uid: int):
         if authenticated and (s12.is_active
                               or getattr(s12.state, "value", str(s12.state)) == "POSITION_OPEN"):
             s12.check()
+
+        # Equity Prev-Month-VWAP Holding (swing, delivery). Tick while active OR
+        # while any holding is open (positions carry across days & token refresh).
+        from app.routes.equity_strategy_routes import _get_strategy as _get_eqhold
+        eqh = _get_eqhold(broker, uid)
+        if authenticated and (eqh.is_active or eqh._open):
+            eqh.check()
     finally:
         db.close()
 
@@ -372,6 +380,7 @@ app.include_router(s9_router, prefix="/api/strategy9-trade", tags=["Strategy9-Li
 app.include_router(s10_router, prefix="/api/strategy10-trade", tags=["Strategy10-EquityIntraday"])
 app.include_router(s11_router, prefix="/api/strategy11-trade", tags=["Strategy11-VwapPvwap"])
 app.include_router(s12_router, prefix="/api/strategy12-trade", tags=["Strategy12-EmaPullback"])
+app.include_router(equity_strategy_router, prefix="/api/equity-strategy/pmvwap-holding", tags=["Equity-PMVwapHolding"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])

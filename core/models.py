@@ -414,3 +414,47 @@ class ResearchWatchlist(Base):
         UniqueConstraint("user_id", "name", name="uq_research_watchlist"),
         Index("idx_research_watchlist_user", "user_id"),
     )
+
+
+class EquityHoldingPosition(Base):
+    """Live/paper position for the Equity Prev-Month-VWAP Holding strategy.
+
+    Authoritative, browseable store of every holding — open and closed — so the
+    strategy survives restarts / daily token refresh (positions carry across
+    days). One row per stock entry. GTT ids link to the server-side exit
+    triggers. Auto-created at startup via ``create_all``.
+    """
+    __tablename__ = "equity_holding_positions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    trade_date = Column(Date, nullable=False)
+    entry_time = Column(String(10))
+    underlying = Column(String(40), nullable=False)
+    exchange = Column(String(6), default="NSE")
+    token = Column(Integer)
+    qty = Column(Integer)
+    entry_price = Column(Numeric(12, 2))
+    capital = Column(Numeric(14, 2))
+    target_price = Column(Numeric(12, 2))
+    stop_price = Column(Numeric(12, 2))
+    prev_month_vwap = Column(Numeric(12, 2))
+    prev_week_vwap = Column(Numeric(12, 2))
+    ltp = Column(Numeric(12, 2))
+    state = Column(String(20), default="OPEN")          # OPEN | CLOSED
+    target_gtt = Column(String(40))
+    stop_gtt = Column(String(40))
+    exit_price = Column(Numeric(12, 2))
+    exit_time = Column(String(10))
+    exit_date = Column(Date)
+    hold_days = Column(Integer)
+    pnl = Column(Numeric(14, 2))
+    exit_reason = Column(String(30))
+    paper = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("idx_eqhold_user_state", "user_id", "state"),
+        Index("idx_eqhold_user_date", "user_id", "trade_date"),
+    )

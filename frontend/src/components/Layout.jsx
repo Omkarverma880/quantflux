@@ -28,6 +28,7 @@ import {
   FlaskConical,
   ChevronDown,
   Gauge,
+  Wallet,
 } from 'lucide-react';
 
 const NAV = [
@@ -46,6 +47,12 @@ const NAV = [
       { to: '/research/nifty-signal-generator', label: '6. Nifty Signal Generator' },
       { to: '/research/pmvwap-straddle', label: '7. Prev-Month VWAP Straddle' },
       { to: '/research/pmvwap-equity', label: '8. Prev-Month VWAP Equity' },
+    ],
+  },
+  {
+    label: 'Equity Strategies', icon: Wallet,
+    children: [
+      { to: '/equity-strategy/pmvwap-holding', label: '1. Prev-Month VWAP Holding' },
     ],
   },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },

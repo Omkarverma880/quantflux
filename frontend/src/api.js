@@ -485,6 +485,14 @@ export const api = {
   deleteSectorOverride: (symbol) =>
     request(`/portfolio/sectors/${encodeURIComponent(symbol)}`, { method: 'DELETE' }),
 
+  // Equity Strategies — Prev-Month VWAP Holding (live port of Research #8)
+  eqHoldStatus: () => request('/equity-strategy/pmvwap-holding/status'),
+  eqHoldStart: (config) => request('/equity-strategy/pmvwap-holding/start', { method: 'POST', body: JSON.stringify({ config: config || {} }) }),
+  eqHoldStop: () => request('/equity-strategy/pmvwap-holding/stop', { method: 'POST' }),
+  eqHoldUpdateConfig: (config) => request('/equity-strategy/pmvwap-holding/config', { method: 'PUT', body: JSON.stringify({ config: config || {} }) }),
+  eqHoldCheck: () => request('/equity-strategy/pmvwap-holding/check', { method: 'POST' }),
+  eqHoldReset: () => request('/equity-strategy/pmvwap-holding/reset', { method: 'POST' }),
+
   // Settings
   getSettings: () => request('/settings/'),
   updateSettings: (data) =>
