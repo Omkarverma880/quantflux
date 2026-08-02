@@ -59,7 +59,9 @@ export default function PMVwapHolding() {
     return () => { if (timer.current) clearInterval(timer.current); };
   }, [refresh]);
 
-  const symbols = selToSymbols(sel, universe);
+  const picked = selToSymbols(sel, universe);
+  // Keep previously-saved symbols if you haven't re-picked a watchlist this time.
+  const symbols = picked.length ? picked : (cfg.symbols || []);
 
   const saveConfig = async () => {
     setBusy('save');
@@ -108,6 +110,9 @@ export default function PMVwapHolding() {
             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold border ${live ? 'bg-red-600/15 text-red-400 border-red-500/30' : 'bg-amber-500/15 text-amber-400 border-amber-500/30'}`}>
               {live ? 'LIVE · REAL ORDERS' : 'PAPER'}
             </span>
+            {cfg.auto_start && (
+              <span className="px-2 py-0.5 rounded-full text-xs font-semibold border bg-brand-600/15 text-brand-400 border-brand-500/30">AUTO-START</span>
+            )}
           </div>
           <p className="text-gray-500 text-sm mt-0.5">Swing delivery (CNC): buy when price meets Prev-Month VWAP with Prev-Week VWAP above; exit via GTT target/stop, max-hold or VWAP re-cross.</p>
         </div>
@@ -167,6 +172,9 @@ export default function PMVwapHolding() {
               <input type="checkbox" checked={cfg.paper_trade} onChange={(e) => patch('paper_trade', e.target.checked)} className="accent-brand-500" />
               <span className={cfg.paper_trade ? 'text-amber-400 font-semibold' : 'text-red-400 font-semibold'}>{cfg.paper_trade ? 'Paper mode' : 'LIVE (real orders)'}</span>
             </label>
+            <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer" title="Auto-start the strategy when you log in each morning. You can still manually Stop; it won't auto-restart that day.">
+              <input type="checkbox" checked={cfg.auto_start} onChange={(e) => patch('auto_start', e.target.checked)} className="accent-brand-500" /> Auto-start on login
+            </label>
             <div><label className={lbl}>Timeframe</label>
               <select value={cfg.timeframe} onChange={(e) => patch('timeframe', e.target.value)} className={`w-full ${selCls}`}>{TIMEFRAMES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
             </div>
@@ -176,6 +184,12 @@ export default function PMVwapHolding() {
             <div><label className={lbl}>Target %</label>{num('target_pct', 0, 0.5)}</div>
             <div><label className={lbl}>Stop % (0=off)</label>{num('stop_pct', 0, 0.5)}</div>
             <div><label className={lbl}>Max Hold Days</label>{num('max_hold_days', 1)}</div>
+            <div><label className={lbl} title="High/Low: tick exit via GTT (offline-safe). Close: exit on candle close (app must be running).">Exit On</label>
+              <select value={cfg.exit_on} onChange={(e) => patch('exit_on', e.target.value)} className={`w-full ${selCls}`}>
+                <option value="high_low">High/Low · GTT</option>
+                <option value="close">Close · managed</option>
+              </select>
+            </div>
             <div><label className={lbl}>VWAP Buffer</label>{num('vwap_buffer', 0, 0.05)}</div>
             <div><label className={lbl}>Entry Start</label><input value={cfg.entry_start} onChange={(e) => patch('entry_start', e.target.value)} className={`w-full ${selCls}`} /></div>
             <div><label className={lbl}>Signal Cutoff</label><input value={cfg.signal_cutoff} onChange={(e) => patch('signal_cutoff', e.target.value)} className={`w-full ${selCls}`} /></div>
@@ -279,6 +293,9 @@ function InfoPanel() {
       </Section>
       <Section title="How it runs (no cron)">
         <p>You log in to Zerodha each morning as usual. While the app is up and you're logged in, the built-in loop evaluates the strategy during market hours (9:15–15:30) and manages exits — no scheduled job needed. Positions persist in the database and are reloaded on restart, so they carry across days and the daily token refresh.</p>
+      </Section>
+      <Section title="Auto-start on login">
+        <p>Enable <strong>Auto-start on login</strong> (and Save config) to have the strategy start itself automatically after your morning Zerodha login each day — no manual Start needed. You keep full control: press <strong>Stop</strong> any time and it won't auto-restart for the rest of that day; turn the toggle off to disable it entirely. The run state survives app restarts within the day.</p>
       </Section>
       <Section title="Entry">
         <p>• On each completed candle of your timeframe, for every configured stock not already held.</p>

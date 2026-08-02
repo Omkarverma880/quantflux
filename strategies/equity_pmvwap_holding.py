@@ -21,10 +21,12 @@ can be forward-tested before any real capital is deployed.
 """
 from __future__ import annotations
 
+import json
 import threading
 from datetime import date, datetime, time as dtime, timedelta
 from typing import Optional
 
+from config import settings
 from core.broker import (
     Broker, OrderRequest, OrderSide, OrderType, ProductType, Exchange,
 )
@@ -42,8 +44,11 @@ _INTERVAL_MIN = {"minute": 1, "3minute": 3, "5minute": 5, "10minute": 10,
 STATE_IDLE = "IDLE"
 STATE_RUNNING = "RUNNING"
 
+_STATE_FILE = settings.DATA_DIR / "strategy_configs" / "equity_pmvwap_holding_state.json"
+
 DEFAULT_CONFIG: dict = {
     "paper_trade": True,                 # SAFETY: simulate fills until you flip this off
+    "auto_start": False,                 # auto-start the strategy when you log in each morning
     "timeframe": "15m",
     "entry_mode": "cross_up",            # cross_up | touch
     "vwap_buffer": 0.0,
@@ -54,6 +59,7 @@ DEFAULT_CONFIG: dict = {
     "target_pct": 10.0,
     "stop_pct": 0.0,                     # 0 = no stop
     "max_hold_days": 20,
+    "exit_on": "high_low",               # high_low → GTT tick exit (offline-safe) | close → strategy-managed on candle close
     "allow_reentry": False,              # off → skip stocks already held (strategy or demat)
     "exit_on_vwap_cross": False,         # exit when price closes back below Prev-Month VWAP
     "portfolio_mode": True,
@@ -89,6 +95,8 @@ class EquityPMVwapHolding:
         self.positions: list[dict] = []          # open + recently closed (session view)
         self._entered_today: set[str] = set()
         self._trading_date: Optional[date] = None
+        self._auto_started_date: Optional[date] = None   # day auto-start last fired
+        self._manual_stop_date: Optional[date] = None    # day the user manually stopped
         self._candle_cache: dict[tuple, tuple[float, list[dict]]] = {}
         self.last_error: Optional[str] = None
         self.last_check: Optional[str] = None
@@ -100,12 +108,14 @@ class EquityPMVwapHolding:
                 self.cfg[k] = v
         # coerce / clamp
         self.cfg["symbols"] = [str(x).strip().upper() for x in (self.cfg.get("symbols") or []) if str(x).strip()]
-        for b in ("paper_trade", "require_pw_above_pm", "one_signal_per_day",
+        for b in ("paper_trade", "auto_start", "require_pw_above_pm", "one_signal_per_day",
                   "exit_on_vwap_cross", "portfolio_mode", "allow_reentry"):
             self.cfg[b] = bool(self.cfg[b])
         self.cfg["max_open_positions"] = max(1, int(self.cfg["max_open_positions"]))
         if self.cfg["timeframe"] not in TIMEFRAME_MAP:
             self.cfg["timeframe"] = "15m"
+        if self.cfg.get("exit_on") not in ("close", "high_low"):
+            self.cfg["exit_on"] = "high_low"
 
     def config_dict(self) -> dict:
         return dict(self.cfg)
@@ -114,14 +124,68 @@ class EquityPMVwapHolding:
         self.apply_config(config or {})
         self.is_active = True
         self.state = STATE_RUNNING
+        self._manual_stop_date = None          # a manual start clears any stop-block
         self._day_reset(datetime.now())
+        self._save_runtime()
         logger.info("EquityPMVwapHolding started (paper=%s, %d symbols)",
                     self.cfg["paper_trade"], len(self.cfg["symbols"]))
 
     def stop(self):
         self.is_active = False
         self.state = STATE_IDLE
+        self._manual_stop_date = date.today()  # don't auto-restart for the rest of today
+        self._save_runtime()
         logger.info("EquityPMVwapHolding stopped (open positions keep being managed)")
+
+    def _maybe_autostart(self, now: datetime):
+        """Auto-start on the morning tick if enabled and not manually stopped
+        today. The background loop only ticks authenticated (logged-in) users,
+        so this fires right after the daily Zerodha login."""
+        if not self.cfg.get("auto_start") or self.is_active:
+            return
+        today = now.date()
+        if self._manual_stop_date == today:
+            return
+        self.is_active = True
+        self.state = STATE_RUNNING
+        self._auto_started_date = today
+        self._day_reset(now)
+        self._save_runtime()
+        logger.info("EquityPMVwapHolding auto-started on login (%s)", today.isoformat())
+
+    # ── run-state persistence (survives restarts within the day) ──
+    def _save_runtime(self):
+        if not self.user_id:
+            return
+        try:
+            data = {}
+            if _STATE_FILE.exists():
+                data = json.loads(_STATE_FILE.read_text()) or {}
+            data[str(self.user_id)] = {
+                "is_active": self.is_active,
+                "auto_started_date": self._auto_started_date.isoformat() if self._auto_started_date else None,
+                "manual_stop_date": self._manual_stop_date.isoformat() if self._manual_stop_date else None,
+            }
+            _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _STATE_FILE.write_text(json.dumps(data, indent=2))
+        except Exception as exc:
+            logger.debug("save runtime failed: %s", exc)
+
+    def _load_runtime(self):
+        if not self.user_id:
+            return
+        try:
+            if not _STATE_FILE.exists():
+                return
+            d = (json.loads(_STATE_FILE.read_text()) or {}).get(str(self.user_id))
+            if not d:
+                return
+            self.is_active = bool(d.get("is_active"))
+            self.state = STATE_RUNNING if self.is_active else STATE_IDLE
+            self._auto_started_date = date.fromisoformat(d["auto_started_date"]) if d.get("auto_started_date") else None
+            self._manual_stop_date = date.fromisoformat(d["manual_stop_date"]) if d.get("manual_stop_date") else None
+        except Exception as exc:
+            logger.debug("load runtime failed: %s", exc)
 
     # ── helpers ──
     @property
@@ -183,6 +247,7 @@ class EquityPMVwapHolding:
             self.last_check = now.strftime("%H:%M:%S")
             try:
                 self._day_reset(now)
+                self._maybe_autostart(now)
                 self._manage_open(now)
                 if self.is_active and self._in_entry_window(now):
                     self._try_entries(now)
@@ -195,19 +260,35 @@ class EquityPMVwapHolding:
     def _in_entry_window(self, now: datetime) -> bool:
         return _hhmm(self.cfg["entry_start"]) <= now.time() <= _hhmm(self.cfg["signal_cutoff"])
 
+    def _last_completed_close(self, token: int, now: datetime) -> Optional[float]:
+        """Close of the most recently *completed* candle (for Exit-On = Close)."""
+        candles = self._candles(token)
+        mins = _INTERVAL_MIN.get(self._interval(), 15)
+        last = None
+        for c in candles:
+            dt = c.get("_dt")
+            if dt is not None and dt + timedelta(minutes=mins) <= now:
+                last = c
+        try:
+            return float(last["close"]) if last else None
+        except Exception:
+            return None
+
     # ── manage open positions (reconcile + exits) ──
     def _manage_open(self, now: datetime):
         openp = self._open
         if not openp:
             return
+        paper = self.cfg["paper_trade"]
+        exit_on = self.cfg.get("exit_on", "high_low")
         ltp_map = self._ltp([(p["underlying"], p.get("exchange", "NSE")) for p in openp])
-        active_gtts = set()
-        if not self.cfg["paper_trade"]:
+
+        # Live High/Low exits fire via GTT — a triggered GTT leaves the list.
+        active_gtts = None
+        if not paper and exit_on == "high_low":
             try:
-                for g in self.broker.get_gtts() or []:
-                    gid = g.get("id") if isinstance(g, dict) else None
-                    if gid is not None:
-                        active_gtts.add(str(gid))
+                active_gtts = {str(g.get("id")) for g in (self.broker.get_gtts() or [])
+                               if isinstance(g, dict) and g.get("id") is not None}
             except Exception:
                 active_gtts = None      # unknown → skip GTT reconciliation this tick
 
@@ -218,25 +299,34 @@ class EquityPMVwapHolding:
             held = (now.date() - date.fromisoformat(p["trade_date"])).days
             p["hold_days"] = held
 
-            # 1) live GTT reconciliation — a triggered target/stop leaves the GTT list
-            if not self.cfg["paper_trade"] and active_gtts is not None:
-                if p.get("target_gtt") and str(p["target_gtt"]) not in active_gtts:
-                    self._close(p, p["target_price"], "TARGET", now); continue
-                if p.get("stop_gtt") and str(p["stop_gtt"]) not in active_gtts:
-                    self._close(p, p["stop_price"], "STOP", now); continue
+            # ── target / stop, per Exit-On semantics ──
+            if exit_on == "high_low":
+                if paper:                                   # tick touch (simulated)
+                    if ltp >= p["target_price"]:
+                        self._close(p, p["target_price"], "TARGET", now); continue
+                    if p.get("stop_price") and ltp <= p["stop_price"]:
+                        self._close(p, p["stop_price"], "STOP", now); continue
+                elif active_gtts is not None:               # GTT reconciliation (OCO or single)
+                    gid = p.get("target_gtt")
+                    if gid and str(gid) not in active_gtts:
+                        if p.get("stop_price") and ltp <= float(p["stop_price"]) * 1.003:
+                            self._close(p, p["stop_price"], "STOP", now)
+                        else:
+                            self._close(p, p["target_price"], "TARGET", now)
+                        continue
+            else:                                           # exit_on == "close"
+                c = self._last_completed_close(int(p["token"]), now)
+                if c is not None:
+                    if c >= p["target_price"]:
+                        self._close(p, c, "TARGET", now); continue
+                    if p.get("stop_price") and c <= p["stop_price"]:
+                        self._close(p, c, "STOP", now); continue
 
-            # 2) paper simulation of target / stop
-            if self.cfg["paper_trade"]:
-                if ltp >= p["target_price"]:
-                    self._close(p, p["target_price"], "TARGET", now); continue
-                if p.get("stop_price") and ltp <= p["stop_price"]:
-                    self._close(p, p["stop_price"], "STOP", now); continue
-
-            # 3) max-hold-days square off (both modes)
+            # ── max-hold-days square off ──
             if held >= int(self.cfg["max_hold_days"]):
                 self._close(p, ltp, "MAXHOLD", now); continue
 
-            # 4) optional exit when price closes back below Prev-Month VWAP
+            # ── optional exit when price closes back below Prev-Month VWAP ──
             if self.cfg["exit_on_vwap_cross"]:
                 pm = self._current_pm_vwap(p)
                 if pm and ltp < pm:
@@ -321,16 +411,22 @@ class EquityPMVwapHolding:
             "target_price": target, "stop_price": stop,
             "prev_month_vwap": sig["prev_month_vwap"], "prev_week_vwap": sig["prev_week_vwap"],
             "ltp": round(ltp, 2), "state": "OPEN",
-            "target_gtt": None, "stop_gtt": None,
+            "target_gtt": None, "stop_gtt": None, "oco": False,
             "exit_price": None, "exit_time": None, "exit_date": None,
             "hold_days": 0, "pnl": 0.0, "exit_reason": None,
             "paper": bool(self.cfg["paper_trade"]),
         }
-        # server-side exits (live only)
-        if not self.cfg["paper_trade"]:
-            pos["target_gtt"] = self._place_gtt(sym, exch, target, ltp, qty, "TARGET")
+        # Live High/Low exits → server-side GTT. With a stop, use a single OCO
+        # GTT so exactly one leg can ever fire (no double-sell). Close-mode exits
+        # are managed by check() (no resting GTT).
+        if not self.cfg["paper_trade"] and self.cfg.get("exit_on", "high_low") == "high_low":
             if stop:
-                pos["stop_gtt"] = self._place_gtt(sym, exch, stop, ltp, qty, "STOP")
+                oco = self._place_oco(sym, exch, stop, target, ltp, qty)
+                pos["target_gtt"] = oco
+                pos["stop_gtt"] = oco
+                pos["oco"] = bool(oco)
+            else:
+                pos["target_gtt"] = self._place_gtt(sym, exch, target, ltp, qty, "TARGET")
 
         self.positions.append(pos)
         self._entered_today.add(sym)
@@ -382,6 +478,16 @@ class EquityPMVwapHolding:
             logger.error("GTT %s failed %s: %s", tag, sym, exc)
             return None
 
+    def _place_oco(self, sym: str, exch: str, stop: float, target: float, ltp: float, qty: int):
+        try:
+            return self.broker.place_oco_gtt(
+                tradingsymbol=sym, exchange=exch, stop_trigger=float(stop),
+                target_trigger=float(target), last_price=float(ltp), quantity=int(qty),
+                side="SELL", product="CNC")
+        except Exception as exc:
+            logger.error("OCO GTT failed %s: %s", sym, exc)
+            return None
+
     def _cancel_gtt(self, gid):
         if gid:
             try:
@@ -391,14 +497,19 @@ class EquityPMVwapHolding:
 
     def _close(self, p: dict, price: float, reason: str, now: datetime):
         if not self.cfg["paper_trade"]:
-            # cancel any resting GTTs, then market-sell what a GTT didn't already close
-            if reason in ("MAXHOLD", "VWAP_EXIT"):
-                self._cancel_gtt(p.get("target_gtt"))
-                self._cancel_gtt(p.get("stop_gtt"))
-                self._place_sell(p["underlying"], p.get("exchange", "NSE"), p["qty"], reason)
+            exit_on = self.cfg.get("exit_on", "high_low")
+            gtt_filled = (exit_on == "high_low" and reason in ("TARGET", "STOP"))
+            if gtt_filled:
+                # A resting GTT fired server-side. For OCO the broker already
+                # cancelled the other leg; for a single GTT there's no sibling.
+                pass
             else:
-                # target/stop filled server-side → cancel the sibling GTT
-                self._cancel_gtt(p.get("stop_gtt") if reason == "TARGET" else p.get("target_gtt"))
+                # We must exit at market (Close-mode target/stop, max-hold, VWAP
+                # re-cross). Cancel any resting GTT(s) first, then market-sell.
+                self._cancel_gtt(p.get("target_gtt"))
+                if not p.get("oco") and p.get("stop_gtt"):
+                    self._cancel_gtt(p.get("stop_gtt"))
+                self._place_sell(p["underlying"], p.get("exchange", "NSE"), p["qty"], reason)
         p["state"] = "CLOSED"
         p["exit_price"] = round(float(price), 2)
         p["exit_time"] = now.strftime("%H:%M")
@@ -458,6 +569,7 @@ class EquityPMVwapHolding:
                               EquityHoldingPosition.trade_date >= cutoff)
                       .order_by(EquityHoldingPosition.trade_date, EquityHoldingPosition.entry_time).all())
             self.positions = [self._row_to_pos(r) for r in rows]
+            self._load_runtime()          # resume active/stopped state after a restart
             return bool(self.positions)
         except Exception as exc:
             logger.error("restore state failed: %s", exc)
@@ -475,6 +587,7 @@ class EquityPMVwapHolding:
             "target_price": f(r.target_price), "stop_price": f(r.stop_price),
             "prev_month_vwap": f(r.prev_month_vwap), "prev_week_vwap": f(r.prev_week_vwap),
             "ltp": f(r.ltp), "state": r.state, "target_gtt": r.target_gtt, "stop_gtt": r.stop_gtt,
+            "oco": bool(r.target_gtt and r.stop_gtt and r.target_gtt == r.stop_gtt),
             "exit_price": f(r.exit_price), "exit_time": r.exit_time,
             "exit_date": r.exit_date.isoformat() if r.exit_date else None,
             "hold_days": r.hold_days, "pnl": f(r.pnl), "exit_reason": r.exit_reason,

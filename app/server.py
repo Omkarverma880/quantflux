@@ -249,7 +249,7 @@ def _run_strategies_for_user(uid: int):
         # while any holding is open (positions carry across days & token refresh).
         from app.routes.equity_strategy_routes import _get_strategy as _get_eqhold
         eqh = _get_eqhold(broker, uid)
-        if authenticated and (eqh.is_active or eqh._open):
+        if authenticated and (eqh.is_active or eqh._open or eqh.cfg.get("auto_start")):
             eqh.check()
     finally:
         db.close()

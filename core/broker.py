@@ -419,6 +419,32 @@ class Broker:
         )
         return str(res.get("trigger_id") if isinstance(res, dict) else res)
 
+    def place_oco_gtt(self, *, tradingsymbol: str, exchange: str, stop_trigger: float,
+                      target_trigger: float, last_price: float, quantity: int, side: str,
+                      product: str = "CNC") -> str:
+        """Place a two-leg OCO GTT (stop + target). Zerodha auto-cancels the
+        other leg the instant one triggers — so exactly one exit ever fires (no
+        double-sell). Returns the single trigger id. Stop leg = MARKET, target
+        leg = LIMIT at its trigger. ``trigger_values`` must be ascending."""
+        if settings.PAPER_TRADE:
+            self._paper_order_counter += 1
+            return f"PAPER-OCO-{self._paper_order_counter:06d}"
+        lower, upper = sorted([float(stop_trigger), float(target_trigger)])
+        # order[i] pairs with trigger_values[i]; lower=stop (MARKET), upper=target (LIMIT).
+        stop_order = {"transaction_type": side, "quantity": int(quantity),
+                      "order_type": "MARKET", "product": product, "price": 0}
+        target_order = {"transaction_type": side, "quantity": int(quantity),
+                        "order_type": "LIMIT", "product": product, "price": float(upper)}
+        res = self.kite.place_gtt(
+            trigger_type=self.kite.GTT_TYPE_OCO,
+            tradingsymbol=tradingsymbol,
+            exchange=exchange,
+            trigger_values=[lower, upper],
+            last_price=float(last_price),
+            orders=[stop_order, target_order],
+        )
+        return str(res.get("trigger_id") if isinstance(res, dict) else res)
+
     def get_gtts(self) -> list[dict]:
         if settings.PAPER_TRADE:
             return []
