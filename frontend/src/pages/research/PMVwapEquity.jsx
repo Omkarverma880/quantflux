@@ -48,7 +48,8 @@ export default function PMVwapEquity() {
   const [universe, setUniverse] = useState([]);
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
-  const [data, setData] = useState(null);
+  // Restore the last view instantly on return (survives page navigation in this tab)
+  const [data, setData] = useState(() => { try { return JSON.parse(sessionStorage.getItem('pmveq_data') || 'null'); } catch { return null; } });
   const [dateFilter, setDateFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -60,6 +61,8 @@ export default function PMVwapEquity() {
   // persisted live-scan target so it survives navigation away & back
   const liveTargetRef = useRef((() => { try { return JSON.parse(localStorage.getItem('pmveq_target') || 'null'); } catch { return null; } })());
   useEffect(() => { localStorage.setItem('pmveq_live', live ? '1' : '0'); }, [live]);
+  // Persist the current result so the list doesn't vanish when navigating away & back.
+  useEffect(() => { try { if (data) sessionStorage.setItem('pmveq_data', JSON.stringify(data)); } catch { /* quota */ } }, [data]);
 
   const showErr = (m) => { setError(m); setTimeout(() => setError(''), 6000); };
   const patch = (k, v) => setCfg((c) => ({ ...c, [k]: v }));

@@ -610,13 +610,23 @@ function TelegramCard() {
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 2500); };
   const fail = (m) => { setErr(m); setTimeout(() => setErr(''), 5000); };
   const save = async () => { setBusy('save'); try { const r = await api.saveTelegramSettings(tg); if (r.status === 'ok') flash('Saved'); } catch (e) { fail(e.message); } finally { setBusy(''); } };
-  const test = async () => { setBusy('test'); try { const r = await api.testTelegramSettings({ bot_token: tg.bot_token, chat_id: tg.chat_id }); if (r.ok) flash('Sent — check your Telegram'); else fail(r.error || 'Failed'); } catch (e) { fail(e.message); } finally { setBusy(''); } };
+  const test = async () => {
+    setBusy('test');
+    try {
+      await api.saveTelegramSettings(tg);   // persist enabled + creds first, so Test == real path
+      const r = await api.testTelegramSettings({ bot_token: tg.bot_token, chat_id: tg.chat_id });
+      if (r.ok) flash(tg.enabled ? 'Sent — notifications are ACTIVE ✅' : 'Sent — now tick "Enable" and Save to actually activate alerts');
+      else fail(r.error || 'Failed');
+    } catch (e) { fail(e.message); } finally { setBusy(''); }
+  };
+  const active = tg.enabled && tg.bot_token && tg.chat_id;
   const inp = 'w-full input-field';
   return (
     <div className="card space-y-4">
       <div className="flex items-center gap-2 pb-2 border-b border-surface-3/60">
         <Send className="w-5 h-5 text-brand-400" />
         <h3 className="font-semibold text-white">Telegram Notifications</h3>
+        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${active ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border-amber-500/30'}`}>{active ? 'ACTIVE' : 'NOT ACTIVE'}</span>
         <span className="ml-auto text-[11px] text-gray-500">Used across the whole app</span>
       </div>
       <p className="text-xs text-gray-500">Configure once here. Research live scans, live strategies and OPEI all send alerts through this bot.</p>

@@ -1095,7 +1095,15 @@ def opei_config(user_id: int = Depends(login_required), db: Session = Depends(ge
 def opei_config_save(payload: dict | None = None,
                            user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
-        return {"status": "ok", "config": _get_opei(get_user_broker(db, user_id), user_id).save_config(payload or {})}
+        cfg = _get_opei(get_user_broker(db, user_id), user_id).save_config(payload or {})
+        # Mirror OPEI's Telegram creds into the UNIVERSAL config so every module
+        # (Research-8 live, Equity strategy, OPEI) shares them — wherever set.
+        if any(k in (payload or {}) for k in ("telegram_enabled", "telegram_bot_token", "telegram_chat_id")):
+            from core import notify as _n
+            _n.save_config({"enabled": cfg.get("telegram_enabled"),
+                            "bot_token": cfg.get("telegram_bot_token"),
+                            "chat_id": cfg.get("telegram_chat_id")})
+        return {"status": "ok", "config": cfg}
     except Exception as exc:
         logger.error("OPEI config save failed: %s", exc)
         return {"status": "error", "message": str(exc)}

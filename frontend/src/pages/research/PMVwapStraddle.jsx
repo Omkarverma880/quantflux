@@ -53,7 +53,7 @@ export default function PMVwapStraddle() {
   const [universe, setUniverse] = useState([]);
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
-  const [data, setData] = useState(null);
+  const [data, setData] = useState(() => { try { return JSON.parse(sessionStorage.getItem('pmvst_data') || 'null'); } catch { return null; } });
   const [dateFilter, setDateFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -64,6 +64,7 @@ export default function PMVwapStraddle() {
   const timer = useRef(null);
   const liveTargetRef = useRef((() => { try { return JSON.parse(localStorage.getItem('pmvst_target') || 'null'); } catch { return null; } })());
   useEffect(() => { localStorage.setItem('pmvst_live', live ? '1' : '0'); }, [live]);
+  useEffect(() => { try { if (data) sessionStorage.setItem('pmvst_data', JSON.stringify(data)); } catch { /* quota */ } }, [data]);
 
   const showErr = (m) => { setError(m); setTimeout(() => setError(''), 6000); };
   const patch = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
