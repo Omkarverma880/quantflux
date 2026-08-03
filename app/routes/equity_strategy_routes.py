@@ -77,13 +77,13 @@ class StrategyConfig(BaseModel):
 
 
 @router.get("/status")
-async def get_status(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def get_status(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     strat = _get_strategy(get_user_broker(db, user_id), user_id)
     return strat.get_status()
 
 
 @router.post("/start")
-async def start(payload: StrategyConfig | None = None, user_id: int = Depends(login_required),
+def start(payload: StrategyConfig | None = None, user_id: int = Depends(login_required),
                 db: Session = Depends(get_db)):
     broker = get_user_broker(db, user_id)
     if not _is_authed(db, user_id):
@@ -102,7 +102,7 @@ async def start(payload: StrategyConfig | None = None, user_id: int = Depends(lo
 
 
 @router.post("/stop")
-async def stop(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def stop(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     strat = _get_strategy(get_user_broker(db, user_id), user_id)
     strat.stop()
     _save_config(strat.config_dict())
@@ -110,7 +110,7 @@ async def stop(user_id: int = Depends(login_required), db: Session = Depends(get
 
 
 @router.put("/config")
-async def update_config(payload: StrategyConfig, user_id: int = Depends(login_required),
+def update_config(payload: StrategyConfig, user_id: int = Depends(login_required),
                         db: Session = Depends(get_db)):
     strat = _get_strategy(get_user_broker(db, user_id), user_id)
     strat.apply_config(payload.config or {})
@@ -119,7 +119,7 @@ async def update_config(payload: StrategyConfig, user_id: int = Depends(login_re
 
 
 @router.post("/check")
-async def check(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def check(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     broker = get_user_broker(db, user_id)
     if not _is_authed(db, user_id):
         return {"status": "error", "message": "Zerodha not authenticated"}
@@ -128,7 +128,7 @@ async def check(user_id: int = Depends(login_required), db: Session = Depends(ge
 
 
 @router.post("/reset")
-async def reset(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def reset(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     strat = _get_strategy(get_user_broker(db, user_id), user_id)
     strat.reset()
     return {"status": "ok", **strat.get_status()}

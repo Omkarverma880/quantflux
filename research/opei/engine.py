@@ -205,43 +205,52 @@ def score_side(feat: dict, weights: dict) -> dict:
         cats[c] = {"score": round(sc, 1), "weight": round(w, 1), "reasons": rs}
         overall += sc * w
         reasons.extend(rs)
-    overall = round(overall / tot_w, 1)
+    overall = float(round(overall / tot_w))     # integer → stops the score flickering
     return {"overall": overall, "band": band_label(overall), "color": band_color(overall),
             "categories": cats, "reasons": reasons}
 
 
 # ── entry-level generator ─────────────────────────────────────────
-def generate_levels(feat: dict, overall: float, cfg: dict) -> list[dict]:
-    p = float(feat.get("premium") or 0)
-    a = float(feat.get("atr") or 0) or max(p * 0.02, 0.5)
-    if p <= 0:
+def _round_half(x: float) -> float:
+    """Snap to the nearest 0.5 so levels don't jitter on tiny tick moves."""
+    return round(x * 2.0) / 2.0
+
+
+def generate_levels(feat: dict, overall: float, cfg: dict, anchor: float | None = None) -> list[dict]:
+    # Anchor the ladder to the last COMPLETED candle close (stable within the
+    # candle) — not the live tick — so the recommended levels stop changing every
+    # second. They now only step when a new candle closes.
+    base = float(anchor if anchor else (feat.get("premium") or 0))
+    p = float(feat.get("premium") or base)     # live premium (for confidence/active only)
+    a = float(feat.get("atr") or 0) or max(base * 0.02, 0.5)
+    if base <= 0:
         return []
     mults = cfg.get("level_atr_mult") or [0.6, 1.2, 2.0, 3.0, 4.5]
     n = int(cfg.get("num_levels", 5))
-    vw = float(feat.get("vwap") or p)
+    vw = float(feat.get("vwap") or base)
     levels = []
     for i, m in enumerate(mults[:n]):
-        lvl = round(p + m * a, 2)
-        dist = (lvl - p) / p
-        # confidence: overall, decayed by distance and ladder index
-        conf = _clamp(overall - dist * 60 - i * 3, 5, 99)
+        lvl = _round_half(base + m * a)
+        dist = (lvl - base) / base
+        # confidence: overall, decayed by distance and ladder index (integer → stable)
+        conf = round(_clamp(overall - dist * 60 - i * 3, 5, 99))
         move_pct = round((a * (1.5 + m) / lvl) * 100.0, 1)
-        sl = round(max(vw - a * 0.5, p - a * 0.9, p * 0.5), 2)
+        sl = _round_half(max(vw - a * 0.5, base - a * 0.9, base * 0.5))
         risk = "Low" if dist < 0.06 else ("Medium" if dist < 0.15 else "High")
         # holding time estimate from premium velocity (atr per bar → bars to target)
         vel = abs(float(feat.get("roc", 0))) or 1.0
-        hold_min = int(_clamp((m * a) / (max(vel, 0.5) / 100.0 * p) * float(cfg.get("_tf_min", 5)), 3, 240))
+        hold_min = int(_clamp((m * a) / (max(vel, 0.5) / 100.0 * base) * float(cfg.get("_tf_min", 5)), 3, 240))
         levels.append({
             "level": lvl,
-            "confidence": round(conf, 1),
+            "confidence": conf,
             "expected_move_pct": move_pct,
             "expected_momentum": "Explosive" if conf >= 90 else ("Strong" if conf >= 80 else "Moderate"),
             "risk": risk,
             "historical_success_pct": round(_clamp(conf * 0.82 + 8, 5, 96), 1),   # model estimate
             "expected_hold_min": hold_min,
             "sl": sl,
-            "targets": [round(lvl + a, 2), round(lvl + 2 * a, 2), round(lvl + 3 * a, 2)],
-            "trailing_sl": round(a * 0.5, 2),
+            "targets": [_round_half(lvl + a), _round_half(lvl + 2 * a), _round_half(lvl + 3 * a)],
+            "trailing_sl": _round_half(a * 0.5),
             "band": band_label(conf), "color": band_color(conf),
         })
     if levels:
@@ -250,10 +259,29 @@ def generate_levels(feat: dict, overall: float, cfg: dict) -> list[dict]:
     return levels
 
 
-def evaluate_side(feat: dict, weights: dict, cfg: dict) -> dict:
+def evaluate_side(feat: dict, weights: dict, cfg: dict,
+                  bias_dir: str = "neutral", bias_strength: float = 0.0) -> dict:
+    """Score one side and apply the market directional bias.
+
+    CE and PE can't both be high-probability explosive-UP at the same moment —
+    the underlying can only move one way. So when there is a clear bias we
+    SUPPRESS the counter-trend side (a CALL when the market is bearish, or a PUT
+    when bullish), so only the aligned side is recommended."""
     scored = score_side(feat, weights)
-    cfg = {**cfg}
-    levels = generate_levels(feat, scored["overall"], cfg)
+    overall = scored["overall"]
+    side = feat.get("side")
+    aligned = (bias_dir == "neutral"
+               or (bias_dir == "bullish" and side == "CE")
+               or (bias_dir == "bearish" and side == "PE"))
+    if not aligned and bias_dir != "neutral":
+        overall = float(round(overall * (1.0 - 0.45 * float(bias_strength))))
+        scored["reasons"] = ["⚠ Counter-trend to market bias"] + scored.get("reasons", [])
+    scored["overall"] = overall
+    scored["band"] = band_label(overall)
+    scored["color"] = band_color(overall)
+    scored["aligned"] = aligned
+
+    levels = generate_levels(feat, overall, {**cfg}, anchor=feat.get("anchor"))
     # entry-active: has live premium crossed any recommended level?
     active = None
     p = float(feat.get("premium") or 0)

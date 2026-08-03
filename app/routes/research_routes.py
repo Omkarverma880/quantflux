@@ -203,7 +203,7 @@ class ChainDownloadRequest(BaseModel):
 
 
 @router.post("/vwap-pvwap/run")
-async def run_vwap_pvwap(
+def run_vwap_pvwap(
     payload: RunRequest | None = None,
     user_id: int = Depends(login_required),
     db: Session = Depends(get_db),
@@ -235,7 +235,7 @@ async def run_vwap_pvwap(
 
 
 @router.post("/vwap-pvwap/signals")
-async def vwap_pvwap_signals(
+def vwap_pvwap_signals(
     payload: SignalsRequest | None = None,
     user_id: int = Depends(login_required),
     db: Session = Depends(get_db),
@@ -259,7 +259,7 @@ async def vwap_pvwap_signals(
 
 
 @router.post("/vwap-pvwap/export")
-async def export_vwap_pvwap(
+def export_vwap_pvwap(
     payload: ExportRequest | None = None,
     user_id: int = Depends(login_required),
     db: Session = Depends(get_db),
@@ -287,7 +287,7 @@ async def export_vwap_pvwap(
 # ──────────────── Option-Chain data + downloader ────────────────
 
 @router.get("/option-chain/expiries")
-async def option_chain_expiries(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def option_chain_expiries(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     broker = get_user_broker(db, user_id)
     if not _is_authed(db, user_id):
         return {"status": "error", "message": "Zerodha not authenticated"}
@@ -298,7 +298,7 @@ async def option_chain_expiries(user_id: int = Depends(login_required), db: Sess
 
 
 @router.post("/option-chain/snapshot")
-async def option_chain_snapshot(
+def option_chain_snapshot(
     payload: ChainRequest | None = None,
     user_id: int = Depends(login_required),
     db: Session = Depends(get_db),
@@ -319,7 +319,7 @@ async def option_chain_snapshot(
 
 
 @router.post("/option-chain/download")
-async def option_chain_download(
+def option_chain_download(
     payload: ChainDownloadRequest,
     user_id: int = Depends(login_required),
     db: Session = Depends(get_db),
@@ -338,7 +338,7 @@ async def option_chain_download(
 # ──────────────── HL + VWAP Research Lab ────────────────
 
 @router.get("/hl-vwap/meta")
-async def hl_vwap_meta(index: str = "NIFTY", user_id: int = Depends(login_required),
+def hl_vwap_meta(index: str = "NIFTY", user_id: int = Depends(login_required),
                        db: Session = Depends(get_db)):
     broker = get_user_broker(db, user_id)
     if not _is_authed(db, user_id):
@@ -351,7 +351,7 @@ async def hl_vwap_meta(index: str = "NIFTY", user_id: int = Depends(login_requir
 
 
 @router.post("/hl-vwap/run")
-async def hl_vwap_run(payload: dict, user_id: int = Depends(login_required),
+def hl_vwap_run(payload: dict, user_id: int = Depends(login_required),
                       db: Session = Depends(get_db)):
     """Run the HL+VWAP research. payload = full params dict (mode zerodha/csv)."""
     broker = get_user_broker(db, user_id)
@@ -365,7 +365,7 @@ async def hl_vwap_run(payload: dict, user_id: int = Depends(login_required),
 
 
 @router.post("/hl-vwap/chart")
-async def hl_vwap_chart(payload: dict | None = None, user_id: int = Depends(login_required),
+def hl_vwap_chart(payload: dict | None = None, user_id: int = Depends(login_required),
                         db: Session = Depends(get_db)):
     """Switch the chart to a specific day (reuses the last run — no re-fetch)."""
     broker = get_user_broker(db, user_id)
@@ -391,7 +391,7 @@ async def hl_vwap_upload(file: UploadFile = File(...), kind: str = Form("spot"),
 # ──────────────── Sentiment Analyzer ────────────────
 
 @router.post("/sentiment/snapshot")
-async def sentiment_snapshot(payload: dict | None = None, user_id: int = Depends(login_required),
+def sentiment_snapshot(payload: dict | None = None, user_id: int = Depends(login_required),
                              db: Session = Depends(get_db)):
     """Overall market sentiment (macro + derivative + technical)."""
     broker = get_user_broker(db, user_id)
@@ -406,7 +406,7 @@ async def sentiment_snapshot(payload: dict | None = None, user_id: int = Depends
 
 
 @router.get("/sentiment/config")
-async def sentiment_config(user_id: int = Depends(login_required),
+def sentiment_config(user_id: int = Depends(login_required),
                            db: Session = Depends(get_db)):
     """Return the current effective sentiment config (DB-backed, file seed)."""
     try:
@@ -417,7 +417,7 @@ async def sentiment_config(user_id: int = Depends(login_required),
 
 
 @router.post("/sentiment/config")
-async def sentiment_config_save(payload: dict | None = None,
+def sentiment_config_save(payload: dict | None = None,
                                 user_id: int = Depends(login_required),
                                 db: Session = Depends(get_db)):
     """Deep-merge edits into the durable per-user config (Postgres on Railway,
@@ -439,7 +439,7 @@ class NiftySentimentRequest(BaseModel):
 
 
 @router.post("/nifty-sentiment/snapshot")
-async def nifty_sentiment_snapshot(
+def nifty_sentiment_snapshot(
     payload: NiftySentimentRequest | None = None,
     user_id: int = Depends(login_required),
     db: Session = Depends(get_db),
@@ -457,7 +457,7 @@ async def nifty_sentiment_snapshot(
 
 
 @router.post("/nifty-sentiment/analytics")
-async def nifty_sentiment_analytics(
+def nifty_sentiment_analytics(
     payload: NiftySentimentRequest | None = None,
     user_id: int = Depends(login_required),
     db: Session = Depends(get_db),
@@ -476,7 +476,7 @@ async def nifty_sentiment_analytics(
 
 
 @router.get("/nifty-sentiment/config")
-async def nifty_sentiment_config(user_id: int = Depends(login_required),
+def nifty_sentiment_config(user_id: int = Depends(login_required),
                                  db: Session = Depends(get_db)):
     try:
         eng = _get_nifty_sentiment(get_user_broker(db, user_id), user_id)
@@ -486,7 +486,7 @@ async def nifty_sentiment_config(user_id: int = Depends(login_required),
 
 
 @router.post("/nifty-sentiment/config")
-async def nifty_sentiment_config_save(payload: dict | None = None,
+def nifty_sentiment_config_save(payload: dict | None = None,
                                       user_id: int = Depends(login_required),
                                       db: Session = Depends(get_db)):
     try:
@@ -500,7 +500,7 @@ async def nifty_sentiment_config_save(payload: dict | None = None,
 # ──────────────── Market Pulse (dashboard confirmations) ────────────────
 
 @router.post("/market-pulse/snapshot")
-async def market_pulse_snapshot(user_id: int = Depends(login_required),
+def market_pulse_snapshot(user_id: int = Depends(login_required),
                                 db: Session = Depends(get_db)):
     """Cumulative-volume, 20/200 DMA, VWAP/P-VWAP, psychological & Gann level
     confirmations for the Market Dashboard."""
@@ -515,7 +515,7 @@ async def market_pulse_snapshot(user_id: int = Depends(login_required),
 
 
 @router.post("/news-sentiment/snapshot")
-async def news_sentiment_snapshot(user_id: int = Depends(login_required)):
+def news_sentiment_snapshot(user_id: int = Depends(login_required)):
     """Indian market news sentiment from trusted free RSS feeds (no API key)."""
     try:
         return _news_sentiment.snapshot()
@@ -537,7 +537,7 @@ class SignalGeneratorRequest(BaseModel):
 
 
 @router.post("/nifty-signal-generator/snapshot")
-async def nifty_signal_generator_snapshot(
+def nifty_signal_generator_snapshot(
     payload: SignalGeneratorRequest | None = None,
     user_id: int = Depends(login_required),
     db: Session = Depends(get_db),
@@ -562,7 +562,7 @@ async def nifty_signal_generator_snapshot(
 
 
 @router.get("/nifty-signal-generator/config")
-async def nifty_signal_generator_config(user_id: int = Depends(login_required),
+def nifty_signal_generator_config(user_id: int = Depends(login_required),
                                         db: Session = Depends(get_db)):
     try:
         eng = _get_signal_generator(get_user_broker(db, user_id), user_id)
@@ -572,7 +572,7 @@ async def nifty_signal_generator_config(user_id: int = Depends(login_required),
 
 
 @router.post("/nifty-signal-generator/config")
-async def nifty_signal_generator_config_save(payload: dict | None = None,
+def nifty_signal_generator_config_save(payload: dict | None = None,
                                              user_id: int = Depends(login_required),
                                              db: Session = Depends(get_db)):
     try:
@@ -595,7 +595,7 @@ class PMVwapBacktestRequest(BaseModel):
 
 
 @router.get("/pmvwap-straddle/config")
-async def pmvwap_straddle_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def pmvwap_straddle_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "config": _get_pmvwap_straddle(get_user_broker(db, user_id), user_id).load_config()}
     except Exception as exc:
@@ -603,7 +603,7 @@ async def pmvwap_straddle_config(user_id: int = Depends(login_required), db: Ses
 
 
 @router.post("/pmvwap-straddle/config")
-async def pmvwap_straddle_config_save(payload: dict | None = None,
+def pmvwap_straddle_config_save(payload: dict | None = None,
                                       user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "config": _get_pmvwap_straddle(get_user_broker(db, user_id), user_id).save_config(payload or {})}
@@ -613,7 +613,7 @@ async def pmvwap_straddle_config_save(payload: dict | None = None,
 
 
 @router.get("/pmvwap-straddle/universe")
-async def pmvwap_straddle_universe(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def pmvwap_straddle_universe(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     broker = get_user_broker(db, user_id)
     if not _is_authed(db, user_id):
         return {"status": "error", "message": "Zerodha not authenticated"}
@@ -625,7 +625,7 @@ async def pmvwap_straddle_universe(user_id: int = Depends(login_required), db: S
 
 
 @router.post("/pmvwap-straddle/backtest")
-async def pmvwap_straddle_backtest(payload: PMVwapBacktestRequest | None = None,
+def pmvwap_straddle_backtest(payload: PMVwapBacktestRequest | None = None,
                                    user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     """Run the straddle backtest (single stock or whole F&O universe) and append
     the resulting research-log rows to the durable, append-only log."""
@@ -649,7 +649,7 @@ async def pmvwap_straddle_backtest(payload: PMVwapBacktestRequest | None = None,
 
 
 @router.get("/pmvwap-straddle/runs")
-async def pmvwap_straddle_runs(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def pmvwap_straddle_runs(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "runs": pmvwap_log.list_runs(db, user_id)}
     except Exception as exc:
@@ -657,7 +657,7 @@ async def pmvwap_straddle_runs(user_id: int = Depends(login_required), db: Sessi
 
 
 @router.get("/pmvwap-straddle/log")
-async def pmvwap_straddle_log_rows(run_id: str | None = None, date: str | None = None,
+def pmvwap_straddle_log_rows(run_id: str | None = None, date: str | None = None,
                                    user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "rows": pmvwap_log.fetch_rows(db, user_id, run_id, date)}
@@ -666,7 +666,7 @@ async def pmvwap_straddle_log_rows(run_id: str | None = None, date: str | None =
 
 
 @router.post("/pmvwap-straddle/scan")
-async def pmvwap_straddle_scan(payload: dict | None = None,
+def pmvwap_straddle_scan(payload: dict | None = None,
                                user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     """Live-day scan: run today's backtest and APPEND only new signals to a
     stable per-day live run (rows keep accumulating; no duplicates)."""
@@ -702,7 +702,7 @@ class PMVEqBacktestRequest(BaseModel):
 
 
 @router.get("/pmvwap-equity/config")
-async def pmvwap_equity_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def pmvwap_equity_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "config": _get_pmvwap_equity(get_user_broker(db, user_id), user_id).load_config()}
     except Exception as exc:
@@ -710,7 +710,7 @@ async def pmvwap_equity_config(user_id: int = Depends(login_required), db: Sessi
 
 
 @router.post("/pmvwap-equity/config")
-async def pmvwap_equity_config_save(payload: dict | None = None,
+def pmvwap_equity_config_save(payload: dict | None = None,
                                     user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "config": _get_pmvwap_equity(get_user_broker(db, user_id), user_id).save_config(payload or {})}
@@ -720,7 +720,7 @@ async def pmvwap_equity_config_save(payload: dict | None = None,
 
 
 @router.get("/pmvwap-equity/universe")
-async def pmvwap_equity_universe(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def pmvwap_equity_universe(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     broker = get_user_broker(db, user_id)
     if not _is_authed(db, user_id):
         return {"status": "error", "message": "Zerodha not authenticated"}
@@ -731,7 +731,7 @@ async def pmvwap_equity_universe(user_id: int = Depends(login_required), db: Ses
 
 
 @router.post("/pmvwap-equity/backtest")
-async def pmvwap_equity_backtest(payload: PMVEqBacktestRequest | None = None,
+def pmvwap_equity_backtest(payload: PMVEqBacktestRequest | None = None,
                                  user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     broker = get_user_broker(db, user_id)
     if not _is_authed(db, user_id):
@@ -752,7 +752,7 @@ async def pmvwap_equity_backtest(payload: PMVEqBacktestRequest | None = None,
 
 
 @router.get("/pmvwap-equity/runs")
-async def pmvwap_equity_runs(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def pmvwap_equity_runs(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "runs": pmveq_log.list_runs(db, user_id)}
     except Exception as exc:
@@ -760,7 +760,7 @@ async def pmvwap_equity_runs(user_id: int = Depends(login_required), db: Session
 
 
 @router.get("/pmvwap-equity/log")
-async def pmvwap_equity_log_rows(run_id: str | None = None, date: str | None = None,
+def pmvwap_equity_log_rows(run_id: str | None = None, date: str | None = None,
                                  user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "rows": pmveq_log.fetch_rows(db, user_id, run_id, date)}
@@ -769,7 +769,7 @@ async def pmvwap_equity_log_rows(run_id: str | None = None, date: str | None = N
 
 
 @router.post("/pmvwap-equity/scan")
-async def pmvwap_equity_scan(payload: dict | None = None,
+def pmvwap_equity_scan(payload: dict | None = None,
                              user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     """Live-day scan: run today's backtest and APPEND only new holding signals."""
     broker = get_user_broker(db, user_id)
@@ -784,8 +784,23 @@ async def pmvwap_equity_scan(payload: dict | None = None,
                            symbol=(payload or {}).get("symbol"), symbols=(payload or {}).get("symbols"),
                            start=today, end=today)
         if res.get("status") == "ok":
-            res["stored_new"] = pmveq_log.persist_new(db, user_id, run_id, "live", res.get("rows") or [])
+            fresh = pmveq_log.persist_new(db, user_id, run_id, "live", res.get("rows") or [])
+            res["stored_new"] = len(fresh)
             res["run_id"] = run_id
+            # Telegram: one message per genuinely-new live signal.
+            cfg = res.get("config") or {}
+            if fresh and cfg.get("telegram_alerts"):
+                from core import notify as _notify
+                if _notify.enabled():
+                    for r in fresh:
+                        _notify.send(
+                            "📄 <b>RESEARCH · Prev-Month VWAP Equity</b> (Live)\n\n"
+                            f"Stock: <b>{r.get('underlying')}</b>\n"
+                            f"Signal: {r.get('time')}\n"
+                            f"Entry: ₹{r.get('entry_price')} · Qty {r.get('qty')}\n"
+                            f"Target: ₹{r.get('target_price')}\n"
+                            f"Prev-Month VWAP (purple): ₹{r.get('prev_month_vwap')}\n"
+                            f"Prev-Week VWAP (green): ₹{r.get('prev_week_vwap')}")
         return res
     except Exception as exc:
         logger.error("PMVWAP equity scan failed: %s", exc)
@@ -861,7 +876,7 @@ class PMVCompareRequest(BaseModel):
 
 
 @router.post("/pmvwap-straddle/report")
-async def pmvwap_straddle_report(payload: PMVReportRequest, user_id: int = Depends(login_required),
+def pmvwap_straddle_report(payload: PMVReportRequest, user_id: int = Depends(login_required),
                                  db: Session = Depends(get_db)):
     try:
         rows = pmvwap_log.fetch_rows(db, user_id, payload.run_id, payload.date)
@@ -875,7 +890,7 @@ async def pmvwap_straddle_report(payload: PMVReportRequest, user_id: int = Depen
 
 
 @router.post("/pmvwap-straddle/compare")
-async def pmvwap_straddle_compare(payload: PMVCompareRequest, user_id: int = Depends(login_required),
+def pmvwap_straddle_compare(payload: PMVCompareRequest, user_id: int = Depends(login_required),
                                   db: Session = Depends(get_db)):
     try:
         a = pmvwap_log.fetch_rows(db, user_id, payload.run_a)
@@ -887,7 +902,7 @@ async def pmvwap_straddle_compare(payload: PMVCompareRequest, user_id: int = Dep
 
 
 @router.post("/pmvwap-equity/report")
-async def pmvwap_equity_report(payload: PMVReportRequest, user_id: int = Depends(login_required),
+def pmvwap_equity_report(payload: PMVReportRequest, user_id: int = Depends(login_required),
                                db: Session = Depends(get_db)):
     try:
         rows = pmveq_log.fetch_rows(db, user_id, payload.run_id, payload.date)
@@ -901,7 +916,7 @@ async def pmvwap_equity_report(payload: PMVReportRequest, user_id: int = Depends
 
 
 @router.post("/pmvwap-equity/compare")
-async def pmvwap_equity_compare(payload: PMVCompareRequest, user_id: int = Depends(login_required),
+def pmvwap_equity_compare(payload: PMVCompareRequest, user_id: int = Depends(login_required),
                                 db: Session = Depends(get_db)):
     try:
         a = pmveq_log.fetch_rows(db, user_id, payload.run_a)
@@ -930,7 +945,7 @@ class WatchlistSymbols(BaseModel):
 
 
 @router.get("/symbol-search")
-async def symbol_search(q: str = "", exchange: str = "ALL", limit: int = 20,
+def symbol_search(q: str = "", exchange: str = "ALL", limit: int = 20,
                         user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     """Type-ahead over the full NSE + BSE cash-equity universe (single-stock
     search — not limited to F&O or watchlists)."""
@@ -947,7 +962,7 @@ async def symbol_search(q: str = "", exchange: str = "ALL", limit: int = 20,
 
 
 @router.get("/watchlists")
-async def watchlists_list(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def watchlists_list(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "watchlists": rwl.list_watchlists(db, user_id)}
     except Exception as exc:
@@ -955,7 +970,7 @@ async def watchlists_list(user_id: int = Depends(login_required), db: Session = 
 
 
 @router.post("/watchlists")
-async def watchlists_create(payload: WatchlistCreate, user_id: int = Depends(login_required),
+def watchlists_create(payload: WatchlistCreate, user_id: int = Depends(login_required),
                             db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "watchlist": rwl.create_watchlist(db, user_id, payload.name, payload.symbols)}
@@ -967,13 +982,13 @@ async def watchlists_create(payload: WatchlistCreate, user_id: int = Depends(log
 
 
 @router.get("/watchlists/{wid}")
-async def watchlists_get(wid: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def watchlists_get(wid: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     w = rwl.get_watchlist(db, user_id, wid)
     return {"status": "ok", "watchlist": w} if w else {"status": "error", "message": "Watchlist not found"}
 
 
 @router.put("/watchlists/{wid}")
-async def watchlists_update(wid: int, payload: WatchlistUpdate, user_id: int = Depends(login_required),
+def watchlists_update(wid: int, payload: WatchlistUpdate, user_id: int = Depends(login_required),
                             db: Session = Depends(get_db)):
     try:
         w = rwl.update_watchlist(db, user_id, wid, payload.name, payload.symbols)
@@ -983,14 +998,14 @@ async def watchlists_update(wid: int, payload: WatchlistUpdate, user_id: int = D
 
 
 @router.post("/watchlists/{wid}/symbols")
-async def watchlists_modify(wid: int, payload: WatchlistSymbols, user_id: int = Depends(login_required),
+def watchlists_modify(wid: int, payload: WatchlistSymbols, user_id: int = Depends(login_required),
                             db: Session = Depends(get_db)):
     w = rwl.modify_symbols(db, user_id, wid, payload.add, payload.remove)
     return {"status": "ok", "watchlist": w} if w else {"status": "error", "message": "Watchlist not found"}
 
 
 @router.delete("/watchlists/{wid}")
-async def watchlists_delete(wid: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def watchlists_delete(wid: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     return {"status": "ok", "deleted": rwl.delete_watchlist(db, user_id, wid)}
 
 
@@ -1019,7 +1034,7 @@ class OPEISnapshotRequest(BaseModel):
 
 
 @router.post("/opei/snapshot")
-async def opei_snapshot(payload: OPEISnapshotRequest | None = None,
+def opei_snapshot(payload: OPEISnapshotRequest | None = None,
                         user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     """Live premium-expansion scores + top entry levels for the selected CE/PE."""
     broker = get_user_broker(db, user_id)
@@ -1041,20 +1056,27 @@ async def opei_snapshot(payload: OPEISnapshotRequest | None = None,
                 opei_log.update_outcomes(db, user_id, _side, _sd.get("premium"), _now)
             recs = eng.institutional_recs(snap)
             if recs:
-                # log the institutional-grade best levels for later analysis
+                # log the qualifying best levels; collect only the NEWLY-logged
+                # ones so Telegram fires once per level (not every 3s refresh).
+                new_recs = []
                 for side in ("CE", "PE"):
                     sd = snap["sides"].get(side) or {}
                     side_recs = [r for r in recs if r["side"] == side]
                     if side_recs:
-                        opei_log.log_recommendations(db, user_id, side, sd.get("symbol"),
-                                                     sd.get("strike"), sd.get("premium"),
-                                                     side_recs, snap["fetched_at"])
-                # Telegram push (if enabled)
+                        new_recs += opei_log.log_recommendations(
+                            db, user_id, side, sd.get("symbol"), sd.get("strike"),
+                            sd.get("premium"), side_recs, snap["fetched_at"])
+                # Telegram: universal creds if enabled, else OPEI's own (fallback).
                 cfg = snap["config"]
-                if cfg.get("telegram_enabled") and cfg.get("alert_on_institutional"):
-                    for r in recs:
-                        opei_tg.send_message(cfg["telegram_bot_token"], cfg["telegram_chat_id"],
-                                             opei_tg.format_entry({**r, "time": snap["fetched_at"]}))
+                if new_recs and cfg.get("alert_on_institutional"):
+                    from core import notify as _notify
+                    msgs = [opei_tg.format_entry({**r, "time": snap["fetched_at"]}) for r in new_recs]
+                    if _notify.enabled():
+                        for m in msgs:
+                            _notify.send(m)
+                    elif cfg.get("telegram_enabled") and cfg.get("telegram_bot_token") and cfg.get("telegram_chat_id"):
+                        for m in msgs:
+                            opei_tg.send_message(cfg["telegram_bot_token"], cfg["telegram_chat_id"], m)
         return snap
     except Exception as exc:
         logger.error("OPEI snapshot failed: %s", exc)
@@ -1062,7 +1084,7 @@ async def opei_snapshot(payload: OPEISnapshotRequest | None = None,
 
 
 @router.get("/opei/config")
-async def opei_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+def opei_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "config": _get_opei(get_user_broker(db, user_id), user_id).load_config()}
     except Exception as exc:
@@ -1070,7 +1092,7 @@ async def opei_config(user_id: int = Depends(login_required), db: Session = Depe
 
 
 @router.post("/opei/config")
-async def opei_config_save(payload: dict | None = None,
+def opei_config_save(payload: dict | None = None,
                            user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "config": _get_opei(get_user_broker(db, user_id), user_id).save_config(payload or {})}
@@ -1080,13 +1102,13 @@ async def opei_config_save(payload: dict | None = None,
 
 
 @router.post("/opei/telegram-test")
-async def opei_telegram_test(payload: dict | None = None, user_id: int = Depends(login_required)):
+def opei_telegram_test(payload: dict | None = None, user_id: int = Depends(login_required)):
     p = payload or {}
     return opei_tg.test_connection(p.get("bot_token", ""), p.get("chat_id", ""))
 
 
 @router.get("/opei/log")
-async def opei_log_rows(date: str | None = None, user_id: int = Depends(login_required),
+def opei_log_rows(date: str | None = None, user_id: int = Depends(login_required),
                         db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "rows": opei_log.fetch_log(db, user_id, date)}

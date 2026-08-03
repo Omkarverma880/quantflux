@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Layers,
   Lock,
+  Send,
 } from 'lucide-react';
 
 /* ── Change Password card ─────────────────────────── */
@@ -582,6 +583,8 @@ export default function Settings() {
         </div>
       </div>
 
+      <TelegramCard />
+
       {/* Sticky Save bar (mobile-friendly) */}
       {hasDirty && (
         <div className="fixed bottom-0 left-0 right-0 z-50 p-4 bg-surface-1/95 backdrop-blur border-t border-surface-3 flex items-center justify-between sm:hidden">
@@ -597,6 +600,43 @@ export default function Settings() {
 }
 
 /* ── Sub-components ─────────────────────────────── */
+
+function TelegramCard() {
+  const [tg, setTg] = useState({ enabled: false, bot_token: '', chat_id: '' });
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+  useEffect(() => { api.getTelegramSettings().then((r) => { if (r.status === 'ok') setTg({ enabled: r.enabled, bot_token: r.bot_token || '', chat_id: r.chat_id || '' }); }).catch(() => {}); }, []);
+  const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 2500); };
+  const fail = (m) => { setErr(m); setTimeout(() => setErr(''), 5000); };
+  const save = async () => { setBusy('save'); try { const r = await api.saveTelegramSettings(tg); if (r.status === 'ok') flash('Saved'); } catch (e) { fail(e.message); } finally { setBusy(''); } };
+  const test = async () => { setBusy('test'); try { const r = await api.testTelegramSettings({ bot_token: tg.bot_token, chat_id: tg.chat_id }); if (r.ok) flash('Sent — check your Telegram'); else fail(r.error || 'Failed'); } catch (e) { fail(e.message); } finally { setBusy(''); } };
+  const inp = 'w-full input-field';
+  return (
+    <div className="card space-y-4">
+      <div className="flex items-center gap-2 pb-2 border-b border-surface-3/60">
+        <Send className="w-5 h-5 text-brand-400" />
+        <h3 className="font-semibold text-white">Telegram Notifications</h3>
+        <span className="ml-auto text-[11px] text-gray-500">Used across the whole app</span>
+      </div>
+      <p className="text-xs text-gray-500">Configure once here. Research live scans, live strategies and OPEI all send alerts through this bot.</p>
+      {err && <div className="text-red-400 text-sm">{err}</div>}
+      {msg && <div className="text-emerald-400 text-sm">{msg}</div>}
+      <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+        <input type="checkbox" checked={tg.enabled} onChange={(e) => setTg((t) => ({ ...t, enabled: e.target.checked }))} className="accent-brand-500" /> Enable Telegram notifications
+      </label>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div><label className="block text-xs text-gray-400 mb-1">Bot Token</label><input value={tg.bot_token} onChange={(e) => setTg((t) => ({ ...t, bot_token: e.target.value }))} placeholder="123456:ABC-..." className={inp} /></div>
+        <div><label className="block text-xs text-gray-400 mb-1">Chat ID</label><input value={tg.chat_id} onChange={(e) => setTg((t) => ({ ...t, chat_id: e.target.value }))} placeholder="-100..." className={inp} /></div>
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={test} disabled={busy} className="btn-secondary text-sm flex items-center gap-1.5">{busy === 'test' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Test Connection</button>
+        <button onClick={save} disabled={busy} className="btn-primary text-sm flex items-center gap-1.5">{busy === 'save' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save</button>
+      </div>
+      <p className="text-[11px] text-gray-600">Create a bot via @BotFather → copy the token. Get your Chat ID via @userinfobot (or the group's id).</p>
+    </div>
+  );
+}
 
 function ToggleCard({ label, description, value, onChange, activeColor = 'green' }) {
   const border = {

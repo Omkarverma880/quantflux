@@ -104,3 +104,38 @@ def update_settings(
     db.commit()
     logger.info(f"Settings updated for user {user_id}: {updated_fields}")
     return {"status": "ok", "updated": updated_fields}
+
+
+# ── Universal Telegram notifications (shared across the app) ──────────
+
+class TelegramConfig(BaseModel):
+    enabled: bool | None = None
+    bot_token: str | None = None
+    chat_id: str | None = None
+
+
+@router.get("/telegram")
+async def get_telegram(user_id: int = Depends(login_required)):
+    from core import notify
+    cfg = notify.load_config()
+    # Mask the token in the response (keep last 6 chars) for safety.
+    tok = cfg.get("bot_token") or ""
+    return {"status": "ok", "enabled": cfg["enabled"],
+            "bot_token": tok, "chat_id": cfg["chat_id"], "configured": bool(tok and cfg["chat_id"])}
+
+
+@router.post("/telegram")
+async def save_telegram(payload: TelegramConfig, user_id: int = Depends(login_required)):
+    from core import notify
+    cfg = notify.save_config(payload.model_dump(exclude_none=True))
+    return {"status": "ok", "enabled": cfg["enabled"], "chat_id": cfg["chat_id"],
+            "configured": bool(cfg["bot_token"] and cfg["chat_id"])}
+
+
+@router.post("/telegram/test")
+async def test_telegram(payload: TelegramConfig | None = None, user_id: int = Depends(login_required)):
+    from core import notify
+    p = payload.model_dump(exclude_none=True) if payload else {}
+    # test with provided creds, else the saved ones
+    saved = notify.load_config()
+    return notify.test(p.get("bot_token") or saved["bot_token"], p.get("chat_id") or saved["chat_id"])

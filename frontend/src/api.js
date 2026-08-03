@@ -499,6 +499,11 @@ export const api = {
   eqHoldCheck: () => request('/equity-strategy/pmvwap-holding/check', { method: 'POST' }),
   eqHoldReset: () => request('/equity-strategy/pmvwap-holding/reset', { method: 'POST' }),
 
+  // Universal Telegram notifications (shared across the app)
+  getTelegramSettings: () => request('/settings/telegram'),
+  saveTelegramSettings: (cfg) => request('/settings/telegram', { method: 'POST', body: JSON.stringify(cfg || {}) }),
+  testTelegramSettings: (cfg) => request('/settings/telegram/test', { method: 'POST', body: JSON.stringify(cfg || {}) }),
+
   // Settings
   getSettings: () => request('/settings/'),
   updateSettings: (data) =>

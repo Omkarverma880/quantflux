@@ -50,6 +50,7 @@ DEFAULT_CONFIG: dict = {
     "max_concurrent": 10,                   # max simultaneous holdings
     # ── performance / display ──
     "max_stocks": 0, "scan_interval": 60,
+    "telegram_alerts": True,                # push each new live-scan signal to Telegram (needs universal Telegram enabled)
 }
 
 _INT_KEYS = {"history_days", "capital_per_trade", "fixed_qty", "max_hold_days",
@@ -86,7 +87,7 @@ def sanitize(cfg: dict) -> dict:
     if not isinstance(out["sectors"], list):
         out["sectors"] = []
     for b in ("require_pw_above_pm", "one_signal_per_day", "ignore_ban", "high_vol_only",
-              "apply_costs", "portfolio_mode"):
+              "apply_costs", "portfolio_mode", "telegram_alerts"):
         out[b] = bool(out[b])
     return out
 

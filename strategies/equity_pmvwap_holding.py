@@ -62,6 +62,7 @@ DEFAULT_CONFIG: dict = {
     "exit_on": "high_low",               # high_low → GTT tick exit (offline-safe) | close → strategy-managed on candle close
     "allow_reentry": False,              # off → skip stocks already held (strategy or demat)
     "exit_on_vwap_cross": False,         # exit when price closes back below Prev-Month VWAP
+    "telegram_alerts": True,             # send a Telegram message on each entry/exit (needs universal Telegram enabled)
     "portfolio_mode": True,
     "portfolio_capital": 1000000,
     "max_open_positions": 10,
@@ -109,7 +110,7 @@ class EquityPMVwapHolding:
         # coerce / clamp
         self.cfg["symbols"] = [str(x).strip().upper() for x in (self.cfg.get("symbols") or []) if str(x).strip()]
         for b in ("paper_trade", "auto_start", "require_pw_above_pm", "one_signal_per_day",
-                  "exit_on_vwap_cross", "portfolio_mode", "allow_reentry"):
+                  "exit_on_vwap_cross", "portfolio_mode", "allow_reentry", "telegram_alerts"):
             self.cfg[b] = bool(self.cfg[b])
         self.cfg["max_open_positions"] = max(1, int(self.cfg["max_open_positions"]))
         if self.cfg["timeframe"] not in TIMEFRAME_MAP:
@@ -389,32 +390,39 @@ class EquityPMVwapHolding:
         if not candles:
             return
         vwaps = compute_prev_period_vwaps(candles)
+        # Use the EXACT same signal call as Research #8 (honour one_signal_per_day)
+        # so the live strategy fires on the identical crossing.
         signals = calc.find_holding_signals(
             candles, vwaps, entry_mode=self.cfg["entry_mode"], buffer=float(self.cfg["vwap_buffer"]),
             require_pw_above=bool(self.cfg["require_pw_above_pm"]), entry_start=self.cfg["entry_start"],
-            signal_cutoff=self.cfg["signal_cutoff"], one_per_day=False, day=now.date())
+            signal_cutoff=self.cfg["signal_cutoff"], one_per_day=bool(self.cfg["one_signal_per_day"]),
+            day=now.date())
         # only completed candles (bar closed) qualify for a live entry
         mins = _INTERVAL_MIN.get(self._interval(), 15)
         done = [s for s in signals if s["dt"] + timedelta(minutes=mins) <= now]
         if not done:
             return
-        sig = done[-1]
+        sig = done[0]          # FIRST completed crossing of the day — matches Research #8
 
-        ltp = self._ltp([(sym, exch)]).get(sym) or sig["close"]
-        if ltp <= 0:
+        # Anchor entry / target / SL to the SIGNAL CANDLE CLOSE (identical to the
+        # research), so live & paper output line up with the backtest. The real
+        # market order still fills at market; ``ltp`` is only the GTT reference.
+        entry = float(sig.get("close") or 0)
+        if entry <= 0:
             return
-        qty = self._size(ltp)
+        ltp = self._ltp([(sym, exch)]).get(sym) or entry
+        qty = self._size(entry)
         if qty <= 0:
             return
-        if not self._place_buy(sym, exch, qty, ltp):
+        if not self._place_buy(sym, exch, qty, ltp or entry):
             return
 
-        target = round(ltp * (1.0 + float(self.cfg["target_pct"]) / 100.0), 2)
-        stop = round(ltp * (1.0 - float(self.cfg["stop_pct"]) / 100.0), 2) if float(self.cfg["stop_pct"]) > 0 else None
+        target = round(entry * (1.0 + float(self.cfg["target_pct"]) / 100.0), 2)
+        stop = round(entry * (1.0 - float(self.cfg["stop_pct"]) / 100.0), 2) if float(self.cfg["stop_pct"]) > 0 else None
         pos = {
             "trade_date": now.date().isoformat(), "entry_time": now.strftime("%H:%M"),
             "underlying": sym, "exchange": exch, "token": int(token), "qty": qty,
-            "entry_price": round(ltp, 2), "capital": round(ltp * qty, 2),
+            "entry_price": round(entry, 2), "capital": round(entry * qty, 2),
             "target_price": target, "stop_price": stop,
             "prev_month_vwap": sig["prev_month_vwap"], "prev_week_vwap": sig["prev_week_vwap"],
             "ltp": round(ltp, 2), "state": "OPEN",
@@ -443,8 +451,51 @@ class EquityPMVwapHolding:
         self.positions.append(pos)
         self._entered_today.add(sym)
         self._persist(pos)
-        logger.info("ENTRY %s qty=%d @ %.2f (target %.2f%s, paper=%s)", sym, qty, ltp, target,
+        logger.info("ENTRY %s qty=%d @ %.2f (target %.2f%s, paper=%s)", sym, qty, entry, target,
                     f", stop {stop}" if stop else "", self.cfg["paper_trade"])
+        self._notify_entry(pos)
+
+    def _notify_entry(self, pos: dict):
+        if not self.cfg.get("telegram_alerts", True):
+            return
+        try:
+            from core import notify
+            if not notify.enabled():
+                return
+            mode = "PAPER" if self.cfg["paper_trade"] else "LIVE"
+            stop = pos.get("stop_price")
+            msg = (
+                f"🟢 <b>EQUITY HOLDING</b> · {mode}\n\n"
+                f"Strategy: Prev-Month VWAP Holding\n"
+                f"Stock: <b>{pos['underlying']}</b>\n"
+                f"Order: BUY {pos['qty']} @ ₹{pos['entry_price']} (CNC)\n"
+                f"Target: ₹{pos.get('target_price')}\n"
+                f"Stop: {('₹' + str(stop)) if stop else '—'}\n"
+                f"Prev-Month VWAP (purple): ₹{pos.get('prev_month_vwap')}\n"
+                f"Prev-Week VWAP (green): ₹{pos.get('prev_week_vwap')}\n"
+                f"Time: {pos['entry_time']}"
+            )
+            notify.send(msg)
+        except Exception as exc:
+            logger.debug("entry notify failed: %s", exc)
+
+    def _notify_exit(self, pos: dict):
+        if not self.cfg.get("telegram_alerts", True):
+            return
+        try:
+            from core import notify
+            if not notify.enabled():
+                return
+            mode = "PAPER" if self.cfg["paper_trade"] else "LIVE"
+            emoji = "🎯" if pos.get("exit_reason") == "TARGET" else ("🛑" if pos.get("exit_reason") == "STOP" else "⚪")
+            notify.send(
+                f"{emoji} <b>EQUITY HOLDING EXIT</b> · {mode}\n\n"
+                f"Stock: <b>{pos['underlying']}</b>\n"
+                f"Exit: ₹{pos.get('exit_price')} ({pos.get('exit_reason')})\n"
+                f"Entry: ₹{pos.get('entry_price')} · Qty {pos.get('qty')}\n"
+                f"P&L: ₹{pos.get('pnl')}  ·  Held {pos.get('hold_days')}d")
+        except Exception as exc:
+            logger.debug("exit notify failed: %s", exc)
 
     def _size(self, price: float) -> int:
         if self.cfg["portfolio_mode"]:
@@ -533,6 +584,7 @@ class EquityPMVwapHolding:
         p["exit_reason"] = reason
         self._persist(p)
         logger.info("EXIT %s @ %.2f (%s) pnl=%.2f", p["underlying"], p["exit_price"], reason, p["pnl"])
+        self._notify_exit(p)
 
     # ── persistence ──
     def _persist(self, p: dict):

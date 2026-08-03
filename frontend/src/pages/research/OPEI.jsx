@@ -84,17 +84,23 @@ function CategoryBars({ categories }) {
   );
 }
 
-function SidePanel({ side, data }) {
+function SidePanel({ side, data, preferred }) {
   if (!data) return null;
   const Icon = side === 'CE' ? TrendingUp : TrendingDown;
   const f = data.features || {};
+  const counter = data.aligned === false;                 // suppressed counter-trend side
+  const isPreferred = preferred === side;
   return (
-    <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
+    <div className={`bg-surface-2 border rounded-xl overflow-hidden transition ${counter ? 'border-surface-3 opacity-60' : isPreferred ? 'border-brand-500/40' : 'border-surface-3'}`}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-surface-3">
         <div className="flex items-center gap-2">
           <Icon className={`w-5 h-5 ${side === 'CE' ? 'text-emerald-400' : 'text-red-400'}`} />
           <div>
-            <div className="text-sm font-bold text-gray-100">{data.symbol}</div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-bold text-gray-100">{data.symbol}</span>
+              {isPreferred && <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-600/20 text-brand-300 border border-brand-500/40">PREFERRED</span>}
+              {counter && <span className="text-[9px] px-1.5 py-0.5 rounded bg-surface-3 text-gray-500 border border-surface-4">COUNTER-TREND</span>}
+            </div>
             <div className="text-[11px] text-gray-500">Strike {data.strike} · Premium ₹{NUM(data.premium)} · {f.buildup || '—'}</div>
           </div>
         </div>
@@ -233,6 +239,7 @@ export default function OPEI() {
           <span className="text-gray-400">VIX <strong className={data.vix_change >= 0 ? 'text-emerald-400' : 'text-red-400'}>{data.vix} ({data.vix_change >= 0 ? '+' : ''}{data.vix_change})</strong></span>
           <span className="text-gray-400">PCR <strong className="text-gray-100">{data.pcr ?? '—'}</strong></span>
           <span className="text-gray-400">Breadth <strong className={data.breadth >= 0 ? 'text-emerald-400' : 'text-red-400'}>{data.breadth}%</strong></span>
+          <span className="text-gray-400">Bias <strong className={data.bias === 'bullish' ? 'text-emerald-400' : data.bias === 'bearish' ? 'text-red-400' : 'text-gray-300'}>{(data.bias || 'neutral').toUpperCase()}{data.preferred_side ? ` → prefer ${data.preferred_side}` : ''}</strong></span>
           <span className="text-gray-500 text-xs ml-auto flex items-center gap-1"><Activity className="w-3 h-3" /> {data.fetched_at}</span>
         </div>
       )}
@@ -250,8 +257,8 @@ export default function OPEI() {
             <>
               <Heatmap sides={data.sides} />
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                <SidePanel side="CE" data={data.sides?.CE} />
-                <SidePanel side="PE" data={data.sides?.PE} />
+                <SidePanel side="CE" data={data.sides?.CE} preferred={data.preferred_side} />
+                <SidePanel side="PE" data={data.sides?.PE} preferred={data.preferred_side} />
               </div>
             </>
           )}
@@ -288,7 +295,7 @@ export default function OPEI() {
               <button onClick={testTg} className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border bg-surface-3 text-gray-300 border-surface-4 hover:text-white"><Send className="w-3.5 h-3.5" /> Test Connection</button>
               <button onClick={saveCfg} className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold"><Save className="w-3.5 h-3.5" /> Save</button>
             </div>
-            <p className="text-[11px] text-gray-600 mt-2"><Info className="w-3 h-3 inline" /> Create a bot via @BotFather, get the token, then your chat id (e.g. via @userinfobot).</p>
+            <p className="text-[11px] text-gray-600 mt-2"><Info className="w-3 h-3 inline" /> Create a bot via @BotFather, get the token, then your chat id (e.g. via @userinfobot). Tip: set creds once in <strong>Settings → Telegram</strong> for app-wide alerts; the fields here act as an OPEI-only fallback.</p>
           </div>
         </div>
       )}

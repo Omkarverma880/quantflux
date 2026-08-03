@@ -116,6 +116,11 @@ class OPEIEngine:
         depth_imb = (bid_qty / (bid_qty + ask_qty)) if (bid_qty + ask_qty) else None
 
         cl = ind.closes(candles) if candles else [ltp]
+        # Stable anchor = close of the last COMPLETED candle (levels are built off
+        # this, so they don't jitter every second on live ticks).
+        mins = _TF_MIN.get(tf, 5)
+        completed = [c for c in candles if _candle_dt(c) and _candle_dt(c) + timedelta(minutes=mins) <= now]
+        anchor = round(float(completed[-1]["close"]), 2) if completed else ltp
         atr = ind.atr(candles) if len(candles) > 15 else None
         atr_prev = ind.atr(candles[:-5]) if len(candles) > 20 else None
         vols = ind.volumes(candles)
@@ -134,7 +139,7 @@ class OPEIEngine:
 
         return {
             "side": side, "symbol": symbol, "strike": strike,
-            "premium": ltp, "atr": atr,
+            "premium": ltp, "anchor": anchor, "atr": atr,
             "vwap": float(q.get("average_price", 0) or 0) or ind.running_vwap(candles),
             "ema9": ind.ema(cl, 9), "ema20": ind.ema(cl, 20), "ema50": ind.ema(cl, 50),
             "premium_slope": ind.slope(cl), "rsi": ind.rsi(cl), "adx": ind.adx(candles),
@@ -224,9 +229,20 @@ class OPEIEngine:
                     tot_contrib += w * (ltp - close) / close * 100.0
             breadth = round(tot_contrib / wsum, 3) if wsum else 0.0
 
+            # ── Directional market bias (breadth + PCR) — a CALL and a PUT can't
+            # both be high-probability explosive-up at once, so we favour one side.
+            b = breadth + (0.2 if (pcr is not None and pcr >= 1.1) else (-0.2 if (pcr is not None and pcr <= 0.9) else 0.0))
+            if b > 0.15:
+                bias_dir, bias_strength, preferred = "bullish", min(abs(b) / 0.6, 1.0), "CE"
+            elif b < -0.15:
+                bias_dir, bias_strength, preferred = "bearish", min(abs(b) / 0.6, 1.0), "PE"
+            else:
+                bias_dir, bias_strength, preferred = "neutral", 0.0, None
+
             out = {"status": "ok", "config": cfg, "spot": round(spot, 2), "atm": atm,
                    "expiry": expiry.isoformat(), "strike_label": cfg["strike"],
                    "vix": round(vix, 2), "vix_change": vix_chg, "pcr": pcr, "breadth": breadth,
+                   "bias": bias_dir, "bias_strength": round(bias_strength, 2), "preferred_side": preferred,
                    "fetched_at": now.strftime("%H:%M:%S"), "sides": {}}
 
             for side, o, strike in (("CE", ce, ce_strike), ("PE", pe, pe_strike)):
@@ -234,7 +250,7 @@ class OPEIEngine:
                 candles = self._candles(int(o["token"]), tf)
                 feat = self._features(side, o["tradingsymbol"], strike, q, candles, spot,
                                       expiry, breadth, vix, vix_chg, pcr, tf, now)
-                ev = eng.evaluate_side(feat, cfg["weights"], cfg)
+                ev = eng.evaluate_side(feat, cfg["weights"], cfg, bias_dir, bias_strength)
                 out["sides"][side] = {
                     "symbol": o["tradingsymbol"], "strike": strike, "token": int(o["token"]),
                     **ev, "features": {k: feat[k] for k in (

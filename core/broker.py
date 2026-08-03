@@ -4,8 +4,9 @@ Wraps KiteConnect into clean methods the strategy engine uses.
 Handles paper-trading mode transparently.
 """
 import math
+import threading
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
 from typing import Optional
 
@@ -24,6 +25,17 @@ def _get_risk_manager():
 
 # Per-user broker instances (keyed by user_id)
 _user_brokers: dict[int, "Broker"] = {}
+
+# ── Shared instrument-dump cache (market-wide, per exchange, per day) ──
+# The Zerodha instrument dump is identical for every user and is a few-MB
+# download + parse. Previously every engine (option-chain, universes, OPEI,
+# signal generator, strategies) fetched and cached its own copy, which caused a
+# CPU/memory spike each morning at first use. Caching the raw list once per
+# (exchange, day) and sharing it across all Broker instances removes the
+# repeated downloads while keeping identical data. Guarded by a lock so a
+# concurrent morning stampede downloads it only once.
+_INSTRUMENT_CACHE: dict[str, tuple[date, list[dict]]] = {}
+_INSTRUMENT_LOCK = threading.Lock()
 
 
 # ──────────────── Data Models ────────────────
@@ -467,7 +479,20 @@ class Broker:
     # ── Instruments ────────────────────────────────────
 
     def get_instruments(self, exchange: str = "NSE") -> list[dict]:
-        return self.kite.instruments(exchange)
+        """Market-wide instrument dump for an exchange, cached once per day and
+        shared across all users/engines (see ``_INSTRUMENT_CACHE``). Behaviour is
+        identical to a live fetch — same rows — just without repeated downloads."""
+        today = date.today()
+        cached = _INSTRUMENT_CACHE.get(exchange)
+        if cached and cached[0] == today:
+            return cached[1]
+        with _INSTRUMENT_LOCK:
+            cached = _INSTRUMENT_CACHE.get(exchange)      # re-check inside the lock
+            if cached and cached[0] == today:
+                return cached[1]
+            data = self.kite.instruments(exchange) or []
+            _INSTRUMENT_CACHE[exchange] = (today, data)
+            return data
 
 
 # Singleton (legacy — used by strategy routes and trading_routes)

@@ -57,11 +57,13 @@ export default function PMVwapStraddle() {
   const [dateFilter, setDateFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [live, setLive] = useState(false);
+  const [live, setLive] = useState(() => localStorage.getItem('pmvst_live') === '1');
   const [tab, setTab] = useState('backtest');   // backtest | report
   const [error, setError] = useState('');
   const [savedMsg, setSavedMsg] = useState('');
   const timer = useRef(null);
+  const liveTargetRef = useRef((() => { try { return JSON.parse(localStorage.getItem('pmvst_target') || 'null'); } catch { return null; } })());
+  useEffect(() => { localStorage.setItem('pmvst_live', live ? '1' : '0'); }, [live]);
 
   const showErr = (m) => { setError(m); setTimeout(() => setError(''), 6000); };
   const patch = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
@@ -90,16 +92,22 @@ export default function PMVwapStraddle() {
     finally { setLoading(false); }
   }, [cfg, sel, start, end]);
 
+  useEffect(() => {
+    const t = sel.mode === 'single' ? { symbol: sel.symbol, symbols: null }
+      : sel.mode === 'watchlist' ? { symbol: null, symbols: sel.symbols }
+        : { symbol: null, symbols: null };
+    liveTargetRef.current = t;
+    localStorage.setItem('pmvst_target', JSON.stringify(t));
+  }, [sel]);
+
   const liveScan = useCallback(async () => {
     if (!cfg) return;
+    const t = liveTargetRef.current || { symbol: null, symbols: null };
     try {
-      const res = await api.researchPMVwapStraddleScan({
-        overrides: cfg, symbol: sel.mode === 'single' ? sel.symbol : null,
-        symbols: sel.mode === 'watchlist' ? sel.symbols : null,
-      });
+      const res = await api.researchPMVwapStraddleScan({ overrides: cfg, symbol: t.symbol, symbols: t.symbols });
       if (res.status === 'ok') setData(res);
     } catch { /* keep prior data on transient errors */ }
-  }, [cfg, sel]);
+  }, [cfg]);
 
   useEffect(() => {
     if (timer.current) clearInterval(timer.current);

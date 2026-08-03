@@ -57,7 +57,8 @@ def persist_new(db, user_id: int, run_id: str, mode: str, rows: list[dict]) -> i
                            PMVwapEquityTrade.run_id == run_id).all()
     }
     fresh = [r for r in rows if (r["date"], r["underlying"], r.get("time")) not in existing]
-    return persist_rows(db, user_id, run_id, mode, fresh)
+    persist_rows(db, user_id, run_id, mode, fresh)
+    return fresh                    # return the newly-added rows (for alerts)
 
 
 def list_runs(db, user_id: int, limit: int = 50) -> list[dict]:

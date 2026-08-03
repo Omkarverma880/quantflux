@@ -19,10 +19,11 @@ def _key(side, level, t):
 
 
 def log_recommendations(db, user_id: int, side: str, symbol: str, strike, premium,
-                        recs: list[dict], signal_time: str) -> int:
-    """Persist new institutional/activated recommendations (deduped for the day)."""
+                        recs: list[dict], signal_time: str) -> list[dict]:
+    """Persist new recommendations (deduped by side+level+minute for the day).
+    Returns the list of NEWLY-logged recs so callers can alert only on those."""
     if not recs:
-        return 0
+        return []
     today = date.today()
     existing = {
         _key(r.side, r.level, r.signal_time)
@@ -31,7 +32,7 @@ def log_recommendations(db, user_id: int, side: str, symbol: str, strike, premiu
                    .filter(OPEIRecommendation.user_id == user_id,
                            OPEIRecommendation.trade_date == today).all()
     }
-    n = 0
+    new: list[dict] = []
     for r in recs:
         k = _key(side, r.get("level"), signal_time)
         if k in existing:
@@ -44,15 +45,15 @@ def log_recommendations(db, user_id: int, side: str, symbol: str, strike, premiu
             premium=premium, level=r.get("level"), confidence=r.get("confidence"),
             band=r.get("band"), sl=r.get("sl"), target1=tgts[0] if tgts else None,
             reasons=r.get("reasons") or [], data=r))
-        n += 1
-    if n:
+        new.append({**r, "side": side, "symbol": symbol, "strike": strike, "premium": premium})
+    if new:
         try:
             db.commit()
         except Exception as exc:
             db.rollback()
             logger.error("opei log commit failed: %s", exc)
-            return 0
-    return n
+            return []
+    return new
 
 
 def update_outcomes(db, user_id: int, side: str, premium: float, now: datetime) -> int:

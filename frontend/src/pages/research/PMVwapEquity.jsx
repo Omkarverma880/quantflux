@@ -52,11 +52,14 @@ export default function PMVwapEquity() {
   const [dateFilter, setDateFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [live, setLive] = useState(false);
+  const [live, setLive] = useState(() => localStorage.getItem('pmveq_live') === '1');
   const [tab, setTab] = useState('backtest');
   const [error, setError] = useState('');
   const [savedMsg, setSavedMsg] = useState('');
   const timer = useRef(null);
+  // persisted live-scan target so it survives navigation away & back
+  const liveTargetRef = useRef((() => { try { return JSON.parse(localStorage.getItem('pmveq_target') || 'null'); } catch { return null; } })());
+  useEffect(() => { localStorage.setItem('pmveq_live', live ? '1' : '0'); }, [live]);
 
   const showErr = (m) => { setError(m); setTimeout(() => setError(''), 6000); };
   const patch = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
@@ -84,16 +87,23 @@ export default function PMVwapEquity() {
     finally { setLoading(false); }
   }, [cfg, sel, start, end]);
 
+  // keep the live-scan target in sync with the current selection + persist it
+  useEffect(() => {
+    const t = sel.mode === 'single' ? { symbol: sel.symbol, symbols: null }
+      : sel.mode === 'watchlist' ? { symbol: null, symbols: sel.symbols }
+        : { symbol: null, symbols: null };
+    liveTargetRef.current = t;
+    localStorage.setItem('pmveq_target', JSON.stringify(t));
+  }, [sel]);
+
   const liveScan = useCallback(async () => {
     if (!cfg) return;
+    const t = liveTargetRef.current || { symbol: null, symbols: null };
     try {
-      const res = await api.researchPMVwapEquityScan({
-        overrides: cfg, symbol: sel.mode === 'single' ? sel.symbol : null,
-        symbols: sel.mode === 'watchlist' ? sel.symbols : null,
-      });
+      const res = await api.researchPMVwapEquityScan({ overrides: cfg, symbol: t.symbol, symbols: t.symbols });
       if (res.status === 'ok') setData(res);
     } catch { /* keep prior data on transient errors */ }
-  }, [cfg, sel]);
+  }, [cfg]);
 
   useEffect(() => {
     if (timer.current) clearInterval(timer.current);
