@@ -14,8 +14,10 @@ from core.models import OPEIRecommendation
 logger = get_logger("research.opei.log")
 
 
-def _key(side, level, t):
-    return (side, round(float(level or 0), 1), (t or "")[:5])
+def _key(side, level):
+    # Dedupe per (side, level) for the whole day → one alert per distinct entry
+    # level, not one every minute while the same level persists.
+    return (side, round(float(level or 0), 1))
 
 
 def log_recommendations(db, user_id: int, side: str, symbol: str, strike, premium,
@@ -26,15 +28,14 @@ def log_recommendations(db, user_id: int, side: str, symbol: str, strike, premiu
         return []
     today = date.today()
     existing = {
-        _key(r.side, r.level, r.signal_time)
-        for r in db.query(OPEIRecommendation.side, OPEIRecommendation.level,
-                          OPEIRecommendation.signal_time)
+        _key(r.side, r.level)
+        for r in db.query(OPEIRecommendation.side, OPEIRecommendation.level)
                    .filter(OPEIRecommendation.user_id == user_id,
                            OPEIRecommendation.trade_date == today).all()
     }
     new: list[dict] = []
     for r in recs:
-        k = _key(side, r.get("level"), signal_time)
+        k = _key(side, r.get("level"))
         if k in existing:
             continue
         existing.add(k)
