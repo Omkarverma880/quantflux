@@ -446,6 +446,14 @@ export const api = {
   researchOPEIConfigSave: (partial) => request('/research/opei/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
   researchOPEITelegramTest: (bot_token, chat_id) => request('/research/opei/telegram-test', { method: 'POST', body: JSON.stringify({ bot_token, chat_id }) }),
   researchOPEILog: (date) => request(`/research/opei/log${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+  // Research-10 — Quantum Market Intelligence Engine (QMIE)
+  researchQMIEScan: (overrides, symbols) => request('/research/qmie/scan', { method: 'POST', body: JSON.stringify({ overrides: overrides || {}, symbols: symbols || null }) }),
+  researchQMIEConfig: () => request('/research/qmie/config'),
+  researchQMIEConfigSave: (partial) => request('/research/qmie/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+  researchQMIEUniverse: () => request('/research/qmie/universe'),
+  researchQMIEBacktest: (overrides, symbols) => request('/research/qmie/backtest', { method: 'POST', body: JSON.stringify({ overrides: overrides || {}, symbols: symbols || null }) }),
+  researchQMIESnapshots: () => request('/research/qmie/snapshots'),
+  researchQMIESnapshot: (id) => request(`/research/qmie/snapshot/${encodeURIComponent(id)}`),
   // Research Watchlists (shared by Straddle #7 & Equity #8)
   researchWatchlists: () => request('/research/watchlists'),
   researchWatchlistGet: (id) => request(`/research/watchlists/${id}`),

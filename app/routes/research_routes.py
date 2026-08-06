@@ -32,6 +32,8 @@ from research import research_watchlist as rwl
 from research.opei import OPEIEngine
 from research.opei import log as opei_log
 from research.opei import telegram as opei_tg
+from research.qmie import QMIEEngine
+from research.qmie import store as qmie_store
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -47,6 +49,7 @@ _signal_generators: dict[int, NiftySignalGenerator] = {}
 _pmvwap_straddles: dict[int, PMVwapStraddleResearch] = {}
 _pmvwap_equities: dict[int, PMVwapEquityResearch] = {}
 _opei_engines: dict[int, OPEIEngine] = {}
+_qmie_engines: dict[int, QMIEEngine] = {}
 _news_sentiment = NewsSentiment()   # shared (public RSS — not per-user)
 
 
@@ -118,6 +121,18 @@ def _get_pmvwap_straddle(broker: Broker, user_id: int) -> PMVwapStraddleResearch
     if eng is None:
         eng = PMVwapStraddleResearch(broker, user_id=user_id)
         _pmvwap_straddles[user_id] = eng
+    else:
+        eng.broker = broker
+        eng.universe.broker = broker
+    eng.user_id = user_id
+    return eng
+
+
+def _get_qmie(broker: Broker, user_id: int) -> QMIEEngine:
+    eng = _qmie_engines.get(user_id)
+    if eng is None:
+        eng = QMIEEngine(broker, user_id=user_id)
+        _qmie_engines[user_id] = eng
     else:
         eng.broker = broker
         eng.universe.broker = broker
@@ -1120,5 +1135,91 @@ def opei_log_rows(date: str | None = None, user_id: int = Depends(login_required
                         db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "rows": opei_log.fetch_log(db, user_id, date)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+# ──────────── Research-10 · Quantum Market Intelligence Engine (QMIE) ────────────
+# READ-ONLY opportunity ranking. These endpoints never place, modify, cancel, or
+# simulate an order; the engine imports no execution client.
+
+class QMIEScanRequest(BaseModel):
+    overrides: dict | None = None
+    symbols: list[str] | None = None       # optional explicit universe (e.g. a watchlist)
+
+
+@router.post("/qmie/scan")
+def qmie_scan(payload: QMIEScanRequest | None = None,
+              user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Ranked research candidates for the selected horizon (read-only)."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated — research needs historical data access"}
+    payload = payload or QMIEScanRequest()
+    try:
+        snap = _get_qmie(broker, user_id).scan(payload.overrides, symbols=payload.symbols)
+        if snap.get("status") == "ok":
+            qmie_store.save_snapshot(db, user_id, snap)   # persist for reproducibility
+        return snap
+    except Exception as exc:
+        logger.error("QMIE scan failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/qmie/backtest")
+def qmie_backtest(payload: QMIEScanRequest | None = None,
+                  user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Leakage-safe point-in-time backtest + calibration (read-only)."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    payload = payload or QMIEScanRequest()
+    try:
+        return _get_qmie(broker, user_id).backtest(payload.overrides, symbols=payload.symbols)
+    except Exception as exc:
+        logger.error("QMIE backtest failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/qmie/snapshots")
+def qmie_snapshots(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "snapshots": qmie_store.list_snapshots(db, user_id)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/qmie/snapshot/{snapshot_id}")
+def qmie_snapshot(snapshot_id: str, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    snap = qmie_store.get_snapshot(db, user_id, snapshot_id)
+    if not snap:
+        return {"status": "error", "message": "Snapshot not found"}
+    return snap
+
+
+@router.get("/qmie/config")
+def qmie_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_qmie(get_user_broker(db, user_id), user_id).load_config()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/qmie/config")
+def qmie_config_save(payload: dict | None = None,
+                     user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_qmie(get_user_broker(db, user_id), user_id).save_config(payload or {})}
+    except Exception as exc:
+        logger.error("QMIE config save failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/qmie/universe")
+def qmie_universe(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """F&O underlyings available for the default universe (read-only, for display)."""
+    try:
+        eng = _get_qmie(get_user_broker(db, user_id), user_id)
+        return {"status": "ok", "symbols": [e["name"] for e in eng.universe.equities()]}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}

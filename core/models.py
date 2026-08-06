@@ -497,3 +497,32 @@ class OPEIRecommendation(Base):
     __table_args__ = (
         Index("idx_opei_user_date", "user_id", "trade_date"),
     )
+
+
+class QMIESnapshot(Base):
+    """Immutable ranked-scan snapshot for Research-10 (QMIE) reproducibility.
+
+    Append-only: every scan persists its full ranked result + provenance
+    (as-of, config/ruleset versions, benchmark, counts, market context). Research
+    only — no orders. Auto-created via ``create_all``.
+    """
+    __tablename__ = "qmie_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    snapshot_id = Column(String(40), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    as_of = Column(String(40))
+    horizon = Column(String(20))
+    config_version = Column(String(60))
+    ruleset_version = Column(String(60))
+    benchmark = Column(String(40))
+    counts = Column(JSONB, default=dict)
+    config = Column(JSONB, default=dict)
+    results = Column(JSONB, default=list)
+    restricted = Column(JSONB, default=list)
+    market_context = Column(JSONB, default=dict)
+
+    __table_args__ = (
+        Index("idx_qmie_user_created", "user_id", "created_at"),
+    )
