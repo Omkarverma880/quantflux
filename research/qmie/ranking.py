@@ -92,20 +92,54 @@ def evaluate(symbol: str, exchange: str, token: int, bars: list[dict], bench: li
                 "reason": "Volatility (ATR) not computable"}
     atr = float(vlt["atr"])
 
-    # ── Research plan (hypotheses only) ──
-    if dsign > 0:
-        invalidation = round(close - profile["stop_atr"] * atr, 2)
-        target1 = round(close + profile["target_atr"] * atr, 2)
-    else:
-        invalidation = round(close + profile["stop_atr"] * atr, 2)
-        target1 = round(close - profile["target_atr"] * atr, 2)
-    risk_per_unit = abs(close - invalidation)
-    reward = abs(target1 - close)
-    rr = round(reward / risk_per_unit, 2) if risk_per_unit > 0 else None
+    # ── Research plan — STRUCTURAL, not a fixed ATR multiple ──────────────
+    # Stop is anchored below the swing low (long) / above the swing high (short)
+    # with an ATR buffer, then floored so it can never be a trivial 1-point stop,
+    # and capped so structure that is miles away doesn't create absurd risk.
+    # Target is the nearest opposing structure (swing high/low); if price has no
+    # meaningful overhead/underfoot structure it falls back to a measured move.
+    # Because both legs come from real structure, reward-to-risk VARIES per name.
+    lows_all = [float(b["low"]) for b in bars]
+    highs_all = [float(b["high"]) for b in bars]
+    stop_lb = max(8, profile["lookback"] // 4)      # recent leg for the stop
+    recent_low = min(lows_all[-stop_lb:])
+    recent_high = max(highs_all[-stop_lb:])
+    # prior structure (exclude the last 3 bars so "resistance" isn't today's high)
+    scan = bars[-profile["lookback"]:] if len(bars) >= profile["lookback"] else bars
+    scan = scan[:-3] if len(scan) > 4 else scan
+    overhead = max([float(b["high"]) for b in scan if float(b["high"]) > close * 1.01], default=None)
+    underfoot = min([float(b["low"]) for b in scan if float(b["low"]) < close * 0.99], default=None)
+    min_risk = max(0.8 * atr, 0.012 * close)        # ≥ ~1.2% of price (never 1 point)
+    max_risk = max(3.0 * atr, 0.06 * close)         # cap runaway structural risk
 
-    if rr is None or risk_per_unit <= 0:
+    if dsign > 0:      # long — stop below recent support; target overhead OR measured move
+        risk = min(max(close - (recent_low - 0.25 * atr), min_risk), max_risk)
+        invalidation = round(close - risk, 2)
+        if overhead:
+            target1, tgt_src = round(overhead, 2), "overhead resistance"
+        else:                                        # new highs → measured move
+            target1, tgt_src = round(close + max(profile["target_atr"] * atr, risk * min_rr), 2), "measured move"
+        reward = target1 - close
+        entry_low, entry_high = round(close - 0.4 * atr, 2), round(close, 2)
+        plan_type = ("breakout_or_new_high" if overhead is None
+                     else "pullback_to_value" if tr.get("extension_atr", 0) < 1.0 else "trend_continuation")
+    else:              # short — stop above recent resistance; target underfoot OR measured move
+        risk = min(max((recent_high + 0.25 * atr) - close, min_risk), max_risk)
+        invalidation = round(close + risk, 2)
+        if underfoot:
+            target1, tgt_src = round(underfoot, 2), "underfoot support"
+        else:
+            target1, tgt_src = round(close - max(profile["target_atr"] * atr, risk * min_rr), 2), "measured move"
+        reward = close - target1
+        entry_low, entry_high = round(close, 2), round(close + 0.4 * atr, 2)
+        plan_type = ("breakdown_or_new_low" if underfoot is None
+                     else "pullback_to_value" if tr.get("extension_atr", 0) > -1.0 else "trend_continuation")
+
+    risk_per_unit = abs(close - invalidation)
+    rr = round(reward / risk_per_unit, 2) if risk_per_unit > 0 else None
+    if rr is None or risk_per_unit <= 0 or reward <= 0:
         return {**base, "state": STATE_UNAVAILABLE, "direction": direction,
-                "reason": "Thesis invalidation not computable"}
+                "reason": "No structurally valid target beyond the stop"}
     if rr < min_rr:
         warnings.append(f"Reward-to-risk {rr} below {min_rr}")
 
@@ -154,14 +188,20 @@ def evaluate(symbol: str, exchange: str, token: int, bars: list[dict], bench: li
             opposing.append(f"Market breadth ({reg}) counters {direction}")
     band_label, band_color = score_band(score)
 
+    risk_pct = round(risk_per_unit / close * 100.0, 2) if close else None
     explanation = _explain(symbol, direction, cfg["horizon"], state, score,
-                           band_label, supporting, opposing, rr, grade, stale)
+                           band_label, supporting, opposing, rr, grade, stale,
+                           plan_type, tgt_src, risk_pct)
 
     return {
         **base, "state": state, "reason": reason, "direction": direction,
         "score": score, "band": band_label, "band_color": band_color,
         "confidence": confidence, "risk_grade": grade, "risk_color": RISK_COLORS[grade],
-        "indicative_entry": round(close, 2), "invalidation": invalidation,
+        "indicative_entry": round(close, 2),
+        "entry_zone_low": entry_low, "entry_zone_high": entry_high,
+        "plan_type": plan_type, "target_source": tgt_src,
+        "risk_per_unit": round(risk_per_unit, 2), "risk_pct": risk_pct,
+        "invalidation": invalidation,
         "first_target": target1, "reward_to_risk": rr,
         "atr": round(atr, 3), "atr_pct": vlt["atr_pct"], "vol_regime": vlt["regime"],
         "rel_strength_excess": rs.get("excess"), "rel_volume": vol.get("rel_volume"),
@@ -190,9 +230,12 @@ def _risk_grade(vlt, liq, tr, stale) -> str:
     return RISK_GRADES[idx]
 
 
-def _explain(symbol, direction, horizon, state, score, band, supporting, opposing, rr, grade, stale) -> str:
+def _explain(symbol, direction, horizon, state, score, band, supporting, opposing,
+             rr, grade, stale, plan_type="", tgt_src="", risk_pct=None) -> str:
+    ptxt = (plan_type or "").replace("_", " ")
     lead = (f"{band} {horizon} {direction} research thesis for {symbol} "
-            f"(score {score}, {grade.lower()} analytical risk, R:R {rr}).")
+            f"({ptxt}; stop ≈{risk_pct}% below structure, target at {tgt_src}, "
+            f"R:R {rr}, {grade.lower()} analytical risk, score {score}).")
     body = ""
     if supporting:
         body += " Supported by: " + "; ".join(supporting[:3]) + "."

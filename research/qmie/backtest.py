@@ -17,7 +17,8 @@ BT_PROFILE = {
     "positional": {"max_hold": 30, "cadence": 5},
     "monthly":    {"max_hold": 60, "cadence": 8},
 }
-MAX_DECISIONS_PER_INSTRUMENT = 150      # bound compute for a manual research run
+MAX_DECISIONS_PER_INSTRUMENT = 80       # bound compute for a manual research run
+MAX_BACKTEST_INSTRUMENTS = 15           # cap universe so a manual run stays responsive
 
 
 def simulate_outcome(direction: str, entry: float, target: float, stop: float,

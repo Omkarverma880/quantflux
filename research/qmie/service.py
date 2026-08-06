@@ -201,7 +201,7 @@ class QMIEEngine:
             bench_dates = [ranking._bar_date(b) for b in bench]
 
             # cap the universe for a manual research backtest (compute bound)
-            uni = self._resolve_universe(cfg, symbols)[: min(cfg["max_instruments"], 25)]
+            uni = self._resolve_universe(cfg, symbols)[: min(cfg["max_instruments"], bt.MAX_BACKTEST_INSTRUMENTS)]
             records: list[dict] = []
             tested = 0
             for sym in uni:

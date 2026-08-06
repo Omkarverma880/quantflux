@@ -37,12 +37,15 @@ function Detail({ c, onClose }) {
         </div>
 
         <div className="bg-surface-2 rounded-lg p-3">
-          <div className="text-xs font-semibold text-gray-300 mb-2">Research Plan <span className="text-gray-600">(indicative hypothesis — not an order)</span></div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-semibold text-gray-300">Research Plan <span className="text-gray-600">(hypothesis — not an order)</span></div>
+            {c.plan_type && <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-3 text-gray-400 border border-surface-4 capitalize">{String(c.plan_type).replace(/_/g, ' ')}</span>}
+          </div>
           <div className="grid grid-cols-2 gap-y-1.5 text-sm">
-            <span className="text-gray-500">Indicative Entry</span><span className="text-right text-gray-100">₹{NUM(c.indicative_entry)}</span>
-            <span className="text-gray-500">Thesis Invalidation</span><span className="text-right text-red-400">₹{NUM(c.invalidation)}</span>
-            <span className="text-gray-500">First Target</span><span className="text-right text-emerald-400">₹{NUM(c.first_target)}</span>
-            <span className="text-gray-500">Reward : Risk</span><span className="text-right text-gray-100">{c.reward_to_risk}</span>
+            <span className="text-gray-500">Entry zone</span><span className="text-right text-gray-100">₹{NUM(c.entry_zone_low)} – ₹{NUM(c.entry_zone_high)}</span>
+            <span className="text-gray-500">Stop (invalidation)</span><span className="text-right text-red-400">₹{NUM(c.invalidation)} <span className="text-gray-600 text-xs">(−{c.risk_pct}%)</span></span>
+            <span className="text-gray-500">First target</span><span className="text-right text-emerald-400">₹{NUM(c.first_target)} <span className="text-gray-600 text-xs">({c.target_source})</span></span>
+            <span className="text-gray-500">Reward : Risk</span><span className="text-right text-gray-100 font-semibold">{c.reward_to_risk} : 1</span>
             <span className="text-gray-500">ATR ({c.vol_regime})</span><span className="text-right text-gray-300">₹{NUM(c.atr)} · {c.atr_pct}%</span>
           </div>
         </div>
@@ -320,7 +323,7 @@ export default function QMIE() {
           <div className="overflow-x-auto">
             <table className="w-full text-xs whitespace-nowrap">
               <thead className="bg-surface-3 text-gray-300"><tr>
-                {['#', 'Instrument', 'Dir', 'Score', 'Conf', 'Risk', 'Entry', 'Invalidation', 'Target', 'R:R', 'Rel.Str', 'Liquidity', 'Fresh', ''].map((h) => <th key={h} className="px-2.5 py-2 font-semibold text-right first:text-center">{h}</th>)}
+                {['#', 'Instrument', 'Dir', 'Score', 'Conf', 'Risk', 'Entry ref', 'Stop', 'Target', 'R:R', 'Rel.Str', 'Liquidity', 'Fresh', ''].map((h) => <th key={h} className="px-2.5 py-2 font-semibold text-right first:text-center">{h}</th>)}
               </tr></thead>
               <tbody>
                 {rows.map((r) => (
@@ -332,7 +335,7 @@ export default function QMIE() {
                     <td className="px-2.5 py-1.5 text-right text-gray-300">{r.confidence}</td>
                     <td className="px-2.5 py-1.5 text-right font-semibold" style={{ color: gradeColor(r.risk_grade) }}>{r.risk_grade}</td>
                     <td className="px-2.5 py-1.5 text-right text-gray-200">₹{NUM(r.indicative_entry)}</td>
-                    <td className="px-2.5 py-1.5 text-right text-red-400">₹{NUM(r.invalidation)}</td>
+                    <td className="px-2.5 py-1.5 text-right text-red-400">₹{NUM(r.invalidation)}<span className="text-gray-600"> ({r.risk_pct}%)</span></td>
                     <td className="px-2.5 py-1.5 text-right text-emerald-400">₹{NUM(r.first_target)}</td>
                     <td className="px-2.5 py-1.5 text-right text-gray-200">{r.reward_to_risk}</td>
                     <td className="px-2.5 py-1.5 text-right" style={{ color: (r.rel_strength_excess || 0) >= 0 ? '#4ade80' : '#f87171' }}>{r.rel_strength_excess == null ? '—' : `${r.rel_strength_excess}%`}</td>

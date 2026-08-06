@@ -108,11 +108,15 @@ def volatility_engine(bars: list[dict], profile: dict) -> dict:
         return {"score": 50.0, "atr": a, "atr_pct": None, "regime": "unavailable",
                 "evidence": [_ev("ATR unavailable", 0)]}
     atr_pct = a / cl[-1] * 100.0
-    # percentile of ATR% over history to classify regime
+    # percentile of ATR% over RECENT history to classify regime. Bounded to the
+    # last ~150 bars so a point-in-time backtest stays fast (and the regime is
+    # relative to recent behaviour, not multi-year history).
+    ap = profile["atr_period"]
+    lo_i = max(ap + 1, len(bars) - 150)
     hist = []
-    for i in range(profile["atr_period"] + 1, len(bars)):
-        sub = bars[max(0, i - profile["atr_period"] - 1):i + 1]
-        av = ind.atr(sub, profile["atr_period"])
+    for i in range(lo_i, len(bars)):
+        sub = bars[i - ap - 1:i + 1]
+        av = ind.atr(sub, ap)
         c = float(bars[i]["close"])
         if av and c:
             hist.append(av / c * 100.0)
