@@ -526,3 +526,55 @@ class QMIESnapshot(Base):
     __table_args__ = (
         Index("idx_qmie_user_created", "user_id", "created_at"),
     )
+
+
+class DataDataset(Base):
+    """Research → Data Downloader dataset metadata + download-job state.
+
+    One row per download request. Historical candles are stored on disk
+    (Parquet/CSV under the data directory); PostgreSQL holds only metadata,
+    status, per-chunk resume state, quality and the file path. Read-only w.r.t.
+    the market — never places orders. Auto-created via ``create_all``.
+    """
+    __tablename__ = "data_datasets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+    # instrument
+    symbol = Column(String(120))
+    exchange = Column(String(12))
+    segment = Column(String(20))
+    instrument_type = Column(String(20))
+    instrument_token = Column(Integer)
+    expiry = Column(String(12))
+    strike = Column(Numeric(12, 2))
+    option_type = Column(String(2))
+    # request
+    interval = Column(String(12))
+    from_date = Column(Date)
+    to_date = Column(Date)
+    timezone = Column(String(32), default="Asia/Kolkata")
+    include_oi = Column(Boolean, default=True)
+    fmt = Column(String(10), default="parquet")
+    normalize = Column(Boolean, default=True)
+    # job / status
+    status = Column(String(16), default="queued", index=True)
+    progress = Column(Integer, default=0)
+    rows = Column(Integer, default=0)
+    chunks_total = Column(Integer, default=0)
+    chunks_completed = Column(Integer, default=0)
+    chunks = Column(JSONB, default=list)
+    error = Column(Text)
+    # file
+    file_path = Column(String(500))
+    file_format = Column(String(10))
+    checksum = Column(String(64))
+    size_bytes = Column(Integer)
+    quality = Column(JSONB, default=dict)
+
+    __table_args__ = (
+        Index("idx_dataset_user_created", "user_id", "created_at"),
+    )

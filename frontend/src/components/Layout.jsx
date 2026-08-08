@@ -49,6 +49,7 @@ const NAV = [
       { to: '/research/pmvwap-equity', label: '8. Prev-Month VWAP Equity' },
       { to: '/research/opei', label: '9. Option Premium Entry (OPEI)' },
       { to: '/research/qmie', label: '10. Quantum Market Intelligence (QMIE)' },
+      { to: '/research/data-downloader', label: '11. Data Downloader' },
     ],
   },
   {

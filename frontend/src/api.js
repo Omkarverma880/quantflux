@@ -454,6 +454,28 @@ export const api = {
   researchQMIEBacktest: (overrides, symbols) => request('/research/qmie/backtest', { method: 'POST', body: JSON.stringify({ overrides: overrides || {}, symbols: symbols || null }) }),
   researchQMIESnapshots: () => request('/research/qmie/snapshots'),
   researchQMIESnapshot: (id) => request(`/research/qmie/snapshot/${encodeURIComponent(id)}`),
+
+  // Research → Data Downloader
+  ddConfig: () => request('/research/data-downloader/config'),
+  ddConfigSave: (p) => request('/research/data-downloader/config', { method: 'POST', body: JSON.stringify(p || {}) }),
+  ddSearch: (q, type, exchange) => request(`/research/data-downloader/search?q=${encodeURIComponent(q || '')}${type ? `&type=${encodeURIComponent(type)}` : ''}${exchange ? `&exchange=${encodeURIComponent(exchange)}` : ''}`),
+  ddExpiries: (name, kind) => request(`/research/data-downloader/expiries?name=${encodeURIComponent(name)}${kind ? `&kind=${encodeURIComponent(kind)}` : ''}`),
+  ddStrikes: (name, expiry, ot) => request(`/research/data-downloader/strikes?name=${encodeURIComponent(name)}&expiry=${encodeURIComponent(expiry)}${ot ? `&option_type=${encodeURIComponent(ot)}` : ''}`),
+  ddDownload: (spec) => request('/research/data-downloader/download', { method: 'POST', body: JSON.stringify(spec) }),
+  ddJob: (id) => request(`/research/data-downloader/jobs/${id}`),
+  ddResume: (id) => request(`/research/data-downloader/jobs/${id}/resume`, { method: 'POST' }),
+  ddCancel: (id) => request(`/research/data-downloader/jobs/${id}/cancel`, { method: 'POST' }),
+  ddDatasets: () => request('/research/data-downloader/datasets'),
+  ddDataset: (id) => request(`/research/data-downloader/datasets/${id}`),
+  ddDatasetDelete: (id) => request(`/research/data-downloader/datasets/${id}`, { method: 'DELETE' }),
+  ddDownloadFile: async (id, fmt, filename) => {
+    const res = await fetch(`${BASE}/research/data-downloader/datasets/${id}/file?fmt=${fmt || 'native'}`, { headers: { ...getAuthHeaders() } });
+    if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`);
+    const blob = await res.blob();
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = filename || `dataset_${id}.${fmt === 'csv' ? 'csv' : 'dat'}`; a.click();
+    URL.revokeObjectURL(a.href);
+  },
   // Research Watchlists (shared by Straddle #7 & Equity #8)
   researchWatchlists: () => request('/research/watchlists'),
   researchWatchlistGet: (id) => request(`/research/watchlists/${id}`),

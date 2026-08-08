@@ -34,6 +34,7 @@ from research.opei import log as opei_log
 from research.opei import telegram as opei_tg
 from research.qmie import QMIEEngine
 from research.qmie import store as qmie_store
+from research.data_downloader import DataDownloader
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -50,7 +51,20 @@ _pmvwap_straddles: dict[int, PMVwapStraddleResearch] = {}
 _pmvwap_equities: dict[int, PMVwapEquityResearch] = {}
 _opei_engines: dict[int, OPEIEngine] = {}
 _qmie_engines: dict[int, QMIEEngine] = {}
+_downloaders: dict[int, DataDownloader] = {}
 _news_sentiment = NewsSentiment()   # shared (public RSS — not per-user)
+
+
+def _get_downloader(broker: Broker, user_id: int) -> DataDownloader:
+    eng = _downloaders.get(user_id)
+    if eng is None:
+        eng = DataDownloader(broker, user_id=user_id)
+        _downloaders[user_id] = eng
+    else:
+        eng.broker = broker
+        eng.index.broker = broker
+    eng.user_id = user_id
+    return eng
 
 
 def _get_lab(broker: Broker, user_id: int) -> HlVwapLab:
@@ -1223,3 +1237,131 @@ def qmie_universe(user_id: int = Depends(login_required), db: Session = Depends(
         return {"status": "ok", "symbols": [e["name"] for e in eng.universe.equities()]}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
+
+
+# ──────────────── Research → Data Downloader (read-only historical data) ────────────────
+from fastapi.responses import FileResponse   # noqa: E402
+
+
+class DownloadSpec(BaseModel):
+    instrument_token: int
+    symbol: str | None = None
+    exchange: str | None = None
+    segment: str | None = None
+    instrument_type: str
+    expiry: str | None = None
+    strike: float | None = None
+    option_type: str | None = None
+    interval: str
+    from_date: str
+    to_date: str
+    timezone: str | None = None
+    include_oi: bool = True
+    fmt: str | None = None
+    normalize: bool = True
+
+
+@router.get("/data-downloader/config")
+def dd_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_downloader(get_user_broker(db, user_id), user_id).load_config()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/data-downloader/config")
+def dd_config_save(payload: dict | None = None, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_downloader(get_user_broker(db, user_id), user_id).save_config(payload or {})}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/data-downloader/search")
+def dd_search(q: str = "", type: str | None = None, exchange: str | None = None,
+              user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    try:
+        eng = _get_downloader(get_user_broker(db, user_id), user_id)
+        return {"status": "ok", "results": eng.search(q, type, exchange)}
+    except Exception as exc:
+        logger.error("dd search failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/data-downloader/expiries")
+def dd_expiries(name: str, kind: str = "all", user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        eng = _get_downloader(get_user_broker(db, user_id), user_id)
+        return {"status": "ok", "expiries": eng.expiries(name, kind), "futures": eng.futures(name)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/data-downloader/strikes")
+def dd_strikes(name: str, expiry: str, option_type: str | None = None,
+               user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        eng = _get_downloader(get_user_broker(db, user_id), user_id)
+        return {"status": "ok", "strikes": eng.strikes(name, expiry, option_type)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/data-downloader/download")
+def dd_download(payload: DownloadSpec, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated — needed for historical data"}
+    try:
+        return _get_downloader(broker, user_id).start_download(db, payload.model_dump())
+    except Exception as exc:
+        logger.error("dd download failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/data-downloader/jobs/{ds_id}")
+def dd_job(ds_id: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    return _get_downloader(get_user_broker(db, user_id), user_id).job_status(db, ds_id)
+
+
+@router.post("/data-downloader/jobs/{ds_id}/resume")
+def dd_resume(ds_id: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    return _get_downloader(broker, user_id).resume(db, ds_id)
+
+
+@router.post("/data-downloader/jobs/{ds_id}/cancel")
+def dd_cancel(ds_id: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    return _get_downloader(get_user_broker(db, user_id), user_id).cancel(db, ds_id)
+
+
+@router.get("/data-downloader/datasets")
+def dd_datasets(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "datasets": _get_downloader(get_user_broker(db, user_id), user_id).list_datasets(db)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/data-downloader/datasets/{ds_id}")
+def dd_dataset(ds_id: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    return _get_downloader(get_user_broker(db, user_id), user_id).get_dataset(db, ds_id)
+
+
+@router.delete("/data-downloader/datasets/{ds_id}")
+def dd_dataset_delete(ds_id: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    return _get_downloader(get_user_broker(db, user_id), user_id).delete_dataset(db, ds_id)
+
+
+@router.get("/data-downloader/datasets/{ds_id}/file")
+def dd_dataset_file(ds_id: int, fmt: str = "native", user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    eng = _get_downloader(get_user_broker(db, user_id), user_id)
+    path = eng.file_path(db, ds_id, fmt)
+    if not path:
+        return {"status": "error", "message": "File not available"}
+    import os
+    return FileResponse(path, filename=os.path.basename(path), media_type="application/octet-stream")

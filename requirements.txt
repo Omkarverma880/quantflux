@@ -14,3 +14,5 @@ cryptography>=42.0.0
 slowapi>=0.1.9
 alembic>=1.13.0
 python-multipart
+# Data Downloader — Parquet datasets for ML/backtesting research
+pyarrow>=14.0.0
