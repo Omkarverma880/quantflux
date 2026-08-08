@@ -102,6 +102,18 @@ def finalize(dataset_id: int, instrument_type: str, symbol: str, interval: str,
     if "timestamp" in df.columns:
         df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
 
+    # Drop columns that never apply to this instrument type so files stay lean
+    # (an index/equity has no expiry/strike/option; a future has no strike/option).
+    drop = {
+        "index": ["expiry", "strike", "option_type"],
+        "equity": ["expiry", "strike", "option_type"],
+        "futures": ["strike", "option_type"],
+    }.get(instrument_type, [])
+    if "oi" in df.columns and df["oi"].isnull().all():       # OI absent / not requested
+        drop = drop + ["oi"]
+    if drop:
+        df = df.drop(columns=[c for c in drop if c in df.columns])
+
     out_dir = dataset_dir(instrument_type, symbol)
     out_dir.mkdir(parents=True, exist_ok=True)
     base = f"{_safe(symbol)}_{interval}_{from_date}_{to_date}"

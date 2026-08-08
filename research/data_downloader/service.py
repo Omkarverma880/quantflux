@@ -120,12 +120,15 @@ class DataDownloader:
         return {"status": "ok", "job_id": ds.id, "dataset": _to_dict(ds)}
 
     def job_status(self, db, ds_id: int) -> dict:
+        # Returns the dataset dict directly — its own ``status`` field IS the job
+        # status. No {"status":"ok"} envelope (that collided with it and left the
+        # UI polling forever).
         ds = self._get(db, ds_id)
         if not ds:
-            return {"status": "error", "message": "Job not found"}
+            return {"status": "failed", "error": "Job not found", "id": ds_id}
         d = _to_dict(ds)
         d["running"] = manager.is_running(ds_id)
-        return {"status": "ok", **d}
+        return d
 
     def resume(self, db, ds_id: int) -> dict:
         ds = self._get(db, ds_id)

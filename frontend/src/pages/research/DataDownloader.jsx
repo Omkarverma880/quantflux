@@ -85,10 +85,12 @@ export default function DataDownloader() {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = window.setInterval(async () => {
       try {
-        const r = await api.ddJob(id);
-        if (r.status === 'ok') {
+        const r = await api.ddJob(id);           // dataset dict; r.status is the job status
+        if (r && r.id) {
           setJob(r);
           if (!RUNNING.has(r.status)) { clearInterval(pollRef.current); pollRef.current = null; loadDatasets(); }
+        } else {
+          clearInterval(pollRef.current); pollRef.current = null;
         }
       } catch { /* keep polling */ }
     }, 1500);
