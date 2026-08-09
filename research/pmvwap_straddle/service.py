@@ -169,7 +169,8 @@ class PMVwapStraddleResearch:
             if cfg.get("entry_mode", "vwap_cross") == "level_touch":
                 signals = calc.find_level_touch_signals(
                     candles, vwaps, offset_mode=cfg["entry_offset_mode"],
-                    offset_value=float(cfg["entry_offset_value"]), buffer=float(cfg["vwap_buffer"]),
+                    offset_value=float(cfg["entry_offset_value"]), direction=cfg["entry_offset_dir"],
+                    buffer=float(cfg["vwap_buffer"]),
                     entry_start=cfg["entry_start"], signal_cutoff=cfg["signal_cutoff"],
                     one_per_day=bool(cfg["one_signal_per_day"]), day=day)
             else:

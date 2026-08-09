@@ -217,11 +217,17 @@ export default function PMVwapStraddle() {
             </select>
           </div>
           {cfg.entry_mode === 'level_touch' && <>
+            <div><label className={lbl}>Trigger Side</label>
+              <select value={cfg.entry_offset_dir || 'below'} onChange={(e) => patch('entry_offset_dir', e.target.value)} className={`w-full ${selCls}`}>
+                <option value="below">Below VWAP</option>
+                <option value="above">Above VWAP</option>
+                <option value="both">Both sides</option>
+              </select></div>
             <div><label className={lbl}>Offset By</label>
               <select value={cfg.entry_offset_mode || 'percent'} onChange={(e) => patch('entry_offset_mode', e.target.value)} className={`w-full ${selCls}`}>
                 <option value="percent">Percent</option><option value="points">Points</option>
               </select></div>
-            <div><label className={lbl}>Offset ({cfg.entry_offset_mode === 'points' ? 'pts' : '%'}, +above/−below)</label>{num('entry_offset_value', -100000, 0.5)}</div>
+            <div><label className={lbl}>Offset ({cfg.entry_offset_mode === 'points' ? 'pts' : '%'})</label>{num('entry_offset_value', 0, 0.5)}</div>
           </>}
           <div><label className={lbl}>Exit Mode</label>
             <select value={cfg.exit_mode || 'combined_pnl'} onChange={(e) => patch('exit_mode', e.target.value)} className={`w-full ${selCls}`}>

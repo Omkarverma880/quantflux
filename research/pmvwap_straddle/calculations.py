@@ -58,22 +58,37 @@ def find_entry_signals(candles: list[dict], vwaps: list[dict], *, buffer: float,
     return signals
 
 
-def level_from_vwap(vwap, offset_mode: str, offset_value: float):
-    """Entry level derived from the Prev-Month VWAP by a signed % or points
-    offset (e.g. offset_value=-5, percent → 5% below the VWAP)."""
+def entry_levels(vwap, offset_mode: str, magnitude: float, direction: str) -> list:
+    """Entry trigger level(s) from the Prev-Month VWAP:
+
+        above → [VWAP + offset]        below → [VWAP − offset]
+        both  → [VWAP + offset, VWAP − offset]   (touch of EITHER triggers entry)
+
+    magnitude is a non-negative % (percent mode) or points. magnitude 0 → [VWAP].
+    """
     if vwap is None:
-        return None
-    if offset_mode == "points":
-        return vwap + offset_value
-    return vwap * (1.0 + offset_value / 100.0)
+        return []
+    m = abs(magnitude)
+
+    def lvl(sign):
+        return vwap + sign * m if offset_mode == "points" else vwap * (1.0 + sign * m / 100.0)
+
+    if m == 0:
+        return [vwap]
+    if direction == "above":
+        return [lvl(+1)]
+    if direction == "below":
+        return [lvl(-1)]
+    return [lvl(+1), lvl(-1)]          # both
 
 
 def find_level_touch_signals(candles: list[dict], vwaps: list[dict], *, offset_mode: str,
-                             offset_value: float, buffer: float, entry_start: str,
+                             offset_value: float, direction: str, buffer: float, entry_start: str,
                              signal_cutoff: str, one_per_day: bool, day) -> list[dict]:
-    """Detect bars on ``day`` whose range TOUCHES the entry level (Prev-Month VWAP
-    ± offset). A touch = candle low ≤ level ≤ candle high (± buffer). Direction-
-    agnostic: works whether the level is above or below current price."""
+    """Detect bars on ``day`` whose range TOUCHES an entry level (VWAP ± offset).
+    A touch = candle low ≤ level ≤ candle high (± buffer). For direction "both"
+    either side triggers; if a bar touches more than one, the level nearest the
+    close is recorded."""
     start = _parse_hhmm(entry_start)
     cutoff = _parse_hhmm(signal_cutoff)
     signals: list[dict] = []
@@ -85,14 +100,16 @@ def find_level_touch_signals(candles: list[dict], vwaps: list[dict], *, offset_m
         if not (start <= dt.time() <= cutoff):
             continue
         vwap = vwaps[i].get("prev_month_vwap")
-        level = level_from_vwap(vwap, offset_mode, offset_value)
-        if level is None:
+        levels = entry_levels(vwap, offset_mode, offset_value, direction)
+        if not levels:
             continue
-        hi, lo = float(c["high"]), float(c["low"])
-        if lo - buffer <= level <= hi + buffer:
+        hi, lo, close = float(c["high"]), float(c["low"]), float(c["close"])
+        touched = [lv for lv in levels if lo - buffer <= lv <= hi + buffer]
+        if touched:
+            level = min(touched, key=lambda lv: abs(lv - close))   # nearest fill
             signals.append({
                 "index": i, "dt": dt, "level": round(level, 2), "vwap": vwap,
-                "close": round(float(c["close"]), 2), "direction": DIRECTION_LONG,
+                "close": round(close, 2), "direction": DIRECTION_LONG,
             })
             if one_per_day:
                 break

@@ -25,7 +25,8 @@ DEFAULT_CONFIG: dict = {
     #                             Prev-Month VWAP by a signed % or points offset.
     "entry_mode": "vwap_cross",
     "entry_offset_mode": "percent",       # percent | points
-    "entry_offset_value": 0.0,            # signed: +above / -below Prev-Month VWAP (e.g. -5 = 5% below)
+    "entry_offset_dir": "below",          # above | below | both (where the trigger sits vs VWAP)
+    "entry_offset_value": 0.0,            # magnitude (≥0). 0 = the VWAP itself
     # legs: "both" = ATM straddle (CE+PE) | "call" = CE only | "put" = PE only
     "legs": "both",
     # exit_mode: "combined_pnl" = exit BOTH legs when combined P&L hits target/SL
@@ -110,6 +111,9 @@ def sanitize(cfg: dict) -> dict:
         out["entry_mode"] = "vwap_cross"
     if out["entry_offset_mode"] not in ("percent", "points"):
         out["entry_offset_mode"] = "percent"
+    if out["entry_offset_dir"] not in ("above", "below", "both"):
+        out["entry_offset_dir"] = "below"
+    out["entry_offset_value"] = abs(float(out["entry_offset_value"]))   # magnitude only
     if out["legs"] not in ("both", "call", "put"):
         out["legs"] = "both"
     out["hold_to_expiry"] = bool(out["hold_to_expiry"])
