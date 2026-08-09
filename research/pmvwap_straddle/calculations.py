@@ -107,18 +107,26 @@ def simulate_straddle(entry_ce: float, entry_pe: float, ce_forward: list[tuple],
 
 
 def combined_excursion(entry_ce, entry_pe, ce_forward, pe_forward, lot_size):
-    """Max favourable / adverse excursion of the COMBINED straddle P&L (₹)."""
-    combined_entry = entry_ce + entry_pe
-    pe_map = dict(pe_forward)
-    mfe = mae = 0.0
-    for dt, ce_prem in ce_forward:
-        pe_prem = pe_map.get(dt)
-        if ce_prem is None or pe_prem is None:
+    """Max profit / max loss after entry, computed PER LEG (each leg at its own
+    extreme), then summed — i.e. the highest price each of CE and PE reached after
+    entry (max profit) and the lowest price each reached (max loss). This is NOT
+    the simultaneous combined MTM; a leg's own peak counts even if the other leg
+    was down at that moment."""
+    max_ce = min_ce = entry_ce
+    max_pe = min_pe = entry_pe
+    for _dt, p in ce_forward:
+        if p is None:
             continue
-        mtm = (ce_prem + pe_prem - combined_entry) * lot_size
-        mfe = max(mfe, mtm)
-        mae = min(mae, mtm)
-    return round(mfe, 2), round(mae, 2)
+        max_ce = max(max_ce, p)
+        min_ce = min(min_ce, p)
+    for _dt, p in pe_forward:
+        if p is None:
+            continue
+        max_pe = max(max_pe, p)
+        min_pe = min(min_pe, p)
+    max_profit = round(((max_ce - entry_ce) + (max_pe - entry_pe)) * lot_size, 2)
+    max_loss = round(((min_ce - entry_ce) + (min_pe - entry_pe)) * lot_size, 2)
+    return max_profit, max_loss
 
 
 def simulate_straddle_combined(entry_ce: float, entry_pe: float, ce_forward: list[tuple],
@@ -134,16 +142,18 @@ def simulate_straddle_combined(entry_ce: float, entry_pe: float, ce_forward: lis
     """
     combined_entry = round(entry_ce + entry_pe, 2)
     pe_map = dict(pe_forward)
-    mfe = mae = 0.0
+    # per-leg extremes after entry (each leg at its own high/low) → max profit/loss
+    max_ce = min_ce = entry_ce
+    max_pe = min_pe = entry_pe
     exit_dt = exit_ce = exit_pe = reason = None
     last = None
     for dt, ce_prem in ce_forward:
         pe_prem = pe_map.get(dt)
         if ce_prem is None or pe_prem is None:
             continue
+        max_ce = max(max_ce, ce_prem); min_ce = min(min_ce, ce_prem)
+        max_pe = max(max_pe, pe_prem); min_pe = min(min_pe, pe_prem)
         mtm = (ce_prem + pe_prem - combined_entry) * lot_size
-        mfe = max(mfe, mtm)
-        mae = min(mae, mtm)
         last = (dt, ce_prem, pe_prem)
         if mtm >= target_amount:
             exit_dt, exit_ce, exit_pe, reason = dt, ce_prem, pe_prem, EXIT_TARGET
@@ -158,8 +168,10 @@ def simulate_straddle_combined(entry_ce: float, entry_pe: float, ce_forward: lis
     lot = int(lot_size or 0)
     tgt_prem = round(combined_entry + (target_amount / lot if lot else 0), 2)
     sl_prem = round(combined_entry - (sl_amount / lot if lot else 0), 2)
+    max_profit = round(((max_ce - entry_ce) + (max_pe - entry_pe)) * lot, 2)
+    max_loss = round(((min_ce - entry_ce) + (min_pe - entry_pe)) * lot, 2)
     base = {"combined_entry": combined_entry, "target_premium": tgt_prem, "sl_premium": sl_prem,
-            "max_profit": round(mfe, 2), "max_loss": round(mae, 2),
+            "max_profit": max_profit, "max_loss": max_loss,
             "target_amount": target_amount, "sl_amount": sl_amount}
 
     if reason is not None:          # closed (target / stop / square-off)
