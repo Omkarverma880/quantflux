@@ -26,7 +26,7 @@ const COLS = [
   ['ce_mtm', 'CE MTM'], ['pe_mtm', 'PE MTM'], ['combined_mtm', 'Comb MTM'],
   ['max_profit_ce', 'Max Profit CE'], ['max_loss_ce', 'Max Loss CE'],
   ['max_profit_pe', 'Max Profit PE'], ['max_loss_pe', 'Max Loss PE'],
-  ['status', 'Status'], ['signal_age', 'Age(m)'], ['notes', 'Notes'],
+  ['status', 'Status'], ['hold_days', 'Hold(d)'], ['signal_age', 'Age(m)'], ['notes', 'Notes'],
 ];
 
 function downloadCSV(filename, rows) {
@@ -150,7 +150,7 @@ export default function PMVwapStraddle() {
             <span className="px-2 py-0.5 rounded-full bg-brand-600/15 text-brand-400 text-xs font-semibold border border-brand-500/20">Research Only</span>
           </div>
           <p className="text-gray-500 text-sm mt-0.5">
-            Cross Prev-Month VWAP from below → simulate ATM CE+PE straddle, exit each leg at a combined-premium target. No orders placed.
+            Cross Prev-Month VWAP from below → buy ATM CE+PE straddle, HOLD to target/SL (₹ / % / points) or square off on expiry. No orders placed.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -212,8 +212,18 @@ export default function PMVwapStraddle() {
           {cfg.exit_mode === 'leg_target'
             ? <div><label className={lbl}>Target %</label>{num('target_pct', 0, 1)}</div>
             : <>
-                <div><label className={lbl}>Target ₹ (combined)</label>{num('target_amount', 0, 500)}</div>
-                <div><label className={lbl}>SL ₹ (combined)</label>{num('sl_amount', 0, 500)}</div>
+                <div><label className={lbl}>Target By</label>
+                  <select value={cfg.target_mode || 'amount'} onChange={(e) => patch('target_mode', e.target.value)} className={`w-full ${selCls}`}>
+                    <option value="amount">₹ Amount</option><option value="percent">Percent</option><option value="points">Points</option>
+                  </select></div>
+                <div><label className={lbl}>Target {cfg.target_mode === 'percent' ? '%' : cfg.target_mode === 'points' ? '(pts)' : '₹'}</label>
+                  {num(cfg.target_mode === 'percent' ? 'target_percent' : cfg.target_mode === 'points' ? 'target_points' : 'target_amount', 0, cfg.target_mode === 'amount' ? 500 : 1)}</div>
+                <div><label className={lbl}>SL By</label>
+                  <select value={cfg.sl_mode || 'amount'} onChange={(e) => patch('sl_mode', e.target.value)} className={`w-full ${selCls}`}>
+                    <option value="amount">₹ Amount</option><option value="percent">Percent</option><option value="points">Points</option>
+                  </select></div>
+                <div><label className={lbl}>SL {cfg.sl_mode === 'percent' ? '%' : cfg.sl_mode === 'points' ? '(pts)' : '₹'}</label>
+                  {num(cfg.sl_mode === 'percent' ? 'sl_percent' : cfg.sl_mode === 'points' ? 'sl_points' : 'sl_amount', 0, cfg.sl_mode === 'amount' ? 500 : 1)}</div>
               </>}
           <div><label className={lbl}>VWAP Buffer (pts)</label>{num('vwap_buffer', 0, 0.05)}</div>
           <div><label className={lbl}>Expiry</label>
@@ -223,7 +233,7 @@ export default function PMVwapStraddle() {
           </div>
           <div><label className={lbl}>Entry Start</label><input value={cfg.entry_start} onChange={(e) => patch('entry_start', e.target.value)} className={`w-full ${selCls}`} /></div>
           <div><label className={lbl}>Signal Cutoff</label><input value={cfg.signal_cutoff} onChange={(e) => patch('signal_cutoff', e.target.value)} className={`w-full ${selCls}`} /></div>
-          <div><label className={lbl}>Square-off</label><input value={cfg.square_off} onChange={(e) => patch('square_off', e.target.value)} className={`w-full ${selCls}`} /></div>
+          <div><label className={lbl}>Expiry Square-off</label><input value={cfg.square_off} onChange={(e) => patch('square_off', e.target.value)} className={`w-full ${selCls}`} /></div>
           <div><label className={lbl}>History Days</label>{num('history_days', 35)}</div>
           <div><label className={lbl}>Min Price</label>{num('min_price', 0)}</div>
           <div><label className={lbl}>Max Price</label>{num('max_price', 0)}</div>
@@ -238,6 +248,9 @@ export default function PMVwapStraddle() {
           <div><label className={lbl}>High-vol % thr</label>{num('high_vol_threshold', 0, 0.5)}</div>
           <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
             <input type="checkbox" checked={cfg.ignore_ban} onChange={(e) => patch('ignore_ban', e.target.checked)} className="accent-brand-500" /> Ignore ban stocks
+          </label>
+          <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
+            <input type="checkbox" checked={cfg.hold_to_expiry !== false} onChange={(e) => patch('hold_to_expiry', e.target.checked)} className="accent-brand-500" /> Hold to expiry
           </label>
         </div>
 
@@ -331,6 +344,7 @@ export default function PMVwapStraddle() {
                       <td className="px-2.5 py-1 text-emerald-400">{r.max_profit_pe == null ? '—' : NUM(r.max_profit_pe)}</td>
                       <td className="px-2.5 py-1 text-red-400">{r.max_loss_pe == null ? '—' : NUM(r.max_loss_pe)}</td>
                       <td className="px-2.5 py-1 text-gray-400">{r.status}</td>
+                      <td className="px-2.5 py-1 text-gray-300">{r.hold_days == null ? '—' : r.hold_days}</td>
                       <td className="px-2.5 py-1 text-gray-400">{r.signal_age ?? '—'}</td>
                       <td className="px-2.5 py-1 text-gray-500">{r.notes}</td>
                     </tr>

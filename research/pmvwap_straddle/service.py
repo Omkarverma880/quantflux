@@ -45,6 +45,18 @@ def _hhmm_time(s: str):
         return dtime(15, 20)
 
 
+def _resolve_amount(mode: str, amount: float, percent: float, points: float,
+                    combined_entry: float, lot: int) -> float:
+    """Resolve a target/SL to a ₹ combined-P&L threshold from the chosen mode:
+    amount = ₹ directly; percent = % of combined entry premium × lot;
+    points = points on combined premium × lot."""
+    if mode == "percent":
+        return round(combined_entry * (percent / 100.0) * lot, 2)
+    if mode == "points":
+        return round(points * lot, 2)
+    return round(amount, 2)
+
+
 class PMVwapStraddleResearch:
     def __init__(self, broker: Broker, user_id: Optional[int] = None):
         self.broker = broker
@@ -110,6 +122,25 @@ class PMVwapStraddleResearch:
         self._opt_cache[key] = series
         return series
 
+    def _option_series_range(self, token: int, start_day: date, end_day: date, tf: str) -> dict:
+        """Option premium series across MULTIPLE days (entry → expiry) for a
+        held-to-expiry straddle. {dt: close}, day-cached by range."""
+        key = (token, start_day, end_day, tf)
+        if key in self._opt_cache:
+            return self._opt_cache[key]
+        frm = datetime.combine(start_day, MARKET_OPEN)
+        to = datetime.combine(end_day, MARKET_CLOSE)
+        series: dict = {}
+        try:
+            for c in self.broker.get_historical_data(token, frm, to, TIMEFRAME_MAP[tf]) or []:
+                dt = _candle_dt(c)
+                if dt is not None:
+                    series[dt] = float(c.get("close", 0) or 0)
+        except Exception as exc:
+            logger.warning("Option range candles failed (token=%s %s→%s): %s", token, start_day, end_day, exc)
+        self._opt_cache[key] = series
+        return series
+
     # ── per-stock backtest across a set of days ──
     def backtest_stock(self, name: str, days: list[date], cfg: dict) -> list[dict]:
         tf = cfg["timeframe"]
@@ -156,26 +187,47 @@ class PMVwapStraddleResearch:
             return None
         lot = lot or ce.get("lot_size", 0) or pe.get("lot_size", 0)
 
-        ce_series = self._option_series(ce["token"], day, tf)
-        pe_series = self._option_series(pe["token"], day, tf)
+        # HOLD-TO-EXPIRY: option premium series spans entry day → EXPIRY day, so
+        # the straddle is held across days (no daily square-off). If hold_to_expiry
+        # is off, revert to single entry-day behaviour.
+        hold = bool(cfg.get("hold_to_expiry", True))
+        end_day = expiry if hold else day
+        ce_series = self._option_series_range(ce["token"], day, end_day, tf)
+        pe_series = self._option_series_range(pe["token"], day, end_day, tf)
         entry_dt = sig["dt"]
         ce_entry = ce_series.get(entry_dt)
         pe_entry = pe_series.get(entry_dt)
         if not ce_entry or not pe_entry:
             return None       # no premium data at entry (illiquid / missing) — skip
 
+        # forward = every candle after entry through expiry; on the expiry day cap
+        # at the square-off time (that day's forced exit).
         def forward(series):
-            return [(dt, series[dt]) for dt in sorted(series)
-                    if dt > entry_dt and dt.time() <= squareoff]
+            out = []
+            for dt in sorted(series):
+                if dt <= entry_dt or dt.date() > end_day:
+                    continue
+                if dt.date() == expiry and dt.time() > squareoff:
+                    continue
+                out.append((dt, series[dt]))
+            return out
 
         ce_fwd, pe_fwd = forward(ce_series), forward(pe_series)
-        # combined_pnl (default): both legs exit together on ₹target / ₹SL; while
-        # running live (today, before square-off) exits stay blank (OPEN).
+        today = date.today()
+        # the position is force-closed only once the EXPIRY square-off has passed
+        square_off_reached = (expiry < today) or (expiry == today and datetime.now().time() >= squareoff)
+
         if cfg.get("exit_mode", "combined_pnl") == "combined_pnl":
-            square_off_reached = (day < date.today()) or (datetime.now().time() >= squareoff)
+            combined_entry = float(ce_entry) + float(pe_entry)
+            target_amt = _resolve_amount(cfg["target_mode"], float(cfg["target_amount"]),
+                                         float(cfg["target_percent"]), float(cfg["target_points"]),
+                                         combined_entry, int(lot or 0))
+            sl_amt = _resolve_amount(cfg["sl_mode"], float(cfg["sl_amount"]),
+                                     float(cfg["sl_percent"]), float(cfg["sl_points"]),
+                                     combined_entry, int(lot or 0))
             sim = calc.simulate_straddle_combined(
                 ce_entry, pe_entry, ce_fwd, pe_fwd,
-                target_amount=float(cfg["target_amount"]), sl_amount=float(cfg["sl_amount"]),
+                target_amount=target_amt, sl_amount=sl_amt,
                 lot_size=int(lot or 0), square_off_reached=square_off_reached)
         else:
             sim = calc.simulate_straddle(
@@ -185,12 +237,10 @@ class PMVwapStraddleResearch:
             sim.setdefault("sl_premium", None)
             sim.setdefault("open", False)
 
-        # signal age = minutes from entry to the later of the two exits
-        exits = [t for t in (sim["ce_exit_time"], sim["pe_exit_time"]) if t]
-        signal_age = None
-        if exits:
-            last = max(datetime.strptime(t, "%H:%M").time() for t in exits)
-            signal_age = int((datetime.combine(day, last) - entry_dt).total_seconds() // 60)
+        # signal age / hold days — from entry to exit (may span multiple days)
+        exit_dt = sim.get("exit_dt")
+        signal_age = int((exit_dt - entry_dt).total_seconds() // 60) if exit_dt else None
+        hold_days = (exit_dt.date() - entry_dt.date()).days if exit_dt else None
 
         # Net-of-costs: brokerage + STT + slippage on each option leg (buy+sell).
         # Skipped while a combined-P&L position is still OPEN (no exit fills yet).
@@ -228,29 +278,30 @@ class PMVwapStraddleResearch:
             "gross_combined_mtm": gross_comb, "cost": cost,
             "targets_hit": sim["targets_hit"],
             "status": sim["status"], "open": bool(sim.get("open")),
-            "signal_age": signal_age,
-            "notes": self._exit_note(sim),
+            "signal_age": signal_age, "hold_days": hold_days,
+            "notes": self._exit_note(sim, hold_days),
         }
 
     @staticmethod
-    def _exit_note(sim: dict) -> str:
+    def _exit_note(sim: dict, hold_days=None) -> str:
         """Plain-language summary of how the straddle closed."""
+        hold = f" (held {hold_days}d)" if hold_days else ""
         if sim.get("open"):
-            return "OPEN — combined P&L within target/SL band"
+            return f"OPEN — held to expiry; combined P&L within target/SL band{hold}"
         if sim.get("ce_exit_reason") == calc.EXIT_TARGET and sim.get("pe_exit_reason") == calc.EXIT_TARGET \
                 and sim.get("target_amount") is not None:
-            return f"Combined target ₹{int(sim['target_amount'])} hit — both legs exited"
+            return f"Combined target ₹{int(sim['target_amount'])} hit — both legs exited{hold}"
         if sim.get("ce_exit_reason") == calc.EXIT_STOP:
-            return f"Combined stop ₹{int(sim.get('sl_amount') or 0)} hit — both legs exited"
+            return f"Combined stop ₹{int(sim.get('sl_amount') or 0)} hit — both legs exited{hold}"
         ce_t = sim["ce_exit_reason"] == calc.EXIT_TARGET
         pe_t = sim["pe_exit_reason"] == calc.EXIT_TARGET
         if ce_t and pe_t:
-            return "Both legs hit target"
+            return f"Both legs hit target{hold}"
         if ce_t:
-            return "CE hit target · PE squared off"
+            return f"CE hit target · PE squared off{hold}"
         if pe_t:
-            return "PE hit target · CE squared off"
-        return "No target — both squared off at close"
+            return f"PE hit target · CE squared off{hold}"
+        return f"No target/SL — squared off on expiry{hold}"
 
     # ── top-level backtest (single stock or whole universe) ──
     def backtest(self, overrides: Optional[dict] = None, *, symbol: Optional[str] = None,

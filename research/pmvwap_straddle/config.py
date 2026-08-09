@@ -19,11 +19,21 @@ CONFIG_FILE = settings.DATA_DIR / "research" / "pmvwap_straddle.json"
 DEFAULT_CONFIG: dict = {
     # ── core ──
     "timeframe": DEFAULT_TIMEFRAME,       # underlying candle TF for VWAP + crossing
-    # exit_mode: "combined_pnl" = exit BOTH legs when combined P&L hits ₹target/₹SL
+    # exit_mode: "combined_pnl" = exit BOTH legs when combined P&L hits target/SL
     #            "leg_target"   = legacy independent second-leg target-% exit
     "exit_mode": "combined_pnl",
-    "target_amount": 20000.0,             # combined-P&L target (₹) for combined_pnl mode
-    "sl_amount": 6500.0,                  # combined-P&L stop-loss (₹) for combined_pnl mode
+    # Monthly straddle: HOLD across days until target/SL, else square off on the
+    # EXPIRY day at ``square_off`` — no daily square-off.
+    "hold_to_expiry": True,
+    # Target / SL defined by ₹ amount, % of combined premium, or points.
+    "target_mode": "amount",              # amount | percent | points
+    "sl_mode": "amount",                  # amount | percent | points
+    "target_amount": 20000.0,             # combined-P&L target (₹) — amount mode
+    "sl_amount": 6500.0,                  # combined-P&L stop-loss (₹) — amount mode
+    "target_percent": 30.0,               # % of combined entry premium — percent mode
+    "sl_percent": 15.0,
+    "target_points": 30.0,                # points on combined premium — points mode
+    "sl_points": 15.0,
     "target_pct": 50.0,                   # combined-premium target % (leg_target mode)
     "vwap_buffer": 0.0,                   # points tolerance around Prev-Month VWAP
     "expiry_type": "monthly",             # equity options are monthly
@@ -57,7 +67,8 @@ DEFAULT_CONFIG: dict = {
     "per_stock_budget_ms": 0,             # 0 = unlimited; else time-box multi-scan
 }
 
-_NUM_KEYS = {"target_pct", "target_amount", "sl_amount", "vwap_buffer", "history_days",
+_NUM_KEYS = {"target_pct", "target_amount", "sl_amount", "target_percent", "sl_percent",
+             "target_points", "sl_points", "vwap_buffer", "history_days",
              "min_price", "max_price", "min_volume", "min_adv", "min_atr", "min_atr_pct",
              "high_vol_threshold", "max_stocks", "scan_interval", "per_stock_budget_ms",
              "slippage_bps", "brokerage_per_order", "charges_pct"}
@@ -82,6 +93,11 @@ def sanitize(cfg: dict) -> dict:
     out["history_days"] = max(35, min(400, int(out["history_days"])))
     if out["exit_mode"] not in ("combined_pnl", "leg_target"):
         out["exit_mode"] = "combined_pnl"
+    if out["target_mode"] not in ("amount", "percent", "points"):
+        out["target_mode"] = "amount"
+    if out["sl_mode"] not in ("amount", "percent", "points"):
+        out["sl_mode"] = "amount"
+    out["hold_to_expiry"] = bool(out["hold_to_expiry"])
     if out["high_vol_metric"] not in ("atr_pct", "range_pct"):
         out["high_vol_metric"] = "atr_pct"
     if not isinstance(out["sectors"], list):

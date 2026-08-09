@@ -63,19 +63,24 @@ def combined_target(entry_ce: float, entry_pe: float, target_pct: float) -> floa
     return round((entry_ce + entry_pe) * (1.0 + target_pct / 100.0), 2)
 
 
+def _fmt(dt) -> str:
+    """Date-aware exit label (a monthly hold can exit days after entry)."""
+    return dt.strftime("%d-%b %H:%M")
+
+
 def _exit_leg(entry: float, forward: list[tuple], target: float) -> dict:
     """Simulate one option leg forward. Exit when its premium ≥ target, else at
     the last candle (square-off). ``forward`` = [(dt, premium), …] after entry."""
     for dt, prem in forward:
         if prem is not None and prem >= target:
-            return {"exit_time": dt.strftime("%H:%M"), "exit": round(prem, 2),
-                    "reason": EXIT_TARGET}
+            return {"exit_time": _fmt(dt), "exit": round(prem, 2),
+                    "reason": EXIT_TARGET, "exit_dt": dt}
     if forward:
         dt, prem = forward[-1]
-        return {"exit_time": dt.strftime("%H:%M"),
+        return {"exit_time": _fmt(dt),
                 "exit": round(prem, 2) if prem is not None else round(entry, 2),
-                "reason": EXIT_SQUAREOFF}
-    return {"exit_time": None, "exit": round(entry, 2), "reason": EXIT_SQUAREOFF}
+                "reason": EXIT_SQUAREOFF, "exit_dt": dt}
+    return {"exit_time": None, "exit": round(entry, 2), "reason": EXIT_SQUAREOFF, "exit_dt": None}
 
 
 def simulate_straddle(entry_ce: float, entry_pe: float, ce_forward: list[tuple],
@@ -94,6 +99,7 @@ def simulate_straddle(entry_ce: float, entry_pe: float, ce_forward: list[tuple],
     ce_mtm = round((ce["exit"] - entry_ce) * lot_size, 2)
     pe_mtm = round((pe["exit"] - entry_pe) * lot_size, 2)
     targets_hit = int(ce["reason"] == EXIT_TARGET) + int(pe["reason"] == EXIT_TARGET)
+    exit_dts = [d for d in (ce.get("exit_dt"), pe.get("exit_dt")) if d]
 
     return {
         "combined_entry": round(entry_ce + entry_pe, 2),
@@ -101,7 +107,7 @@ def simulate_straddle(entry_ce: float, entry_pe: float, ce_forward: list[tuple],
         "ce_exit": ce["exit"], "ce_exit_time": ce["exit_time"], "ce_exit_reason": ce["reason"],
         "pe_exit": pe["exit"], "pe_exit_time": pe["exit_time"], "pe_exit_reason": pe["reason"],
         "ce_mtm": ce_mtm, "pe_mtm": pe_mtm, "combined_mtm": round(ce_mtm + pe_mtm, 2),
-        "targets_hit": targets_hit,
+        "targets_hit": targets_hit, "exit_dt": max(exit_dts) if exit_dts else None,
         "status": STATE_FULL,          # completed backtest → both legs closed
     }
 
@@ -181,9 +187,10 @@ def simulate_straddle_combined(entry_ce: float, entry_pe: float, ce_forward: lis
             "target_amount": target_amount, "sl_amount": sl_amount}
 
     if reason is not None:          # closed (target / stop / square-off)
+        lbl = _fmt(exit_dt)
         return {**base,
                 "ce_exit": round(exit_ce, 2), "pe_exit": round(exit_pe, 2),
-                "ce_exit_time": exit_dt.strftime("%H:%M"), "pe_exit_time": exit_dt.strftime("%H:%M"),
+                "ce_exit_time": lbl, "pe_exit_time": lbl, "exit_dt": exit_dt,
                 "ce_exit_reason": reason, "pe_exit_reason": reason,
                 "ce_mtm": round((exit_ce - entry_ce) * lot, 2),
                 "pe_mtm": round((exit_pe - entry_pe) * lot, 2),
@@ -191,12 +198,12 @@ def simulate_straddle_combined(entry_ce: float, entry_pe: float, ce_forward: lis
                 "targets_hit": 1 if reason == EXIT_TARGET else 0,
                 "status": STATE_FULL, "open": False}
 
-    # still running (live, before square-off) → exits blank, show unrealized
+    # still running (live, before expiry square-off) → exits blank, show unrealized
     cur_ce = last[1] if last else entry_ce
     cur_pe = last[2] if last else entry_pe
     return {**base,
             "ce_exit": None, "pe_exit": None, "ce_exit_time": None, "pe_exit_time": None,
-            "ce_exit_reason": EXIT_OPEN, "pe_exit_reason": EXIT_OPEN,
+            "exit_dt": None, "ce_exit_reason": EXIT_OPEN, "pe_exit_reason": EXIT_OPEN,
             "ce_mtm": round((cur_ce - entry_ce) * lot, 2),
             "pe_mtm": round((cur_pe - entry_pe) * lot, 2),
             "combined_mtm": round((cur_ce + cur_pe - combined_entry) * lot, 2),
