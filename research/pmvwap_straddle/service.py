@@ -258,20 +258,29 @@ class PMVwapStraddleResearch:
         signal_age = int((exit_dt - entry_dt).total_seconds() // 60) if exit_dt else None
         hold_days = (exit_dt.date() - entry_dt.date()).days if exit_dt else None
 
-        # Net-of-costs: brokerage + STT + slippage per ACTIVE leg (buy+sell); skipped while OPEN.
-        cost = 0.0
-        if cfg.get("apply_costs") and not sim.get("open"):
+        # Costs: brokerage + STT + slippage per ACTIVE leg (buy+sell), skipped while
+        # OPEN. When applied, BOTH the per-leg MTM and the combined MTM are shown
+        # NET, so a single leg's MTM equals the combined MTM and the legs always
+        # sum to the combined (no gross-vs-net mismatch).
+        use_net = bool(cfg.get("apply_costs")) and not sim.get("open")
+        leg_cost = {}
+        if use_net:
             cc = costs.cost_config(cfg, "option")
             for side, l in legs.items():
-                if l.get("exit") is not None:
-                    cost += costs.roundtrip_cost(entries[side], l["exit"], int(lot or 0), **cc)
-            cost = round(cost, 2)
+                leg_cost[side] = round(costs.roundtrip_cost(entries[side], l["exit"], int(lot or 0), **cc), 2) \
+                    if l.get("exit") is not None else 0.0
+        cost = round(sum(leg_cost.values()), 2)
         gross_comb = sim["combined_mtm"]
-        use_net = bool(cfg.get("apply_costs")) and not sim.get("open")
-        net_comb = round(gross_comb - cost, 2)
+        combined_mtm = round(gross_comb - cost, 2) if use_net else gross_comb
 
         def _sym(side):
             return contracts[side]["tradingsymbol"] if side in contracts else None
+
+        def _mtm(side):
+            l = legs.get(side)
+            if not l:
+                return None
+            return round(l["mtm"] - leg_cost.get(side, 0.0), 2) if use_net else l["mtm"]
 
         return {
             "research_id": RESEARCH_ID, "date": day.isoformat(), "time": entry_dt.strftime("%H:%M"),
@@ -289,8 +298,8 @@ class PMVwapStraddleResearch:
             "sl_premium": sim.get("sl_premium"),
             "max_profit_ce": ce["max_profit"] if ce else None, "max_loss_ce": ce["max_loss"] if ce else None,
             "max_profit_pe": pe["max_profit"] if pe else None, "max_loss_pe": pe["max_loss"] if pe else None,
-            "ce_mtm": ce["mtm"] if ce else None, "pe_mtm": pe["mtm"] if pe else None,
-            "combined_mtm": net_comb if use_net else gross_comb,
+            "ce_mtm": _mtm("CE"), "pe_mtm": _mtm("PE"),
+            "combined_mtm": combined_mtm,
             "gross_combined_mtm": gross_comb, "cost": cost,
             "targets_hit": sim["targets_hit"], "status": sim["status"], "open": bool(sim.get("open")),
             "signal_age": signal_age, "hold_days": hold_days,
