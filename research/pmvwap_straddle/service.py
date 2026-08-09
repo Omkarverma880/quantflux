@@ -181,8 +181,7 @@ class PMVwapStraddleResearch:
             sim = calc.simulate_straddle(
                 ce_entry, pe_entry, ce_fwd, pe_fwd,
                 target_pct=float(cfg["target_pct"]), lot_size=int(lot or 0))
-            mfe, mae = calc.combined_excursion(ce_entry, pe_entry, ce_fwd, pe_fwd, int(lot or 0))
-            sim["max_profit"], sim["max_loss"] = mfe, mae
+            sim.update(calc.leg_excursions(ce_entry, pe_entry, ce_fwd, pe_fwd, int(lot or 0)))
             sim.setdefault("sl_premium", None)
             sim.setdefault("open", False)
 
@@ -222,7 +221,8 @@ class PMVwapStraddleResearch:
             "combined_premium": sim["combined_entry"],
             "target_premium": sim["target_premium"],
             "sl_premium": sim.get("sl_premium"),
-            "max_profit": sim.get("max_profit"), "max_loss": sim.get("max_loss"),
+            "max_profit_ce": sim.get("max_profit_ce"), "max_loss_ce": sim.get("max_loss_ce"),
+            "max_profit_pe": sim.get("max_profit_pe"), "max_loss_pe": sim.get("max_loss_pe"),
             "ce_mtm": sim["ce_mtm"], "pe_mtm": sim["pe_mtm"],
             "combined_mtm": net_comb if use_net else gross_comb,
             "gross_combined_mtm": gross_comb, "cost": cost,

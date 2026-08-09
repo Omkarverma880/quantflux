@@ -106,12 +106,14 @@ def simulate_straddle(entry_ce: float, entry_pe: float, ce_forward: list[tuple],
     }
 
 
-def combined_excursion(entry_ce, entry_pe, ce_forward, pe_forward, lot_size):
-    """Max profit / max loss after entry, computed PER LEG (each leg at its own
-    extreme), then summed — i.e. the highest price each of CE and PE reached after
-    entry (max profit) and the lowest price each reached (max loss). This is NOT
-    the simultaneous combined MTM; a leg's own peak counts even if the other leg
-    was down at that moment."""
+def leg_excursions(entry_ce, entry_pe, ce_forward, pe_forward, lot_size) -> dict:
+    """Per-leg max profit / max loss after entry (each leg vs its OWN extreme):
+
+        Max Profit CE = (CE_highest − CE_entry) × qty
+        Max Loss   CE = (CE_lowest  − CE_entry) × qty
+        Max Profit PE = (PE_highest − PE_entry) × qty
+        Max Loss   PE = (PE_lowest  − PE_entry) × qty
+    """
     max_ce = min_ce = entry_ce
     max_pe = min_pe = entry_pe
     for _dt, p in ce_forward:
@@ -124,9 +126,12 @@ def combined_excursion(entry_ce, entry_pe, ce_forward, pe_forward, lot_size):
             continue
         max_pe = max(max_pe, p)
         min_pe = min(min_pe, p)
-    max_profit = round(((max_ce - entry_ce) + (max_pe - entry_pe)) * lot_size, 2)
-    max_loss = round(((min_ce - entry_ce) + (min_pe - entry_pe)) * lot_size, 2)
-    return max_profit, max_loss
+    return {
+        "max_profit_ce": round((max_ce - entry_ce) * lot_size, 2),
+        "max_loss_ce": round((min_ce - entry_ce) * lot_size, 2),
+        "max_profit_pe": round((max_pe - entry_pe) * lot_size, 2),
+        "max_loss_pe": round((min_pe - entry_pe) * lot_size, 2),
+    }
 
 
 def simulate_straddle_combined(entry_ce: float, entry_pe: float, ce_forward: list[tuple],
@@ -168,10 +173,11 @@ def simulate_straddle_combined(entry_ce: float, entry_pe: float, ce_forward: lis
     lot = int(lot_size or 0)
     tgt_prem = round(combined_entry + (target_amount / lot if lot else 0), 2)
     sl_prem = round(combined_entry - (sl_amount / lot if lot else 0), 2)
-    max_profit = round(((max_ce - entry_ce) + (max_pe - entry_pe)) * lot, 2)
-    max_loss = round(((min_ce - entry_ce) + (min_pe - entry_pe)) * lot, 2)
     base = {"combined_entry": combined_entry, "target_premium": tgt_prem, "sl_premium": sl_prem,
-            "max_profit": max_profit, "max_loss": max_loss,
+            "max_profit_ce": round((max_ce - entry_ce) * lot, 2),
+            "max_loss_ce": round((min_ce - entry_ce) * lot, 2),
+            "max_profit_pe": round((max_pe - entry_pe) * lot, 2),
+            "max_loss_pe": round((min_pe - entry_pe) * lot, 2),
             "target_amount": target_amount, "sl_amount": sl_amount}
 
     if reason is not None:          # closed (target / stop / square-off)

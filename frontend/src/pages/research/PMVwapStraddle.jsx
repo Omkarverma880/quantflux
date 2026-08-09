@@ -24,7 +24,8 @@ const COLS = [
   ['entry_pe', 'Entry PE'], ['exit_pe', 'Exit PE'], ['pe_exit_time', 'PE Exit@'],
   ['combined_premium', 'Combined'], ['target_premium', 'Target'], ['sl_premium', 'SL'],
   ['ce_mtm', 'CE MTM'], ['pe_mtm', 'PE MTM'], ['combined_mtm', 'Comb MTM'],
-  ['max_profit', 'Max Profit'], ['max_loss', 'Max Loss'],
+  ['max_profit_ce', 'Max Profit CE'], ['max_loss_ce', 'Max Loss CE'],
+  ['max_profit_pe', 'Max Profit PE'], ['max_loss_pe', 'Max Loss PE'],
   ['status', 'Status'], ['signal_age', 'Age(m)'], ['notes', 'Notes'],
 ];
 
@@ -325,8 +326,10 @@ export default function PMVwapStraddle() {
                       <td className={`px-2.5 py-1 ${r.ce_mtm >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{NUM(r.ce_mtm)}</td>
                       <td className={`px-2.5 py-1 ${r.pe_mtm >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{NUM(r.pe_mtm)}</td>
                       <td className={`px-2.5 py-1 font-semibold ${r.combined_mtm >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{NUM(r.combined_mtm)}</td>
-                      <td className="px-2.5 py-1 text-emerald-400">{r.max_profit == null ? '—' : NUM(r.max_profit)}</td>
-                      <td className="px-2.5 py-1 text-red-400">{r.max_loss == null ? '—' : NUM(r.max_loss)}</td>
+                      <td className="px-2.5 py-1 text-emerald-400">{r.max_profit_ce == null ? '—' : NUM(r.max_profit_ce)}</td>
+                      <td className="px-2.5 py-1 text-red-400">{r.max_loss_ce == null ? '—' : NUM(r.max_loss_ce)}</td>
+                      <td className="px-2.5 py-1 text-emerald-400">{r.max_profit_pe == null ? '—' : NUM(r.max_profit_pe)}</td>
+                      <td className="px-2.5 py-1 text-red-400">{r.max_loss_pe == null ? '—' : NUM(r.max_loss_pe)}</td>
                       <td className="px-2.5 py-1 text-gray-400">{r.status}</td>
                       <td className="px-2.5 py-1 text-gray-400">{r.signal_age ?? '—'}</td>
                       <td className="px-2.5 py-1 text-gray-500">{r.notes}</td>
