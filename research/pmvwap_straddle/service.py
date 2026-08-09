@@ -123,8 +123,10 @@ class PMVwapStraddleResearch:
         return series
 
     def _option_series_range(self, token: int, start_day: date, end_day: date, tf: str) -> dict:
-        """Option premium series across MULTIPLE days (entry → expiry) for a
-        held-to-expiry straddle. {dt: close}, day-cached by range."""
+        """Option OHLC series across MULTIPLE days (entry → expiry) for a
+        held-to-expiry straddle. {dt: (close, high, low)}, day-cached by range.
+        High/low are kept so max-profit/max-loss reflect the intraday extremes
+        (a wick to 104.50), not just candle closes."""
         key = (token, start_day, end_day, tf)
         if key in self._opt_cache:
             return self._opt_cache[key]
@@ -135,7 +137,9 @@ class PMVwapStraddleResearch:
             for c in self.broker.get_historical_data(token, frm, to, TIMEFRAME_MAP[tf]) or []:
                 dt = _candle_dt(c)
                 if dt is not None:
-                    series[dt] = float(c.get("close", 0) or 0)
+                    series[dt] = (float(c.get("close", 0) or 0),
+                                  float(c.get("high", 0) or 0),
+                                  float(c.get("low", 0) or 0))
         except Exception as exc:
             logger.warning("Option range candles failed (token=%s %s→%s): %s", token, start_day, end_day, exc)
         self._opt_cache[key] = series
@@ -195,13 +199,16 @@ class PMVwapStraddleResearch:
         ce_series = self._option_series_range(ce["token"], day, end_day, tf)
         pe_series = self._option_series_range(pe["token"], day, end_day, tf)
         entry_dt = sig["dt"]
-        ce_entry = ce_series.get(entry_dt)
-        pe_entry = pe_series.get(entry_dt)
-        if not ce_entry or not pe_entry:
+        ce_rec = ce_series.get(entry_dt)
+        pe_rec = pe_series.get(entry_dt)
+        if not ce_rec or not pe_rec or not ce_rec[0] or not pe_rec[0]:
             return None       # no premium data at entry (illiquid / missing) — skip
+        ce_entry = ce_rec[0]           # entry = close of the entry candle
+        pe_entry = pe_rec[0]
 
         # forward = every candle after entry through expiry; on the expiry day cap
-        # at the square-off time (that day's forced exit).
+        # at the square-off time. Each item is (dt, close, high, low) so exits/MTM
+        # use close while max-profit/loss use the intraday high/low.
         def forward(series):
             out = []
             for dt in sorted(series):
@@ -209,7 +216,8 @@ class PMVwapStraddleResearch:
                     continue
                 if dt.date() == expiry and dt.time() > squareoff:
                     continue
-                out.append((dt, series[dt]))
+                c, h, l = series[dt]
+                out.append((dt, c, h, l))
             return out
 
         ce_fwd, pe_fwd = forward(ce_series), forward(pe_series)

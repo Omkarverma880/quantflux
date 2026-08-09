@@ -69,14 +69,16 @@ def _fmt(dt) -> str:
 
 
 def _exit_leg(entry: float, forward: list[tuple], target: float) -> dict:
-    """Simulate one option leg forward. Exit when its premium ≥ target, else at
-    the last candle (square-off). ``forward`` = [(dt, premium), …] after entry."""
-    for dt, prem in forward:
+    """Simulate one option leg forward. Exit when its CLOSE ≥ target, else at the
+    last candle (square-off). ``forward`` = [(dt, close, high, low), …] after
+    entry (2-tuples of (dt, close) are also accepted for back-compat)."""
+    for row in forward:
+        dt, prem = row[0], row[1]
         if prem is not None and prem >= target:
             return {"exit_time": _fmt(dt), "exit": round(prem, 2),
                     "reason": EXIT_TARGET, "exit_dt": dt}
     if forward:
-        dt, prem = forward[-1]
+        dt, prem = forward[-1][0], forward[-1][1]
         return {"exit_time": _fmt(dt),
                 "exit": round(prem, 2) if prem is not None else round(entry, 2),
                 "reason": EXIT_SQUAREOFF, "exit_dt": dt}
@@ -112,26 +114,37 @@ def simulate_straddle(entry_ce: float, entry_pe: float, ce_forward: list[tuple],
     }
 
 
-def leg_excursions(entry_ce, entry_pe, ce_forward, pe_forward, lot_size) -> dict:
-    """Per-leg max profit / max loss after entry (each leg vs its OWN extreme):
+def _hl(row):
+    """Return (high, low) from a forward row that may be (dt, close, high, low)
+    or a legacy (dt, close)."""
+    if len(row) >= 4:
+        return row[2], row[3]
+    return row[1], row[1]
 
-        Max Profit CE = (CE_highest − CE_entry) × qty
-        Max Loss   CE = (CE_lowest  − CE_entry) × qty
-        Max Profit PE = (PE_highest − PE_entry) × qty
-        Max Loss   PE = (PE_lowest  − PE_entry) × qty
+
+def leg_excursions(entry_ce, entry_pe, ce_forward, pe_forward, lot_size) -> dict:
+    """Per-leg max profit / max loss after entry, using each leg's intraday
+    HIGH for the max and LOW for the min (so a wick counts):
+
+        Max Profit CE = (CE_highest_HIGH − CE_entry) × qty
+        Max Loss   CE = (CE_lowest_LOW   − CE_entry) × qty
+        Max Profit PE = (PE_highest_HIGH − PE_entry) × qty
+        Max Loss   PE = (PE_lowest_LOW   − PE_entry) × qty
     """
     max_ce = min_ce = entry_ce
     max_pe = min_pe = entry_pe
-    for _dt, p in ce_forward:
-        if p is None:
-            continue
-        max_ce = max(max_ce, p)
-        min_ce = min(min_ce, p)
-    for _dt, p in pe_forward:
-        if p is None:
-            continue
-        max_pe = max(max_pe, p)
-        min_pe = min(min_pe, p)
+    for row in ce_forward:
+        h, l = _hl(row)
+        if h is not None:
+            max_ce = max(max_ce, h)
+        if l is not None:
+            min_ce = min(min_ce, l)
+    for row in pe_forward:
+        h, l = _hl(row)
+        if h is not None:
+            max_pe = max(max_pe, h)
+        if l is not None:
+            min_pe = min(min_pe, l)
     return {
         "max_profit_ce": round((max_ce - entry_ce) * lot_size, 2),
         "max_loss_ce": round((min_ce - entry_ce) * lot_size, 2),
@@ -152,18 +165,25 @@ def simulate_straddle_combined(entry_ce: float, entry_pe: float, ce_forward: lis
     the combined-premium levels that correspond to the target/SL rupee amounts.
     """
     combined_entry = round(entry_ce + entry_pe, 2)
-    pe_map = dict(pe_forward)
-    # per-leg extremes after entry (each leg at its own high/low) → max profit/loss
+    # pe_map[dt] = (close, high, low)
+    pe_map = {row[0]: (row[1], _hl(row)[0], _hl(row)[1]) for row in pe_forward}
+    # per-leg extremes after entry — HIGH for max, LOW for min (wicks count);
+    # exit/MTM use the CLOSE.
     max_ce = min_ce = entry_ce
     max_pe = min_pe = entry_pe
     exit_dt = exit_ce = exit_pe = reason = None
     last = None
-    for dt, ce_prem in ce_forward:
-        pe_prem = pe_map.get(dt)
-        if ce_prem is None or pe_prem is None:
+    for row in ce_forward:
+        dt, ce_prem = row[0], row[1]
+        ce_h, ce_l = _hl(row)
+        rec = pe_map.get(dt)
+        if ce_prem is None or rec is None:
             continue
-        max_ce = max(max_ce, ce_prem); min_ce = min(min_ce, ce_prem)
-        max_pe = max(max_pe, pe_prem); min_pe = min(min_pe, pe_prem)
+        pe_prem, pe_h, pe_l = rec
+        if pe_prem is None:
+            continue
+        max_ce = max(max_ce, ce_h); min_ce = min(min_ce, ce_l)
+        max_pe = max(max_pe, pe_h); min_pe = min(min_pe, pe_l)
         mtm = (ce_prem + pe_prem - combined_entry) * lot_size
         last = (dt, ce_prem, pe_prem)
         if mtm >= target_amount:
