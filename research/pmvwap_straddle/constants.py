@@ -34,6 +34,7 @@ STATE_FULL = "FULL EXIT"
 
 # Per-leg exit reasons.
 EXIT_TARGET = "TARGET"
+EXIT_STOP = "STOP"        # combined P&L hit the loss limit
 EXIT_SQUAREOFF = "SQUAREOFF"
 EXIT_OPEN = "OPEN"        # still running (live)
 

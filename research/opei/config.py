@@ -31,6 +31,15 @@ DEFAULT_CONFIG: dict = {
     "telegram_chat_id": "",
     "alert_on_institutional": True,      # push when a qualifying best-level appears
     "alert_min_confidence": 95,          # min best-level confidence to log + alert (50–100)
+    # ── Paper positions (testing the FIRST recommended label; never live) ──
+    "positions_enabled": True,
+    "position_qty": 65,                  # qty for P&L (NIFTY lot); paper only
+    "squareoff_time": "15:15",           # both sections square off at this IST time
+    "sec2_reentry": False,               # Section-2: re-enter after a target/SL exit
+    "sec2_target_mode": "highest",       # highest | percent | points
+    "sec2_target_value": 10.0,           # used for percent/points target modes
+    "sec2_sl_mode": "recommended",       # recommended | percent | points
+    "sec2_sl_value": 5.0,                # used for percent/points SL modes
 }
 
 
@@ -56,6 +65,23 @@ def sanitize(cfg: dict) -> dict:
         out["alert_min_confidence"] = 95
     out["telegram_bot_token"] = str(out.get("telegram_bot_token") or "")
     out["telegram_chat_id"] = str(out.get("telegram_chat_id") or "")
+    # ── paper positions ──
+    for b in ("positions_enabled", "sec2_reentry"):
+        out[b] = bool(out[b])
+    try:
+        out["position_qty"] = max(1, int(out["position_qty"]))
+    except (TypeError, ValueError):
+        out["position_qty"] = 65
+    for k in ("sec2_target_value", "sec2_sl_value"):
+        try:
+            out[k] = max(0.0, float(out[k]))
+        except (TypeError, ValueError):
+            out[k] = DEFAULT_CONFIG[k]
+    if out["sec2_target_mode"] not in ("highest", "percent", "points"):
+        out["sec2_target_mode"] = "highest"
+    if out["sec2_sl_mode"] not in ("recommended", "percent", "points"):
+        out["sec2_sl_mode"] = "recommended"
+    out["squareoff_time"] = str(out.get("squareoff_time") or "15:15")
     return out
 
 

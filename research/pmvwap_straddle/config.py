@@ -19,7 +19,12 @@ CONFIG_FILE = settings.DATA_DIR / "research" / "pmvwap_straddle.json"
 DEFAULT_CONFIG: dict = {
     # ── core ──
     "timeframe": DEFAULT_TIMEFRAME,       # underlying candle TF for VWAP + crossing
-    "target_pct": 50.0,                   # combined-premium target %
+    # exit_mode: "combined_pnl" = exit BOTH legs when combined P&L hits ₹target/₹SL
+    #            "leg_target"   = legacy independent second-leg target-% exit
+    "exit_mode": "combined_pnl",
+    "target_amount": 20000.0,             # combined-P&L target (₹) for combined_pnl mode
+    "sl_amount": 6500.0,                  # combined-P&L stop-loss (₹) for combined_pnl mode
+    "target_pct": 50.0,                   # combined-premium target % (leg_target mode)
     "vwap_buffer": 0.0,                   # points tolerance around Prev-Month VWAP
     "expiry_type": "monthly",             # equity options are monthly
     "square_off": "15:20",                # intraday square-off (HH:MM)
@@ -52,9 +57,9 @@ DEFAULT_CONFIG: dict = {
     "per_stock_budget_ms": 0,             # 0 = unlimited; else time-box multi-scan
 }
 
-_NUM_KEYS = {"target_pct", "vwap_buffer", "history_days", "min_price", "max_price",
-             "min_volume", "min_adv", "min_atr", "min_atr_pct", "high_vol_threshold",
-             "max_stocks", "scan_interval", "per_stock_budget_ms",
+_NUM_KEYS = {"target_pct", "target_amount", "sl_amount", "vwap_buffer", "history_days",
+             "min_price", "max_price", "min_volume", "min_adv", "min_atr", "min_atr_pct",
+             "high_vol_threshold", "max_stocks", "scan_interval", "per_stock_budget_ms",
              "slippage_bps", "brokerage_per_order", "charges_pct"}
 
 
@@ -71,8 +76,12 @@ def sanitize(cfg: dict) -> dict:
         except (TypeError, ValueError):
             out[k] = DEFAULT_CONFIG[k]
     out["target_pct"] = max(0.0, out["target_pct"])
+    out["target_amount"] = max(0.0, out["target_amount"])
+    out["sl_amount"] = max(0.0, out["sl_amount"])
     out["scan_interval"] = max(3, min(600, int(out["scan_interval"])))
     out["history_days"] = max(35, min(400, int(out["history_days"])))
+    if out["exit_mode"] not in ("combined_pnl", "leg_target"):
+        out["exit_mode"] = "combined_pnl"
     if out["high_vol_metric"] not in ("atr_pct", "range_pct"):
         out["high_vol_metric"] = "atr_pct"
     if not isinstance(out["sectors"], list):

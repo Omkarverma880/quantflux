@@ -168,9 +168,23 @@ class PMVwapStraddleResearch:
             return [(dt, series[dt]) for dt in sorted(series)
                     if dt > entry_dt and dt.time() <= squareoff]
 
-        sim = calc.simulate_straddle(
-            ce_entry, pe_entry, forward(ce_series), forward(pe_series),
-            target_pct=float(cfg["target_pct"]), lot_size=int(lot or 0))
+        ce_fwd, pe_fwd = forward(ce_series), forward(pe_series)
+        # combined_pnl (default): both legs exit together on ₹target / ₹SL; while
+        # running live (today, before square-off) exits stay blank (OPEN).
+        if cfg.get("exit_mode", "combined_pnl") == "combined_pnl":
+            square_off_reached = (day < date.today()) or (datetime.now().time() >= squareoff)
+            sim = calc.simulate_straddle_combined(
+                ce_entry, pe_entry, ce_fwd, pe_fwd,
+                target_amount=float(cfg["target_amount"]), sl_amount=float(cfg["sl_amount"]),
+                lot_size=int(lot or 0), square_off_reached=square_off_reached)
+        else:
+            sim = calc.simulate_straddle(
+                ce_entry, pe_entry, ce_fwd, pe_fwd,
+                target_pct=float(cfg["target_pct"]), lot_size=int(lot or 0))
+            mfe, mae = calc.combined_excursion(ce_entry, pe_entry, ce_fwd, pe_fwd, int(lot or 0))
+            sim["max_profit"], sim["max_loss"] = mfe, mae
+            sim.setdefault("sl_premium", None)
+            sim.setdefault("open", False)
 
         # signal age = minutes from entry to the later of the two exits
         exits = [t for t in (sim["ce_exit_time"], sim["pe_exit_time"]) if t]
@@ -180,13 +194,14 @@ class PMVwapStraddleResearch:
             signal_age = int((datetime.combine(day, last) - entry_dt).total_seconds() // 60)
 
         # Net-of-costs: brokerage + STT + slippage on each option leg (buy+sell).
+        # Skipped while a combined-P&L position is still OPEN (no exit fills yet).
         gross_comb = sim["combined_mtm"]
         cost = 0.0
-        if cfg.get("apply_costs"):
+        if cfg.get("apply_costs") and not sim.get("open") and sim["ce_exit"] is not None:
             cc = costs.cost_config(cfg, "option")
             cost = round(costs.roundtrip_cost(ce_entry, sim["ce_exit"], int(lot or 0), **cc)
                          + costs.roundtrip_cost(pe_entry, sim["pe_exit"], int(lot or 0), **cc), 2)
-        use_net = bool(cfg.get("apply_costs"))
+        use_net = bool(cfg.get("apply_costs")) and not sim.get("open")
         net_comb = round(gross_comb - cost, 2)
 
         return {
@@ -206,18 +221,27 @@ class PMVwapStraddleResearch:
             "ce_exit_reason": sim["ce_exit_reason"], "pe_exit_reason": sim["pe_exit_reason"],
             "combined_premium": sim["combined_entry"],
             "target_premium": sim["target_premium"],
+            "sl_premium": sim.get("sl_premium"),
+            "max_profit": sim.get("max_profit"), "max_loss": sim.get("max_loss"),
             "ce_mtm": sim["ce_mtm"], "pe_mtm": sim["pe_mtm"],
             "combined_mtm": net_comb if use_net else gross_comb,
             "gross_combined_mtm": gross_comb, "cost": cost,
             "targets_hit": sim["targets_hit"],
-            "status": sim["status"],
+            "status": sim["status"], "open": bool(sim.get("open")),
             "signal_age": signal_age,
             "notes": self._exit_note(sim),
         }
 
     @staticmethod
     def _exit_note(sim: dict) -> str:
-        """Plain-language summary of how each leg closed (no SL in research)."""
+        """Plain-language summary of how the straddle closed."""
+        if sim.get("open"):
+            return "OPEN — combined P&L within target/SL band"
+        if sim.get("ce_exit_reason") == calc.EXIT_TARGET and sim.get("pe_exit_reason") == calc.EXIT_TARGET \
+                and sim.get("target_amount") is not None:
+            return f"Combined target ₹{int(sim['target_amount'])} hit — both legs exited"
+        if sim.get("ce_exit_reason") == calc.EXIT_STOP:
+            return f"Combined stop ₹{int(sim.get('sl_amount') or 0)} hit — both legs exited"
         ce_t = sim["ce_exit_reason"] == calc.EXIT_TARGET
         pe_t = sim["pe_exit_reason"] == calc.EXIT_TARGET
         if ce_t and pe_t:

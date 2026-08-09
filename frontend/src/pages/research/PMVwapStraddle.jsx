@@ -22,8 +22,9 @@ const COLS = [
   ['ce_symbol', 'CE Symbol'], ['pe_symbol', 'PE Symbol'], ['lot_size', 'Lot'],
   ['entry_ce', 'Entry CE'], ['exit_ce', 'Exit CE'], ['ce_exit_time', 'CE Exit@'],
   ['entry_pe', 'Entry PE'], ['exit_pe', 'Exit PE'], ['pe_exit_time', 'PE Exit@'],
-  ['combined_premium', 'Combined'], ['target_premium', 'Target'],
+  ['combined_premium', 'Combined'], ['target_premium', 'Target'], ['sl_premium', 'SL'],
   ['ce_mtm', 'CE MTM'], ['pe_mtm', 'PE MTM'], ['combined_mtm', 'Comb MTM'],
+  ['max_profit', 'Max Profit'], ['max_loss', 'Max Loss'],
   ['status', 'Status'], ['signal_age', 'Age(m)'], ['notes', 'Notes'],
 ];
 
@@ -201,7 +202,18 @@ export default function PMVwapStraddle() {
               {TIMEFRAMES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
-          <div><label className={lbl}>Target %</label>{num('target_pct', 0, 1)}</div>
+          <div><label className={lbl}>Exit Mode</label>
+            <select value={cfg.exit_mode || 'combined_pnl'} onChange={(e) => patch('exit_mode', e.target.value)} className={`w-full ${selCls}`}>
+              <option value="combined_pnl">Combined P&amp;L (₹ Target / SL)</option>
+              <option value="leg_target">Leg Target % (legacy)</option>
+            </select>
+          </div>
+          {cfg.exit_mode === 'leg_target'
+            ? <div><label className={lbl}>Target %</label>{num('target_pct', 0, 1)}</div>
+            : <>
+                <div><label className={lbl}>Target ₹ (combined)</label>{num('target_amount', 0, 500)}</div>
+                <div><label className={lbl}>SL ₹ (combined)</label>{num('sl_amount', 0, 500)}</div>
+              </>}
           <div><label className={lbl}>VWAP Buffer (pts)</label>{num('vwap_buffer', 0, 0.05)}</div>
           <div><label className={lbl}>Expiry</label>
             <select value={cfg.expiry_type} onChange={(e) => patch('expiry_type', e.target.value)} className={`w-full ${selCls}`}>
@@ -309,9 +321,12 @@ export default function PMVwapStraddle() {
                       <td className="px-2.5 py-1 text-gray-400">{r.pe_exit_time || '—'}</td>
                       <td className="px-2.5 py-1 text-gray-200">{NUM(r.combined_premium)}</td>
                       <td className="px-2.5 py-1 text-amber-300">{NUM(r.target_premium)}</td>
+                      <td className="px-2.5 py-1 text-red-300">{r.sl_premium == null ? '—' : NUM(r.sl_premium)}</td>
                       <td className={`px-2.5 py-1 ${r.ce_mtm >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{NUM(r.ce_mtm)}</td>
                       <td className={`px-2.5 py-1 ${r.pe_mtm >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{NUM(r.pe_mtm)}</td>
                       <td className={`px-2.5 py-1 font-semibold ${r.combined_mtm >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{NUM(r.combined_mtm)}</td>
+                      <td className="px-2.5 py-1 text-emerald-400">{r.max_profit == null ? '—' : NUM(r.max_profit)}</td>
+                      <td className="px-2.5 py-1 text-red-400">{r.max_loss == null ? '—' : NUM(r.max_loss)}</td>
                       <td className="px-2.5 py-1 text-gray-400">{r.status}</td>
                       <td className="px-2.5 py-1 text-gray-400">{r.signal_age ?? '—'}</td>
                       <td className="px-2.5 py-1 text-gray-500">{r.notes}</td>

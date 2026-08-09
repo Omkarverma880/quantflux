@@ -32,6 +32,7 @@ from research import research_watchlist as rwl
 from research.opei import OPEIEngine
 from research.opei import log as opei_log
 from research.opei import telegram as opei_tg
+from research.opei import positions as opei_positions
 from research.qmie import QMIEEngine
 from research.qmie import store as qmie_store
 from research.data_downloader import DataDownloader
@@ -1083,6 +1084,11 @@ def opei_snapshot(payload: OPEISnapshotRequest | None = None,
             for _side in ("CE", "PE"):
                 _sd = snap["sides"].get(_side) or {}
                 opei_log.update_outcomes(db, user_id, _side, _sd.get("premium"), _now)
+            # Advance paper positions (first-label test; paper only, no orders).
+            try:
+                opei_positions.manage_positions(db, user_id, snap, snap.get("config") or {}, _now)
+            except Exception as _exc:
+                logger.debug("OPEI positions manage failed: %s", _exc)
             recs = eng.institutional_recs(snap)
             if recs:
                 # log the qualifying best levels; collect only the NEWLY-logged
@@ -1149,6 +1155,16 @@ def opei_log_rows(date: str | None = None, user_id: int = Depends(login_required
                         db: Session = Depends(get_db)):
     try:
         return {"status": "ok", "rows": opei_log.fetch_log(db, user_id, date)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/opei/positions")
+def opei_positions_rows(date: str | None = None, user_id: int = Depends(login_required),
+                        db: Session = Depends(get_db)):
+    """First-label paper positions (Section 1 & 2). Paper only — no orders."""
+    try:
+        return {"status": "ok", **opei_positions.fetch_positions(db, user_id, date)}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
 

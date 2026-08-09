@@ -446,6 +446,7 @@ export const api = {
   researchOPEIConfigSave: (partial) => request('/research/opei/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
   researchOPEITelegramTest: (bot_token, chat_id) => request('/research/opei/telegram-test', { method: 'POST', body: JSON.stringify({ bot_token, chat_id }) }),
   researchOPEILog: (date) => request(`/research/opei/log${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+  researchOPEIPositions: (date) => request(`/research/opei/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
   // Research-10 — Quantum Market Intelligence Engine (QMIE)
   researchQMIEScan: (overrides, symbols) => request('/research/qmie/scan', { method: 'POST', body: JSON.stringify({ overrides: overrides || {}, symbols: symbols || null }) }),
   researchQMIEConfig: () => request('/research/qmie/config'),

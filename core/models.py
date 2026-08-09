@@ -578,3 +578,57 @@ class DataDataset(Base):
     __table_args__ = (
         Index("idx_dataset_user_created", "user_id", "created_at"),
     )
+
+
+class OPEIPaperPosition(Base):
+    """OPEI (Research-9) paper position for testing the first recommended label.
+
+    Two sections per side per day: Section 1 (no SL/target, 15:15 square-off) and
+    Section 2 (highest target + SL, optional re-entry). PAPER ONLY — never places
+    an order. Auto-created via ``create_all``.
+    """
+    __tablename__ = "opei_paper_positions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+    trade_date = Column(Date, nullable=False)
+    section = Column(Integer)                 # 1 = no-SL/TGT square-off, 2 = TGT+SL(+reentry)
+    side = Column(String(2))                  # CE | PE
+    symbol = Column(String(100))
+    strike = Column(Integer)
+    qty = Column(Integer)
+    entry_price = Column(Numeric(12, 2))
+    entry_time = Column(String(12))
+    target = Column(Numeric(12, 2))
+    sl = Column(Numeric(12, 2))
+    ltp = Column(Numeric(12, 2))
+    mfe = Column(Numeric(12, 2), default=0)
+    mae = Column(Numeric(12, 2), default=0)
+    pnl = Column(Numeric(12, 2), default=0)
+    status = Column(String(12), default="OPEN")   # OPEN | TARGET | SL | SQUAREOFF
+    exit_price = Column(Numeric(12, 2))
+    exit_time = Column(String(12))
+    exit_reason = Column(String(12))
+
+    __table_args__ = (
+        Index("idx_opei_pos_user_date", "user_id", "trade_date"),
+    )
+
+
+class AppSetting(Base):
+    """Global (app-wide, not per-user) key-value settings persisted in PostgreSQL.
+
+    Used for values that must survive redeploys on an ephemeral filesystem — e.g.
+    the universal Telegram bot token / chat id. Value is JSONB. Auto-created via
+    ``create_all``.
+    """
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(64), unique=True, index=True, nullable=False)
+    value = Column(JSONB, default=dict)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))

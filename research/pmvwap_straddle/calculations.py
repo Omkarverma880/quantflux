@@ -12,7 +12,8 @@ from typing import Optional
 
 from research.prev_period_vwap import crossed_up
 from research.pmvwap_straddle.constants import (
-    EXIT_TARGET, EXIT_SQUAREOFF, STATE_FULL, STATE_HALF, STATE_OPEN, DIRECTION_LONG,
+    EXIT_TARGET, EXIT_STOP, EXIT_SQUAREOFF, EXIT_OPEN,
+    STATE_FULL, STATE_HALF, STATE_OPEN, DIRECTION_LONG,
 )
 
 
@@ -103,6 +104,85 @@ def simulate_straddle(entry_ce: float, entry_pe: float, ce_forward: list[tuple],
         "targets_hit": targets_hit,
         "status": STATE_FULL,          # completed backtest → both legs closed
     }
+
+
+def combined_excursion(entry_ce, entry_pe, ce_forward, pe_forward, lot_size):
+    """Max favourable / adverse excursion of the COMBINED straddle P&L (₹)."""
+    combined_entry = entry_ce + entry_pe
+    pe_map = dict(pe_forward)
+    mfe = mae = 0.0
+    for dt, ce_prem in ce_forward:
+        pe_prem = pe_map.get(dt)
+        if ce_prem is None or pe_prem is None:
+            continue
+        mtm = (ce_prem + pe_prem - combined_entry) * lot_size
+        mfe = max(mfe, mtm)
+        mae = min(mae, mtm)
+    return round(mfe, 2), round(mae, 2)
+
+
+def simulate_straddle_combined(entry_ce: float, entry_pe: float, ce_forward: list[tuple],
+                               pe_forward: list[tuple], *, target_amount: float,
+                               sl_amount: float, lot_size: int,
+                               square_off_reached: bool = True) -> dict:
+    """Combined-P&L straddle exit: BOTH legs exit together the moment the combined
+    MTM (× lot) reaches ``+target_amount`` or ``-sl_amount``. Until then (live,
+    before square-off) the position stays OPEN and per-leg exits are blank.
+
+    Also returns the max profit (MFE) and max loss (MAE) reached after entry, and
+    the combined-premium levels that correspond to the target/SL rupee amounts.
+    """
+    combined_entry = round(entry_ce + entry_pe, 2)
+    pe_map = dict(pe_forward)
+    mfe = mae = 0.0
+    exit_dt = exit_ce = exit_pe = reason = None
+    last = None
+    for dt, ce_prem in ce_forward:
+        pe_prem = pe_map.get(dt)
+        if ce_prem is None or pe_prem is None:
+            continue
+        mtm = (ce_prem + pe_prem - combined_entry) * lot_size
+        mfe = max(mfe, mtm)
+        mae = min(mae, mtm)
+        last = (dt, ce_prem, pe_prem)
+        if mtm >= target_amount:
+            exit_dt, exit_ce, exit_pe, reason = dt, ce_prem, pe_prem, EXIT_TARGET
+            break
+        if sl_amount > 0 and mtm <= -sl_amount:
+            exit_dt, exit_ce, exit_pe, reason = dt, ce_prem, pe_prem, EXIT_STOP
+            break
+
+    if reason is None and square_off_reached and last:
+        exit_dt, exit_ce, exit_pe, reason = last[0], last[1], last[2], EXIT_SQUAREOFF
+
+    lot = int(lot_size or 0)
+    tgt_prem = round(combined_entry + (target_amount / lot if lot else 0), 2)
+    sl_prem = round(combined_entry - (sl_amount / lot if lot else 0), 2)
+    base = {"combined_entry": combined_entry, "target_premium": tgt_prem, "sl_premium": sl_prem,
+            "max_profit": round(mfe, 2), "max_loss": round(mae, 2),
+            "target_amount": target_amount, "sl_amount": sl_amount}
+
+    if reason is not None:          # closed (target / stop / square-off)
+        return {**base,
+                "ce_exit": round(exit_ce, 2), "pe_exit": round(exit_pe, 2),
+                "ce_exit_time": exit_dt.strftime("%H:%M"), "pe_exit_time": exit_dt.strftime("%H:%M"),
+                "ce_exit_reason": reason, "pe_exit_reason": reason,
+                "ce_mtm": round((exit_ce - entry_ce) * lot, 2),
+                "pe_mtm": round((exit_pe - entry_pe) * lot, 2),
+                "combined_mtm": round((exit_ce + exit_pe - combined_entry) * lot, 2),
+                "targets_hit": 1 if reason == EXIT_TARGET else 0,
+                "status": STATE_FULL, "open": False}
+
+    # still running (live, before square-off) → exits blank, show unrealized
+    cur_ce = last[1] if last else entry_ce
+    cur_pe = last[2] if last else entry_pe
+    return {**base,
+            "ce_exit": None, "pe_exit": None, "ce_exit_time": None, "pe_exit_time": None,
+            "ce_exit_reason": EXIT_OPEN, "pe_exit_reason": EXIT_OPEN,
+            "ce_mtm": round((cur_ce - entry_ce) * lot, 2),
+            "pe_mtm": round((cur_pe - entry_pe) * lot, 2),
+            "combined_mtm": round((cur_ce + cur_pe - combined_entry) * lot, 2),
+            "targets_hit": 0, "status": STATE_OPEN, "open": True}
 
 
 def live_status(ce_open: bool, pe_open: bool) -> str:

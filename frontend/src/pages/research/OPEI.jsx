@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Activity, Loader2, AlertCircle, Play, Pause, Zap, Send, Save, Download, Radio, Info,
-  TrendingUp, TrendingDown, BarChart3, Settings2, ScrollText,
+  TrendingUp, TrendingDown, BarChart3, Settings2, ScrollText, Wallet,
 } from 'lucide-react';
 import { api } from '../../api';
 
@@ -198,6 +198,14 @@ export default function OPEI() {
   const testTg = async () => { const r = await api.researchOPEITelegramTest(cfg.telegram_bot_token, cfg.telegram_chat_id); if (r.ok) flash('Telegram OK — check your chat'); else showErr(r.error || 'Telegram failed'); };
   const loadLog = async () => { const r = await api.researchOPEILog(); if (r.status === 'ok') setLog(r.rows || []); };
   useEffect(() => { if (tab === 'log') loadLog(); }, [tab]);
+  const [positions, setPositions] = useState({ section1: [], section2: [] });
+  const loadPositions = async () => { const r = await api.researchOPEIPositions(); if (r.status === 'ok') setPositions({ section1: r.section1 || [], section2: r.section2 || [] }); };
+  useEffect(() => {
+    if (tab !== 'positions') return;
+    loadPositions();
+    const t = setInterval(loadPositions, 4000);   // positions advance server-side each snapshot
+    return () => clearInterval(t);
+  }, [tab]);
 
   const downloadCSV = () => {
     const cols = ['date', 'time', 'side', 'symbol', 'strike', 'premium', 'level', 'confidence', 'band', 'sl', 'target1', 'result', 'mfe', 'mae', 'duration_min', 'triggered', 'target_hit', 'sl_hit'];
@@ -245,7 +253,7 @@ export default function OPEI() {
       )}
 
       <div className="flex gap-1 border-b border-surface-3">
-        {[['live', 'Live', Zap], ['settings', 'Weights & Telegram', Settings2], ['log', 'Log', ScrollText]].map(([id, label, Icon]) => (
+        {[['live', 'Live', Zap], ['settings', 'Weights & Telegram', Settings2], ['log', 'Log', ScrollText], ['positions', 'Positions', Wallet]].map(([id, label, Icon]) => (
           <button key={id} onClick={() => setTab(id)} className={`flex items-center gap-1.5 px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition ${tab === id ? 'border-brand-500 text-brand-400' : 'border-transparent text-gray-400 hover:text-gray-200'}`}><Icon className="w-4 h-4" /> {label}</button>
         ))}
       </div>
@@ -332,7 +340,59 @@ export default function OPEI() {
         </div>
       )}
 
-      <p className="text-[11px] text-gray-600 flex items-center gap-1"><Info className="w-3 h-3" /> Decision-support only — never places orders. "Historical success %" is a model estimate that calibrates as outcomes are logged. Replay backtest & adaptive weights are on the roadmap.</p>
+      {tab === 'positions' && (
+        <div className="space-y-4">
+          <div className="bg-surface-2 border border-surface-3 rounded-xl p-4">
+            <div className="text-sm font-semibold text-gray-200 mb-3">Paper Position Settings <span className="text-gray-600 text-xs">(paper only — no orders; first CE/PE label of the day)</span></div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer"><input type="checkbox" checked={cfg.positions_enabled} onChange={(e) => patch('positions_enabled', e.target.checked)} className="accent-brand-500" /> Enable positions</label>
+              <label className="flex items-center gap-2 text-gray-300 cursor-pointer"><input type="checkbox" checked={cfg.sec2_reentry} onChange={(e) => patch('sec2_reentry', e.target.checked)} className="accent-brand-500" /> Section-2 re-entry</label>
+              <div><label className={lbl}>Qty (P&L)</label><input type="number" value={cfg.position_qty ?? 75} onChange={(e) => patch('position_qty', parseInt(e.target.value) || 75)} className={`w-full ${selCls}`} /></div>
+              <div><label className={lbl}>Square-off (IST)</label><input value={cfg.squareoff_time ?? '15:15'} onChange={(e) => patch('squareoff_time', e.target.value)} className={`w-full ${selCls}`} /></div>
+              <div><label className={lbl}>Sec-2 Target</label><select value={cfg.sec2_target_mode} onChange={(e) => patch('sec2_target_mode', e.target.value)} className={`w-full ${selCls}`}><option value="highest">Highest target</option><option value="percent">Percent</option><option value="points">Points</option></select></div>
+              {cfg.sec2_target_mode !== 'highest' && <div><label className={lbl}>Target value</label><input type="number" value={cfg.sec2_target_value ?? 10} onChange={(e) => patch('sec2_target_value', parseFloat(e.target.value) || 0)} className={`w-full ${selCls}`} /></div>}
+              <div><label className={lbl}>Sec-2 SL</label><select value={cfg.sec2_sl_mode} onChange={(e) => patch('sec2_sl_mode', e.target.value)} className={`w-full ${selCls}`}><option value="recommended">Recommended</option><option value="percent">Percent</option><option value="points">Points</option></select></div>
+              {cfg.sec2_sl_mode !== 'recommended' && <div><label className={lbl}>SL value</label><input type="number" value={cfg.sec2_sl_value ?? 5} onChange={(e) => patch('sec2_sl_value', parseFloat(e.target.value) || 0)} className={`w-full ${selCls}`} /></div>}
+              <button onClick={saveCfg} className="col-span-2 md:col-span-1 self-end flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold"><Save className="w-3.5 h-3.5" /> Save</button>
+            </div>
+            <p className="text-[11px] text-gray-600 mt-2"><Info className="w-3 h-3 inline" /> Positions advance while <strong>Live</strong> is running (they read each snapshot). Enter at the recommended best-level; P&L marks against live premium.</p>
+          </div>
+
+          <PositionsTable title="Section 1 · No SL / No Target · Square-off at 15:15" rows={positions.section1} />
+          <PositionsTable title="Section 2 · Highest Target + SL · Re-entry optional" rows={positions.section2} showTgt />
+        </div>
+      )}
+
+      <p className="text-[11px] text-gray-600 flex items-center gap-1"><Info className="w-3 h-3" /> Decision-support only — never places orders. Paper positions test the FIRST recommended label (CE &amp; PE) against your target/SL. Replay backtest &amp; adaptive weights are on the roadmap.</p>
+    </div>
+  );
+}
+
+function PositionsTable({ title, rows, showTgt }) {
+  return (
+    <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
+      <div className="px-3 py-2 border-b border-surface-3 text-sm font-semibold text-gray-200">{title} <span className="text-gray-500 text-xs">({rows.length})</span></div>
+      {rows.length === 0 ? <div className="px-4 py-6 text-center text-gray-500 text-sm">No positions yet — the first recommended CE/PE of the day will appear here while Live runs.</div> : (
+        <div className="overflow-x-auto"><table className="w-full text-xs whitespace-nowrap">
+          <thead className="bg-surface-3 text-gray-300"><tr>{['Side', 'Symbol', 'Entry@', 'Entry', showTgt ? 'Target' : '', showTgt ? 'SL' : '', 'LTP', 'P&L', 'MFE', 'MAE', 'Status', 'Exit@'].filter(Boolean).map((h) => <th key={h} className="px-2.5 py-2 font-semibold text-right first:text-left">{h}</th>)}</tr></thead>
+          <tbody>{rows.map((r) => (
+            <tr key={r.id} className="border-t border-surface-3/40">
+              <td className={`px-2.5 py-1.5 text-left font-semibold ${r.side === 'CE' ? 'text-emerald-400' : 'text-red-400'}`}>{r.side}</td>
+              <td className="px-2.5 py-1.5 text-left text-gray-300">{r.symbol}</td>
+              <td className="px-2.5 py-1.5 text-right text-gray-500">{r.entry_time}</td>
+              <td className="px-2.5 py-1.5 text-right text-gray-100">₹{NUM(r.entry_price)}</td>
+              {showTgt && <td className="px-2.5 py-1.5 text-right text-emerald-400">{r.target == null ? '—' : `₹${NUM(r.target)}`}</td>}
+              {showTgt && <td className="px-2.5 py-1.5 text-right text-red-400">{r.sl == null ? '—' : `₹${NUM(r.sl)}`}</td>}
+              <td className="px-2.5 py-1.5 text-right text-gray-200">₹{NUM(r.ltp)}</td>
+              <td className={`px-2.5 py-1.5 text-right font-semibold ${r.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>₹{NUM(r.pnl, 0)}</td>
+              <td className="px-2.5 py-1.5 text-right text-emerald-400">₹{NUM(r.mfe, 0)}</td>
+              <td className="px-2.5 py-1.5 text-right text-red-400">₹{NUM(r.mae, 0)}</td>
+              <td className={`px-2.5 py-1.5 text-right font-semibold ${r.status === 'TARGET' ? 'text-emerald-400' : r.status === 'SL' ? 'text-red-400' : r.status === 'OPEN' ? 'text-amber-400' : 'text-gray-400'}`}>{r.status}</td>
+              <td className="px-2.5 py-1.5 text-right text-gray-500">{r.exit_time || '—'}</td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      )}
     </div>
   );
 }
