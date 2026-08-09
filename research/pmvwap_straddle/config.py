@@ -19,6 +19,15 @@ CONFIG_FILE = settings.DATA_DIR / "research" / "pmvwap_straddle.json"
 DEFAULT_CONFIG: dict = {
     # ── core ──
     "timeframe": DEFAULT_TIMEFRAME,       # underlying candle TF for VWAP + crossing
+    # ── entry selection ──
+    # entry_mode: "vwap_cross"  = cross Prev-Month VWAP from below (legacy default)
+    #             "level_touch" = enter when LTP touches a level derived from the
+    #                             Prev-Month VWAP by a signed % or points offset.
+    "entry_mode": "vwap_cross",
+    "entry_offset_mode": "percent",       # percent | points
+    "entry_offset_value": 0.0,            # signed: +above / -below Prev-Month VWAP (e.g. -5 = 5% below)
+    # legs: "both" = ATM straddle (CE+PE) | "call" = CE only | "put" = PE only
+    "legs": "both",
     # exit_mode: "combined_pnl" = exit BOTH legs when combined P&L hits target/SL
     #            "leg_target"   = legacy independent second-leg target-% exit
     "exit_mode": "combined_pnl",
@@ -68,7 +77,7 @@ DEFAULT_CONFIG: dict = {
 }
 
 _NUM_KEYS = {"target_pct", "target_amount", "sl_amount", "target_percent", "sl_percent",
-             "target_points", "sl_points", "vwap_buffer", "history_days",
+             "target_points", "sl_points", "entry_offset_value", "vwap_buffer", "history_days",
              "min_price", "max_price", "min_volume", "min_adv", "min_atr", "min_atr_pct",
              "high_vol_threshold", "max_stocks", "scan_interval", "per_stock_budget_ms",
              "slippage_bps", "brokerage_per_order", "charges_pct"}
@@ -97,6 +106,12 @@ def sanitize(cfg: dict) -> dict:
         out["target_mode"] = "amount"
     if out["sl_mode"] not in ("amount", "percent", "points"):
         out["sl_mode"] = "amount"
+    if out["entry_mode"] not in ("vwap_cross", "level_touch"):
+        out["entry_mode"] = "vwap_cross"
+    if out["entry_offset_mode"] not in ("percent", "points"):
+        out["entry_offset_mode"] = "percent"
+    if out["legs"] not in ("both", "call", "put"):
+        out["legs"] = "both"
     out["hold_to_expiry"] = bool(out["hold_to_expiry"])
     if out["high_vol_metric"] not in ("atr_pct", "range_pct"):
         out["high_vol_metric"] = "atr_pct"

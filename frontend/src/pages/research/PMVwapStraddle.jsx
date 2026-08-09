@@ -18,7 +18,7 @@ const NUM = (v, d = 2) => (v == null ? '—' : Number(v).toLocaleString('en-IN',
 
 const COLS = [
   ['date', 'Date'], ['time', 'Time'], ['underlying', 'Underlying'], ['underlying_ltp', 'LTP'],
-  ['prev_month_vwap', 'Prev-M VWAP'], ['direction', 'Dir'], ['atm_strike', 'ATM'],
+  ['prev_month_vwap', 'Prev-M VWAP'], ['entry_level', 'Entry Lvl'], ['legs', 'Legs'], ['direction', 'Dir'], ['atm_strike', 'ATM'],
   ['ce_symbol', 'CE Symbol'], ['pe_symbol', 'PE Symbol'], ['lot_size', 'Lot'],
   ['entry_ce', 'Entry CE'], ['exit_ce', 'Exit CE'], ['ce_exit_time', 'CE Exit@'],
   ['entry_pe', 'Entry PE'], ['exit_pe', 'Exit PE'], ['pe_exit_time', 'PE Exit@'],
@@ -150,7 +150,7 @@ export default function PMVwapStraddle() {
             <span className="px-2 py-0.5 rounded-full bg-brand-600/15 text-brand-400 text-xs font-semibold border border-brand-500/20">Research Only</span>
           </div>
           <p className="text-gray-500 text-sm mt-0.5">
-            Cross Prev-Month VWAP from below → buy ATM CE+PE straddle, HOLD to target/SL (₹ / % / points) or square off on expiry. No orders placed.
+            Entry on Prev-Month VWAP cross (or LTP touch of VWAP ± offset) → ATM straddle / call-only / put-only, HOLD to target/SL (₹ / % / points) or square off on expiry. No orders placed.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -203,6 +203,26 @@ export default function PMVwapStraddle() {
               {TIMEFRAMES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
+          <div><label className={lbl}>Entry Mode</label>
+            <select value={cfg.entry_mode || 'vwap_cross'} onChange={(e) => patch('entry_mode', e.target.value)} className={`w-full ${selCls}`}>
+              <option value="vwap_cross">VWAP Cross (from below)</option>
+              <option value="level_touch">Level Touch (VWAP ± offset)</option>
+            </select>
+          </div>
+          <div><label className={lbl}>Legs</label>
+            <select value={cfg.legs || 'both'} onChange={(e) => patch('legs', e.target.value)} className={`w-full ${selCls}`}>
+              <option value="both">Straddle (CE+PE)</option>
+              <option value="call">Call only</option>
+              <option value="put">Put only</option>
+            </select>
+          </div>
+          {cfg.entry_mode === 'level_touch' && <>
+            <div><label className={lbl}>Offset By</label>
+              <select value={cfg.entry_offset_mode || 'percent'} onChange={(e) => patch('entry_offset_mode', e.target.value)} className={`w-full ${selCls}`}>
+                <option value="percent">Percent</option><option value="points">Points</option>
+              </select></div>
+            <div><label className={lbl}>Offset ({cfg.entry_offset_mode === 'points' ? 'pts' : '%'}, +above/−below)</label>{num('entry_offset_value', -100000, 0.5)}</div>
+          </>}
           <div><label className={lbl}>Exit Mode</label>
             <select value={cfg.exit_mode || 'combined_pnl'} onChange={(e) => patch('exit_mode', e.target.value)} className={`w-full ${selCls}`}>
               <option value="combined_pnl">Combined P&amp;L (₹ Target / SL)</option>
@@ -322,6 +342,8 @@ export default function PMVwapStraddle() {
                       <td className="px-2.5 py-1 text-brand-300 font-semibold">{r.underlying}</td>
                       <td className="px-2.5 py-1 text-gray-300">{NUM(r.underlying_ltp)}</td>
                       <td className="px-2.5 py-1 text-purple-300">{NUM(r.prev_month_vwap)}</td>
+                      <td className="px-2.5 py-1 text-blue-300">{r.entry_level == null ? '—' : NUM(r.entry_level)}</td>
+                      <td className="px-2.5 py-1 text-gray-400">{r.legs === 'call' ? 'CALL' : r.legs === 'put' ? 'PUT' : 'STRDL'}</td>
                       <td className="px-2.5 py-1 text-gray-400">{r.direction}</td>
                       <td className="px-2.5 py-1 text-gray-200">{INT(r.atm_strike)}</td>
                       <td className="px-2.5 py-1 text-gray-500">{r.ce_symbol}</td>

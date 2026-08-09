@@ -166,10 +166,17 @@ class PMVwapStraddleResearch:
 
         rows: list[dict] = []
         for day in days:
-            signals = calc.find_entry_signals(
-                candles, vwaps, buffer=float(cfg["vwap_buffer"]),
-                entry_start=cfg["entry_start"], signal_cutoff=cfg["signal_cutoff"],
-                one_per_day=bool(cfg["one_signal_per_day"]), day=day)
+            if cfg.get("entry_mode", "vwap_cross") == "level_touch":
+                signals = calc.find_level_touch_signals(
+                    candles, vwaps, offset_mode=cfg["entry_offset_mode"],
+                    offset_value=float(cfg["entry_offset_value"]), buffer=float(cfg["vwap_buffer"]),
+                    entry_start=cfg["entry_start"], signal_cutoff=cfg["signal_cutoff"],
+                    one_per_day=bool(cfg["one_signal_per_day"]), day=day)
+            else:
+                signals = calc.find_entry_signals(
+                    candles, vwaps, buffer=float(cfg["vwap_buffer"]),
+                    entry_start=cfg["entry_start"], signal_cutoff=cfg["signal_cutoff"],
+                    one_per_day=bool(cfg["one_signal_per_day"]), day=day)
             for sig in signals:
                 row = self._simulate_signal(name, token, lot, tf, day, sig, vwaps, candles, squareoff, cfg)
                 if row:
@@ -185,30 +192,29 @@ class PMVwapStraddleResearch:
         atm = self.universe.atm_strike(name, expiry, underlying_ltp)
         if atm is None:
             return None
-        ce = self.universe.resolve(name, expiry, atm, "CE")
-        pe = self.universe.resolve(name, expiry, atm, "PE")
-        if not ce or not pe:
-            return None
-        lot = lot or ce.get("lot_size", 0) or pe.get("lot_size", 0)
 
-        # HOLD-TO-EXPIRY: option premium series spans entry day → EXPIRY day, so
-        # the straddle is held across days (no daily square-off). If hold_to_expiry
-        # is off, revert to single entry-day behaviour.
+        # ── which legs to trade (straddle / call-only / put-only) ──
+        legs_cfg = cfg.get("legs", "both")
+        want = {"CE": legs_cfg in ("both", "call"), "PE": legs_cfg in ("both", "put")}
+        contracts = {}
+        for side, on in want.items():
+            if not on:
+                continue
+            c = self.universe.resolve(name, expiry, atm, side)
+            if not c:
+                return None                       # an active leg isn't listed → skip
+            contracts[side] = c
+        if not contracts:
+            return None
+        lot = lot or next((c.get("lot_size", 0) for c in contracts.values()), 0)
+
         hold = bool(cfg.get("hold_to_expiry", True))
         end_day = expiry if hold else day
-        ce_series = self._option_series_range(ce["token"], day, end_day, tf)
-        pe_series = self._option_series_range(pe["token"], day, end_day, tf)
         entry_dt = sig["dt"]
-        ce_rec = ce_series.get(entry_dt)
-        pe_rec = pe_series.get(entry_dt)
-        if not ce_rec or not pe_rec or not ce_rec[0] or not pe_rec[0]:
-            return None       # no premium data at entry (illiquid / missing) — skip
-        ce_entry = ce_rec[0]           # entry = close of the entry candle
-        pe_entry = pe_rec[0]
+        today = date.today()
+        square_off_reached = (expiry < today) or (expiry == today and datetime.now().time() >= squareoff)
 
-        # forward = every candle after entry through expiry; on the expiry day cap
-        # at the square-off time. Each item is (dt, close, high, low) so exits/MTM
-        # use close while max-profit/loss use the intraday high/low.
+        # forward = candles after entry through expiry; expiry-day capped at square-off.
         def forward(series):
             out = []
             for dt in sorted(series):
@@ -220,95 +226,92 @@ class PMVwapStraddleResearch:
                 out.append((dt, c, h, l))
             return out
 
-        ce_fwd, pe_fwd = forward(ce_series), forward(pe_series)
-        today = date.today()
-        # the position is force-closed only once the EXPIRY square-off has passed
-        square_off_reached = (expiry < today) or (expiry == today and datetime.now().time() >= squareoff)
+        active, entries = [], {}
+        for side, c in contracts.items():
+            series = self._option_series_range(c["token"], day, end_day, tf)
+            rec = series.get(entry_dt)
+            if not rec or not rec[0]:
+                return None                       # no entry premium for an active leg → skip
+            entries[side] = rec[0]
+            active.append({"side": side, "entry": rec[0], "forward": forward(series)})
 
         if cfg.get("exit_mode", "combined_pnl") == "combined_pnl":
-            combined_entry = float(ce_entry) + float(pe_entry)
+            combined_entry = sum(entries.values())
             target_amt = _resolve_amount(cfg["target_mode"], float(cfg["target_amount"]),
                                          float(cfg["target_percent"]), float(cfg["target_points"]),
                                          combined_entry, int(lot or 0))
             sl_amt = _resolve_amount(cfg["sl_mode"], float(cfg["sl_amount"]),
                                      float(cfg["sl_percent"]), float(cfg["sl_points"]),
                                      combined_entry, int(lot or 0))
-            sim = calc.simulate_straddle_combined(
-                ce_entry, pe_entry, ce_fwd, pe_fwd,
-                target_amount=target_amt, sl_amount=sl_amt,
-                lot_size=int(lot or 0), square_off_reached=square_off_reached)
+            sim = calc.simulate_combined(active, target_amount=target_amt, sl_amount=sl_amt,
+                                         lot_size=int(lot or 0), square_off_reached=square_off_reached)
         else:
-            sim = calc.simulate_straddle(
-                ce_entry, pe_entry, ce_fwd, pe_fwd,
-                target_pct=float(cfg["target_pct"]), lot_size=int(lot or 0))
-            sim.update(calc.leg_excursions(ce_entry, pe_entry, ce_fwd, pe_fwd, int(lot or 0)))
-            sim.setdefault("sl_premium", None)
-            sim.setdefault("open", False)
+            sim = calc.simulate_legs_target(active, target_pct=float(cfg["target_pct"]), lot_size=int(lot or 0))
+        if not sim:
+            return None
 
-        # signal age / hold days — from entry to exit (may span multiple days)
+        legs = sim["legs"]
+        ce, pe = legs.get("CE"), legs.get("PE")
+
         exit_dt = sim.get("exit_dt")
         signal_age = int((exit_dt - entry_dt).total_seconds() // 60) if exit_dt else None
         hold_days = (exit_dt.date() - entry_dt.date()).days if exit_dt else None
 
-        # Net-of-costs: brokerage + STT + slippage on each option leg (buy+sell).
-        # Skipped while a combined-P&L position is still OPEN (no exit fills yet).
-        gross_comb = sim["combined_mtm"]
+        # Net-of-costs: brokerage + STT + slippage per ACTIVE leg (buy+sell); skipped while OPEN.
         cost = 0.0
-        if cfg.get("apply_costs") and not sim.get("open") and sim["ce_exit"] is not None:
+        if cfg.get("apply_costs") and not sim.get("open"):
             cc = costs.cost_config(cfg, "option")
-            cost = round(costs.roundtrip_cost(ce_entry, sim["ce_exit"], int(lot or 0), **cc)
-                         + costs.roundtrip_cost(pe_entry, sim["pe_exit"], int(lot or 0), **cc), 2)
+            for side, l in legs.items():
+                if l.get("exit") is not None:
+                    cost += costs.roundtrip_cost(entries[side], l["exit"], int(lot or 0), **cc)
+            cost = round(cost, 2)
+        gross_comb = sim["combined_mtm"]
         use_net = bool(cfg.get("apply_costs")) and not sim.get("open")
         net_comb = round(gross_comb - cost, 2)
 
+        def _sym(side):
+            return contracts[side]["tradingsymbol"] if side in contracts else None
+
         return {
-            "research_id": RESEARCH_ID,
-            "date": day.isoformat(),
-            "time": entry_dt.strftime("%H:%M"),
-            "underlying": name,
-            "underlying_ltp": underlying_ltp,
-            "prev_month_vwap": sig["level"],
-            "direction": sig["direction"],
-            "atm_strike": atm,
-            "ce_symbol": ce["tradingsymbol"], "pe_symbol": pe["tradingsymbol"],
+            "research_id": RESEARCH_ID, "date": day.isoformat(), "time": entry_dt.strftime("%H:%M"),
+            "underlying": name, "underlying_ltp": underlying_ltp,
+            "prev_month_vwap": sig.get("vwap", sig.get("level")), "entry_level": sig.get("level"),
+            "legs": legs_cfg, "direction": sig["direction"], "atm_strike": atm,
+            "ce_symbol": _sym("CE"), "pe_symbol": _sym("PE"),
             "expiry": expiry.isoformat(), "lot_size": int(lot or 0),
-            "entry_ce": round(ce_entry, 2), "entry_pe": round(pe_entry, 2),
-            "exit_ce": sim["ce_exit"], "exit_pe": sim["pe_exit"],
-            "ce_exit_time": sim["ce_exit_time"], "pe_exit_time": sim["pe_exit_time"],
-            "ce_exit_reason": sim["ce_exit_reason"], "pe_exit_reason": sim["pe_exit_reason"],
-            "combined_premium": sim["combined_entry"],
-            "target_premium": sim["target_premium"],
+            "entry_ce": round(entries["CE"], 2) if "CE" in entries else None,
+            "entry_pe": round(entries["PE"], 2) if "PE" in entries else None,
+            "exit_ce": ce["exit"] if ce else None, "exit_pe": pe["exit"] if pe else None,
+            "ce_exit_time": ce["exit_time"] if ce else None, "pe_exit_time": pe["exit_time"] if pe else None,
+            "ce_exit_reason": ce["exit_reason"] if ce else None, "pe_exit_reason": pe["exit_reason"] if pe else None,
+            "combined_premium": sim["combined_entry"], "target_premium": sim["target_premium"],
             "sl_premium": sim.get("sl_premium"),
-            "max_profit_ce": sim.get("max_profit_ce"), "max_loss_ce": sim.get("max_loss_ce"),
-            "max_profit_pe": sim.get("max_profit_pe"), "max_loss_pe": sim.get("max_loss_pe"),
-            "ce_mtm": sim["ce_mtm"], "pe_mtm": sim["pe_mtm"],
+            "max_profit_ce": ce["max_profit"] if ce else None, "max_loss_ce": ce["max_loss"] if ce else None,
+            "max_profit_pe": pe["max_profit"] if pe else None, "max_loss_pe": pe["max_loss"] if pe else None,
+            "ce_mtm": ce["mtm"] if ce else None, "pe_mtm": pe["mtm"] if pe else None,
             "combined_mtm": net_comb if use_net else gross_comb,
             "gross_combined_mtm": gross_comb, "cost": cost,
-            "targets_hit": sim["targets_hit"],
-            "status": sim["status"], "open": bool(sim.get("open")),
+            "targets_hit": sim["targets_hit"], "status": sim["status"], "open": bool(sim.get("open")),
             "signal_age": signal_age, "hold_days": hold_days,
             "notes": self._exit_note(sim, hold_days),
         }
 
     @staticmethod
     def _exit_note(sim: dict, hold_days=None) -> str:
-        """Plain-language summary of how the straddle closed."""
+        """Plain-language summary of how the position closed (1 or 2 legs)."""
         hold = f" (held {hold_days}d)" if hold_days else ""
         if sim.get("open"):
-            return f"OPEN — held to expiry; combined P&L within target/SL band{hold}"
-        if sim.get("ce_exit_reason") == calc.EXIT_TARGET and sim.get("pe_exit_reason") == calc.EXIT_TARGET \
-                and sim.get("target_amount") is not None:
-            return f"Combined target ₹{int(sim['target_amount'])} hit — both legs exited{hold}"
-        if sim.get("ce_exit_reason") == calc.EXIT_STOP:
-            return f"Combined stop ₹{int(sim.get('sl_amount') or 0)} hit — both legs exited{hold}"
-        ce_t = sim["ce_exit_reason"] == calc.EXIT_TARGET
-        pe_t = sim["pe_exit_reason"] == calc.EXIT_TARGET
-        if ce_t and pe_t:
-            return f"Both legs hit target{hold}"
-        if ce_t:
-            return f"CE hit target · PE squared off{hold}"
-        if pe_t:
-            return f"PE hit target · CE squared off{hold}"
+            return f"OPEN — held; combined P&L within target/SL band{hold}"
+        legs = sim.get("legs", {})
+        sides = "+".join(legs.keys()) or "position"
+        reasons = {v["exit_reason"] for v in legs.values()}
+        if calc.EXIT_TARGET in reasons and sim.get("target_amount") is not None:
+            return f"Combined target ₹{int(sim['target_amount'])} hit — {sides} exited{hold}"
+        if calc.EXIT_STOP in reasons:
+            return f"Combined stop ₹{int(sim.get('sl_amount') or 0)} hit — {sides} exited{hold}"
+        tgt = [s for s, v in legs.items() if v["exit_reason"] == calc.EXIT_TARGET]
+        if tgt:
+            return f"{'+'.join(tgt)} hit target{hold}"
         return f"No target/SL — squared off on expiry{hold}"
 
     # ── top-level backtest (single stock or whole universe) ──

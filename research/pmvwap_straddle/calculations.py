@@ -49,12 +49,53 @@ def find_entry_signals(candles: list[dict], vwaps: list[dict], *, buffer: float,
         prev_close = float(candles[i - 1]["close"])
         if crossed_up(prev_close, float(c["high"]), float(c["close"]), level, buffer):
             signals.append({
-                "index": i, "dt": dt, "level": level,
+                "index": i, "dt": dt, "level": level, "vwap": level,
                 "close": round(float(c["close"]), 2), "direction": DIRECTION_LONG,
             })
             if one_per_day:
                 break
         seen_day = True
+    return signals
+
+
+def level_from_vwap(vwap, offset_mode: str, offset_value: float):
+    """Entry level derived from the Prev-Month VWAP by a signed % or points
+    offset (e.g. offset_value=-5, percent → 5% below the VWAP)."""
+    if vwap is None:
+        return None
+    if offset_mode == "points":
+        return vwap + offset_value
+    return vwap * (1.0 + offset_value / 100.0)
+
+
+def find_level_touch_signals(candles: list[dict], vwaps: list[dict], *, offset_mode: str,
+                             offset_value: float, buffer: float, entry_start: str,
+                             signal_cutoff: str, one_per_day: bool, day) -> list[dict]:
+    """Detect bars on ``day`` whose range TOUCHES the entry level (Prev-Month VWAP
+    ± offset). A touch = candle low ≤ level ≤ candle high (± buffer). Direction-
+    agnostic: works whether the level is above or below current price."""
+    start = _parse_hhmm(entry_start)
+    cutoff = _parse_hhmm(signal_cutoff)
+    signals: list[dict] = []
+    for i in range(1, len(candles)):
+        c = candles[i]
+        dt = c.get("_dt")
+        if dt is None or dt.date() != day:
+            continue
+        if not (start <= dt.time() <= cutoff):
+            continue
+        vwap = vwaps[i].get("prev_month_vwap")
+        level = level_from_vwap(vwap, offset_mode, offset_value)
+        if level is None:
+            continue
+        hi, lo = float(c["high"]), float(c["low"])
+        if lo - buffer <= level <= hi + buffer:
+            signals.append({
+                "index": i, "dt": dt, "level": round(level, 2), "vwap": vwap,
+                "close": round(float(c["close"]), 2), "direction": DIRECTION_LONG,
+            })
+            if one_per_day:
+                break
     return signals
 
 
@@ -228,6 +269,111 @@ def simulate_straddle_combined(entry_ce: float, entry_pe: float, ce_forward: lis
             "pe_mtm": round((cur_pe - entry_pe) * lot, 2),
             "combined_mtm": round((cur_ce + cur_pe - combined_entry) * lot, 2),
             "targets_hit": 0, "status": STATE_OPEN, "open": True}
+
+
+def simulate_combined(active_legs: list[dict], *, target_amount: float, sl_amount: float,
+                      lot_size: int, square_off_reached: bool = True):
+    """Generalised combined-P&L exit for 1 or 2 option legs (straddle / call-only
+    / put-only). Active legs exit TOGETHER when the combined MTM (× lot) reaches
+    +target_amount or -sl_amount; else square off (or stay OPEN if the expiry
+    square-off hasn't passed). Per-leg max profit/loss use each leg's own intraday
+    HIGH/LOW; exit / MTM use the CLOSE.
+
+    ``active_legs`` = [{"side":"CE"|"PE", "entry": float, "forward": [(dt,c,h,l)]}].
+    Returns a side-keyed structure (``legs``) plus combined fields."""
+    legs = [l for l in active_legs if l.get("entry") is not None]
+    if not legs:
+        return None
+    lot = int(lot_size or 0)
+    combined_entry = round(sum(l["entry"] for l in legs), 2)
+    maps = {l["side"]: {row[0]: (row[1], _hl(row)[0], _hl(row)[1]) for row in l["forward"]} for l in legs}
+    ext = {l["side"]: [l["entry"], l["entry"]] for l in legs}       # [max, min]
+    common = sorted(set.intersection(*[set(m.keys()) for m in maps.values()])) if maps else []
+
+    exit_dt = reason = None
+    last = None
+    for dt in common:
+        closes, ok = {}, True
+        for side, m in maps.items():
+            c, h, l = m[dt]
+            if c is None:
+                ok = False
+                break
+            closes[side] = c
+            if h is not None and h > ext[side][0]:
+                ext[side][0] = h
+            if l is not None and l < ext[side][1]:
+                ext[side][1] = l
+        if not ok:
+            continue
+        mtm = (sum(closes.values()) - combined_entry) * lot
+        last = (dt, dict(closes))
+        if mtm >= target_amount:
+            exit_dt, reason = dt, EXIT_TARGET
+            break
+        if sl_amount > 0 and mtm <= -sl_amount:
+            exit_dt, reason = dt, EXIT_STOP
+            break
+    if reason is None and square_off_reached and last:
+        exit_dt, reason = last[0], EXIT_SQUAREOFF
+
+    open_pos = reason is None
+    legs_out = {}
+    for l in legs:
+        side, entry = l["side"], l["entry"]
+        mx, mn = ext[side]
+        base = {"max_profit": round((mx - entry) * lot, 2), "max_loss": round((mn - entry) * lot, 2)}
+        if not open_pos:
+            ex_c = maps[side][exit_dt][0]
+            legs_out[side] = {**base, "exit": round(ex_c, 2), "exit_time": _fmt(exit_dt),
+                              "exit_reason": reason, "mtm": round((ex_c - entry) * lot, 2)}
+        else:
+            cur = (last[1].get(side) if last else entry) or entry
+            legs_out[side] = {**base, "exit": None, "exit_time": None,
+                              "exit_reason": EXIT_OPEN, "mtm": round((cur - entry) * lot, 2)}
+    return {
+        "combined_entry": combined_entry,
+        "target_premium": round(combined_entry + (target_amount / lot if lot else 0), 2),
+        "sl_premium": round(combined_entry - (sl_amount / lot if lot else 0), 2),
+        "target_amount": target_amount, "sl_amount": sl_amount,
+        "combined_mtm": round(sum(v["mtm"] for v in legs_out.values()), 2),
+        "targets_hit": 1 if reason == EXIT_TARGET else 0,
+        "status": STATE_OPEN if open_pos else STATE_FULL, "open": open_pos,
+        "exit_dt": exit_dt, "legs": legs_out,
+    }
+
+
+def simulate_legs_target(active_legs: list[dict], *, target_pct: float, lot_size: int):
+    """Legacy leg-target exit generalised to 1–2 legs: each active leg exits at
+    its own combined-premium target, else square-off at the last candle."""
+    legs = [l for l in active_legs if l.get("entry") is not None]
+    if not legs:
+        return None
+    lot = int(lot_size or 0)
+    combined_entry = round(sum(l["entry"] for l in legs), 2)
+    target = round(combined_entry * (1.0 + target_pct / 100.0), 2)
+    legs_out, exit_dts = {}, []
+    for l in legs:
+        side, entry = l["side"], l["entry"]
+        ex = _exit_leg(entry, l["forward"], target)
+        mx = mn = entry
+        for row in l["forward"]:
+            h, lo = _hl(row)
+            mx, mn = max(mx, h), min(mn, lo)
+        legs_out[side] = {"exit": ex["exit"], "exit_time": ex["exit_time"], "exit_reason": ex["reason"],
+                          "mtm": round((ex["exit"] - entry) * lot, 2),
+                          "max_profit": round((mx - entry) * lot, 2),
+                          "max_loss": round((mn - entry) * lot, 2)}
+        if ex["exit_dt"]:
+            exit_dts.append(ex["exit_dt"])
+    return {
+        "combined_entry": combined_entry, "target_premium": target, "sl_premium": None,
+        "target_amount": None, "sl_amount": None,
+        "combined_mtm": round(sum(v["mtm"] for v in legs_out.values()), 2),
+        "targets_hit": sum(1 for v in legs_out.values() if v["exit_reason"] == EXIT_TARGET),
+        "status": STATE_FULL, "open": False,
+        "exit_dt": max(exit_dts) if exit_dts else None, "legs": legs_out,
+    }
 
 
 def live_status(ce_open: bool, pe_open: bool) -> str:
