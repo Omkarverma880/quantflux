@@ -98,15 +98,21 @@ class FourthCandleResearch:
             return {**base, "status": "NO BREAKOUT",
                     "notes": f"{an['bias'].upper()} bias but no break by {cfg['entry_cutoff']}"}
 
+        # breakout found — carry it into any diagnostic row so a skipped stock is
+        # visible with a reason instead of silently disappearing
+        bdiag = {**base, "breakout_time": bo["dt"].strftime("%d-%b %H:%M"),
+                 "opt_type": bo["opt_type"]}
         expiry = self.universe.expiry_for(name, cfg["expiry_type"], day)
         if not expiry:
-            return None
+            return {**bdiag, "status": "NO OPTION DATA", "notes": "No option expiry resolved"}
         atm = self.universe.atm_strike(name, expiry, bo["underlying"])
         if atm is None:
-            return None
+            return {**bdiag, "status": "NO OPTION DATA", "notes": "No ATM strike resolved",
+                    "expiry": expiry.isoformat()}
         opt = self.universe.resolve(name, expiry, atm, bo["opt_type"])
         if not opt:
-            return None
+            return {**bdiag, "status": "NO OPTION DATA", "expiry": expiry.isoformat(),
+                    "strike": atm, "notes": f"No {bo['opt_type']} contract for {atm}"}
         lot = int(self.universe.lot_size(name) or opt.get("lot_size", 0) or 0)
         qty = lot * int(cfg["lots"])
 
@@ -115,7 +121,10 @@ class FourthCandleResearch:
         entry_dt = bo["dt"]
         rec = series.get(entry_dt)
         if not rec or not rec[0]:
-            return None
+            return {**bdiag, "status": "NO OPTION DATA", "symbol": opt["tradingsymbol"],
+                    "strike": atm, "expiry": expiry.isoformat(),
+                    "notes": f"No option price at breakout {bo['dt'].strftime('%H:%M')} "
+                             f"({opt['tradingsymbol']}) — thin/illiquid or data gap"}
         entry = rec[0]
         squareoff = calc._parse_hhmm(cfg["square_off"])
         forward = [(dt, series[dt][0], series[dt][1], series[dt][2]) for dt in sorted(series)
@@ -135,6 +144,18 @@ class FourthCandleResearch:
         mtm = round(sim["mtm"] - cost, 2) if (cfg.get("apply_costs") and not sim["open"]) else sim["mtm"]
         exit_dt = sim["exit_dt"]
         hold_days = (exit_dt.date() - entry_dt.date()).days if exit_dt else None
+        # granular hold — same-day target/SL should still show how long it was held
+        hold_label = None
+        if exit_dt:
+            secs = max(0, int((exit_dt - entry_dt).total_seconds()))
+            d, rem = divmod(secs, 86400)
+            h, m = divmod(rem, 3600)[0], (rem % 3600) // 60
+            if d >= 1:
+                hold_label = f"{d}d {h}h" if h else f"{d}d"
+            elif h >= 1:
+                hold_label = f"{h}h {m}m" if m else f"{h}h"
+            else:
+                hold_label = f"{m}m"
 
         return {
             **base, "breakout_time": entry_dt.strftime("%d-%b %H:%M"), "opt_type": bo["opt_type"],
@@ -145,6 +166,7 @@ class FourthCandleResearch:
             "exit_reason": sim["exit_reason"], "mtm": mtm, "cost": cost,
             "max_profit": sim["max_profit"], "max_loss": sim["max_loss"],
             "status": sim["exit_reason"], "open": sim["open"], "hold_days": hold_days,
+            "hold_label": hold_label, "entry_time": entry_dt.strftime("%d-%b %H:%M"),
             "notes": self._note(sim, an["bias"], hold_days),
         }
 
@@ -158,13 +180,15 @@ class FourthCandleResearch:
             sim["exit_reason"], f"{side} squared off on expiry{hold}")
 
     # ── backtest across a stock's days ──
-    def backtest_stock(self, name: str, days: list[date], cfg: dict) -> list[dict]:
+    def backtest_stock(self, name: str, days: list[date], cfg: dict,
+                       include_non_trades: bool = False) -> list[dict]:
         token = self.universe.nse_token(name)
         if not token:
             return []
         candles = self._underlying_5m(token, min(days), max(days))
         if not candles:
             return []
+        non_trade = {"NO TRADE", "NO BREAKOUT", "NO OPTION DATA"}
         rows = []
         for day in days:
             dc = calc.day_candles(candles, day)
@@ -172,13 +196,17 @@ class FourthCandleResearch:
                 continue
             try:
                 row = self._row_for_day(name, day, dc, cfg)
-                if row and row.get("status") not in ("NO TRADE", "NO BREAKOUT"):
-                    rows.append(row)
+                if not row:
+                    continue
+                if row.get("status") in non_trade and not include_non_trades:
+                    continue
+                rows.append(row)
             except Exception as exc:
                 logger.debug("row_for_day %s %s failed: %s", name, day, exc)
         return rows
 
-    def backtest(self, overrides=None, *, symbol=None, symbols=None, start=None, end=None) -> dict:
+    def backtest(self, overrides=None, *, symbol=None, symbols=None, start=None, end=None,
+                 include_non_trades=False) -> dict:
         with self._lock:
             cfg = sanitize({**self.load_config(), **(overrides or {})})
             try:
@@ -210,7 +238,7 @@ class FourthCandleResearch:
             rows, t0, scanned = [], _time.monotonic(), 0
             for nm in names:
                 try:
-                    rows.extend(self.backtest_stock(nm, days, cfg))
+                    rows.extend(self.backtest_stock(nm, days, cfg, include_non_trades))
                 except Exception as exc:
                     logger.warning("backtest_stock %s failed: %s", nm, exc)
                 scanned += 1

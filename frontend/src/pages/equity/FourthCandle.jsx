@@ -34,6 +34,7 @@ export default function FourthCandle() {
   const [end, setEnd] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [showNonTrades, setShowNonTrades] = useState(false);
 
   // simulate
   const [simSym, setSimSym] = useState('');
@@ -72,14 +73,14 @@ export default function FourthCandle() {
     setLoading(true); setErr('');
     try {
       const body = {
-        overrides: cfg, start, end,
+        overrides: cfg, start, end, include_non_trades: showNonTrades,
         symbol: sel2.mode === 'single' ? sel2.symbol : null,
         symbols: sel2.mode === 'watchlist' ? sel2.symbols : null,
       };
       const r = await api.fcBacktest(body);
       if (r.status === 'ok') setData(r); else showErr(r.message || 'Backtest failed');
     } catch (e) { showErr(e.message); } finally { setLoading(false); }
-  }, [cfg, sel2, start, end]);
+  }, [cfg, sel2, start, end, showNonTrades]);
 
   const runSimulate = async () => {
     if (!simSym.trim()) return showErr('Enter a stock symbol');
@@ -115,7 +116,7 @@ export default function FourthCandle() {
 
   const rows = data?.rows || [];
   const downloadCSV = () => {
-    const cols = ['date', 'underlying', 'bias', 'fourth_high', 'fourth_low', 'breakout_time', 'opt_type', 'symbol', 'strike', 'entry', 'target', 'sl', 'exit', 'exit_reason', 'mtm', 'max_profit', 'max_loss', 'hold_days', 'status'];
+    const cols = ['date', 'underlying', 'bias', 'fourth_high', 'fourth_low', 'breakout_time', 'entry_time', 'opt_type', 'symbol', 'strike', 'lot', 'qty', 'entry', 'target', 'sl', 'exit', 'exit_time', 'exit_reason', 'mtm', 'max_profit', 'max_loss', 'hold_days', 'hold_label', 'status', 'notes'];
     const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const lines = [cols.join(',')].concat(rows.map((r) => cols.map((c) => esc(r[c])).join(',')));
     const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
@@ -124,7 +125,9 @@ export default function FourthCandle() {
 
   if (!cfg) return <div className="p-6 text-gray-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>;
 
-  const num = (k, min = 0, step = 1) => <input type="number" min={min} step={step} value={cfg[k] ?? ''} onChange={(e) => patch(k, e.target.value === '' ? 0 : parseFloat(e.target.value))} className={`w-full ${sel}`} />;
+  // keep the raw typed text so the field can be cleared and leading zeros removed;
+  // the backend sanitize() coerces to number (blank → default) on backtest/save.
+  const num = (k, min = 0, step = 1) => <input type="number" min={min} step={step} value={cfg[k] ?? ''} onChange={(e) => patch(k, e.target.value)} className={`w-full ${sel}`} />;
 
   const ConfigGrid = () => (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -175,8 +178,11 @@ export default function FourthCandle() {
               <div><label className={lbl}>To</label><input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className={sel} /></div>
               <button onClick={runBacktest} disabled={loading} className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50">{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />} Run Backtest</button>
               <button onClick={saveCfg} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border bg-surface-3 text-gray-300 border-surface-4 hover:text-white"><Save className="w-3.5 h-3.5" /> Save default</button>
+              <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer ml-1" title="Also list stocks that had a bias/breakout but produced no trade (no breakout by cutoff, mixed candles, or missing option data), with the reason.">
+                <input type="checkbox" checked={showNonTrades} onChange={(e) => setShowNonTrades(e.target.checked)} className="accent-brand-500" /> Show non-trade days
+              </label>
             </div>
-            <ConfigGrid />
+            {ConfigGrid()}
           </div>
 
           {data?.note && (
@@ -196,8 +202,8 @@ export default function FourthCandle() {
           {data && (
             <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
               <div className="overflow-x-auto"><table className="w-full text-xs whitespace-nowrap">
-                <thead className="bg-surface-3 text-gray-300"><tr>{['Date', 'Stock', 'Bias', '4th High', '4th Low', 'Breakout', 'Opt', 'Symbol', 'Strike', 'Entry', 'Target', 'SL', 'Exit', 'Reason', 'MTM', 'Max Profit', 'Max Loss', 'Hold(d)'].map((h) => <th key={h} className="px-2.5 py-2 font-semibold text-right first:text-left">{h}</th>)}</tr></thead>
-                <tbody>{rows.map((r, i) => (
+                <thead className="bg-surface-3 text-gray-300"><tr>{['Date', 'Stock', 'Bias', '4th High', '4th Low', 'Breakout', 'Opt', 'Symbol', 'Strike', 'Lot', 'Qty', 'Entry', 'Target', 'SL', 'Exit', 'Reason', 'MTM', 'Max Profit', 'Max Loss', 'Hold'].map((h) => <th key={h} className="px-2.5 py-2 font-semibold text-right first:text-left">{h}</th>)}</tr></thead>
+                <tbody>{rows.map((r, i) => (r.qty ? (
                   <tr key={i} className="border-t border-surface-3/40 hover:bg-surface-3/10">
                     <td className="px-2.5 py-1.5 text-left text-gray-400">{r.date}</td>
                     <td className="px-2.5 py-1.5 text-left text-brand-300 font-semibold">{r.underlying}</td>
@@ -208,6 +214,8 @@ export default function FourthCandle() {
                     <td className="px-2.5 py-1.5 text-right"><OptBadge t={r.opt_type} /></td>
                     <td className="px-2.5 py-1.5 text-right text-gray-500">{r.symbol}</td>
                     <td className="px-2.5 py-1.5 text-right text-gray-300">{INT(r.strike)}</td>
+                    <td className="px-2.5 py-1.5 text-right text-gray-400">{INT(r.lot)}</td>
+                    <td className="px-2.5 py-1.5 text-right text-gray-200 font-medium">{INT(r.qty)}</td>
                     <td className="px-2.5 py-1.5 text-right text-gray-200">₹{NUM(r.entry)}</td>
                     <td className="px-2.5 py-1.5 text-right text-emerald-400">₹{NUM(r.target)}</td>
                     <td className="px-2.5 py-1.5 text-right text-red-400">₹{NUM(r.sl)}</td>
@@ -216,10 +224,21 @@ export default function FourthCandle() {
                     <td className={`px-2.5 py-1.5 text-right font-semibold ${r.mtm >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{NUM(r.mtm)}</td>
                     <td className="px-2.5 py-1.5 text-right text-emerald-400">{NUM(r.max_profit)}</td>
                     <td className="px-2.5 py-1.5 text-right text-red-400">{NUM(r.max_loss)}</td>
-                    <td className="px-2.5 py-1.5 text-right text-gray-400">{r.hold_days ?? '—'}</td>
+                    <td className="px-2.5 py-1.5 text-right text-gray-400" title={r.entry_time && r.exit_time ? `${r.entry_time} → ${r.exit_time}` : ''}>{r.hold_label ?? (r.open ? 'open' : '—')}</td>
                   </tr>
-                ))}
-                {!rows.length && <tr><td colSpan={18} className="px-4 py-8 text-center text-gray-500">No breakout trades in range.</td></tr>}
+                ) : (
+                  <tr key={i} className="border-t border-surface-3/40 bg-surface-3/10 text-gray-500">
+                    <td className="px-2.5 py-1.5 text-left text-gray-500">{r.date}</td>
+                    <td className="px-2.5 py-1.5 text-left text-gray-400 font-semibold">{r.underlying}</td>
+                    <td className="px-2.5 py-1.5 text-right">{r.bias ? (r.bias === 'call' ? '3 RED' : '3 GREEN') : 'MIXED'}</td>
+                    <td className="px-2.5 py-1.5 text-right">{NUM(r.fourth_high)}</td>
+                    <td className="px-2.5 py-1.5 text-right">{NUM(r.fourth_low)}</td>
+                    <td className="px-2.5 py-1.5 text-right">{r.breakout_time || '—'}</td>
+                    <td className="px-2.5 py-1.5 text-right"><OptBadge t={r.opt_type} /></td>
+                    <td className="px-2.5 py-1.5 text-left text-amber-400/80 italic" colSpan={13}>{r.status} — {r.notes}</td>
+                  </tr>
+                )))}
+                {!rows.length && <tr><td colSpan={20} className="px-4 py-8 text-center text-gray-500">No breakout trades in range.{!showNonTrades && ' Tick “Show non-trade days” to see why stocks were skipped.'}</td></tr>}
                 </tbody>
               </table></div>
             </div>
@@ -273,7 +292,7 @@ export default function FourthCandle() {
             </div>
             <div><label className={lbl}>Watchlist (comma / space separated F&O stocks)</label>
               <textarea value={symbolsText} onChange={(e) => setSymbolsText(e.target.value)} rows={2} placeholder="RELIANCE, TCS, HDFCBANK, INFY …" className={`w-full ${sel}`} /></div>
-            <ConfigGrid />
+            {ConfigGrid()}
             <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-surface-3">
               <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" checked={cfg.telegram_alerts} onChange={(e) => patch('telegram_alerts', e.target.checked)} className="accent-brand-500" /> Telegram alerts</label>
               <div className="flex items-center gap-2 text-xs text-gray-400">Bot
