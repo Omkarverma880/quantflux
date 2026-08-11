@@ -188,7 +188,9 @@ class FourthCandleResearch:
         candles = self._underlying_5m(token, min(days), max(days))
         if not candles:
             return []
-        non_trade = {"NO TRADE", "NO BREAKOUT", "NO OPTION DATA"}
+        # only stocks that HAD a bias but didn't complete a trade are diagnostic-worthy;
+        # mixed-candle days (NO TRADE) are noise and are never shown.
+        includable = {"NO BREAKOUT", "NO OPTION DATA"}
         rows = []
         for day in days:
             dc = calc.day_candles(candles, day)
@@ -198,7 +200,10 @@ class FourthCandleResearch:
                 row = self._row_for_day(name, day, dc, cfg)
                 if not row:
                     continue
-                if row.get("status") in non_trade and not include_non_trades:
+                status = row.get("status")
+                if status == "NO TRADE":
+                    continue                     # mixed first-3 candles — skip entirely
+                if status in includable and not include_non_trades:
                     continue
                 rows.append(row)
             except Exception as exc:
@@ -227,11 +232,10 @@ class FourthCandleResearch:
             else:
                 names = [x["name"] for x in self.universe.equities()]
                 mode = "multi"
-            # 5-min backtests are heavy — cap the multi (All F&O) universe so the
-            # request completes instead of hanging. Single/watchlist are uncapped
-            # unless the user sets Max Stocks.
+            # Max Stocks caps how many symbols are scanned (0 = all). 5-min all-F&O
+            # runs are heavy but complete; the user controls the trade-off.
             total = len(names)
-            cap = int(cfg["max_stocks"]) or (40 if mode == "multi" else 0)
+            cap = int(cfg["max_stocks"])          # 0 = scan everything
             truncated = bool(cap and total > cap)
             if cap:
                 names = names[:cap]
@@ -243,8 +247,8 @@ class FourthCandleResearch:
                     logger.warning("backtest_stock %s failed: %s", nm, exc)
                 scanned += 1
             rows.sort(key=lambda r: (r["date"], r.get("breakout_time") or "", r["underlying"]))
-            note = (f"Showing first {len(names)} of {total} F&O stocks — 5-min backtests are heavy. "
-                    "Use Single Stock / a Watchlist, or set Max Stocks, for more." if truncated else None)
+            note = (f"Showing first {len(names)} of {total} F&O stocks (Max Stocks = {cap}). "
+                    "Set Max Stocks to 0 to scan all — heavier but complete." if truncated else None)
             return {"status": "ok", "mode": mode, "start": s.isoformat(), "end": e.isoformat(),
                     "stocks_scanned": scanned, "universe_size": total, "truncated": truncated,
                     "note": note, "config": cfg, "stats": self._stats(rows),

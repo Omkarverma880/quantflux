@@ -147,6 +147,7 @@ export default function FourthCandle() {
       <div><label className={lbl}>Entry Cutoff</label><input value={cfg.entry_cutoff} onChange={(e) => patch('entry_cutoff', e.target.value)} className={`w-full ${sel}`} /></div>
       <div><label className={lbl}>Expiry</label><select value={cfg.expiry_type} onChange={(e) => patch('expiry_type', e.target.value)} className={`w-full ${sel}`}><option value="monthly">Monthly</option><option value="weekly">Weekly</option></select></div>
       <div><label className={lbl}>Lots</label>{num('lots', 1, 1)}</div>
+      <div><label className={lbl} title="How many F&O stocks to scan in All-F&O mode. 0 = all (heavier).">Max Stocks (0=all)</label>{num('max_stocks', 0, 1)}</div>
       <div><label className={lbl}>Max Positions</label>{num('max_positions', 1, 1)}</div>
       <div><label className={lbl}>Max Calls</label>{num('max_calls', 0, 1)}</div>
       <div><label className={lbl}>Max Puts</label>{num('max_puts', 0, 1)}</div>
