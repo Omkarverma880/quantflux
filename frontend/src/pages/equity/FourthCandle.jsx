@@ -19,6 +19,15 @@ function OptBadge({ t }) {
 }
 const stColor = (s) => ({ TARGET: 'text-emerald-400', STOP: 'text-red-400', OPEN: 'text-amber-400', SQUAREOFF: 'text-gray-400' }[s] || 'text-gray-400');
 
+function Tile({ label, children }) {
+  return (
+    <div className="bg-surface-3/40 border border-surface-3 rounded-lg px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">{label}</div>
+      <div className="text-sm">{children}</div>
+    </div>
+  );
+}
+
 export default function FourthCandle() {
   const [cfg, setCfg] = useState(null);
   const [tab, setTab] = useState('backtest');
@@ -464,16 +473,16 @@ function SimulateView({ sim }) {
 
       {t && t.opt_type && (
         <div className="bg-surface-2 border border-surface-3 rounded-xl p-4">
-          <div className="text-sm font-semibold text-gray-200 mb-2">Trade</div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-y-2 text-sm">
-            <span className="text-gray-500">Signal</span><span className="text-right"><OptBadge t={t.opt_type} /> <span className="text-gray-500">@ {t.breakout_time}</span></span>
-            <span className="text-gray-500">Option</span><span className="text-right text-gray-300">{t.symbol}</span>
-            <span className="text-gray-500">Entry</span><span className="text-right text-gray-100">₹{NUM(t.entry)}</span>
-            <span className="text-gray-500">Target / SL</span><span className="text-right"><span className="text-emerald-400">₹{NUM(t.target)}</span> / <span className="text-red-400">₹{NUM(t.sl)}</span></span>
-            <span className="text-gray-500">Exit</span><span className="text-right text-gray-200">{t.exit == null ? '—' : `₹${NUM(t.exit)}`} <span className={stColor(t.exit_reason)}>({t.exit_reason})</span>{t.exit_time ? <span className="text-gray-500"> @ {t.exit_time}</span> : null}</span>
-            <span className="text-gray-500">Hold</span><span className="text-right text-gray-300">{t.hold_label ?? (t.open ? 'open' : '—')}</span>
-            <span className="text-gray-500">MTM</span><span className={`text-right font-semibold ${t.mtm >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>₹{NUM(t.mtm, 0)}</span>
-            <span className="text-gray-500">Max Profit / Loss</span><span className="text-right"><span className="text-emerald-400">₹{NUM(t.max_profit, 0)}</span> / <span className="text-red-400">₹{NUM(t.max_loss, 0)}</span></span>
+          <div className="text-sm font-semibold text-gray-200 mb-3">Trade</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <Tile label="Signal"><OptBadge t={t.opt_type} /> <span className="text-gray-500 text-xs">@ {t.breakout_time}</span></Tile>
+            <Tile label="Option"><span className="text-gray-200">{t.symbol}</span></Tile>
+            <Tile label="Entry"><span className="text-gray-100">₹{NUM(t.entry)}</span></Tile>
+            <Tile label="Target / SL"><span className="text-emerald-400">₹{NUM(t.target)}</span> <span className="text-gray-600">/</span> <span className="text-red-400">₹{NUM(t.sl)}</span></Tile>
+            <Tile label="Exit">{t.exit == null ? <span className="text-gray-400">—</span> : <span className="text-gray-100">₹{NUM(t.exit)}</span>} <span className={`text-xs ${stColor(t.exit_reason)}`}>({t.exit_reason})</span>{t.exit_time ? <span className="text-gray-500 text-xs"> @ {t.exit_time}</span> : null}</Tile>
+            <Tile label="Hold"><span className="text-gray-200">{t.hold_label ?? (t.open ? 'open' : '—')}</span></Tile>
+            <Tile label="MTM"><span className={`font-semibold ${t.mtm >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>₹{NUM(t.mtm, 0)}</span></Tile>
+            <Tile label="Max Profit / Loss"><span className="text-emerald-400">₹{NUM(t.max_profit, 0)}</span> <span className="text-gray-600">/</span> <span className="text-red-400">₹{NUM(t.max_loss, 0)}</span></Tile>
           </div>
         </div>
       )}
