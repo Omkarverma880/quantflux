@@ -18,7 +18,7 @@ from datetime import date, datetime, time as dtime, timedelta
 from typing import Optional
 
 from config import settings
-from core.broker import Broker, OrderRequest, OrderType, TransactionType, ProductType, Exchange
+from core.broker import Broker, OrderRequest, OrderType, OrderSide, ProductType, Exchange
 from core.database import get_db_session
 from core.logger import get_logger
 from core.models import FourthCandlePosition
@@ -162,7 +162,7 @@ class FourthCandleStrategy:
         ltp = self._opt_ltp(opt["tradingsymbol"])
         if not ltp:
             return
-        if not self._place(opt["tradingsymbol"], qty, TransactionType.BUY, ltp):
+        if not self._place(opt["tradingsymbol"], qty, OrderSide.BUY, ltp):
             return
         target, stop = calc.resolve_target_sl(ltp, self.cfg)
         db = get_db_session()
@@ -213,7 +213,7 @@ class FourthCandleStrategy:
                       and now.time() >= squareoff):
                     reason = "SQUAREOFF"
                 if reason:
-                    self._place(row.symbol, qty, TransactionType.SELL, ltp)
+                    self._place(row.symbol, qty, OrderSide.SELL, ltp)
                     row.status = reason
                     row.exit_price = round(ltp, 2)
                     row.exit_reason = reason
@@ -234,7 +234,7 @@ class FourthCandleStrategy:
         try:
             req = OrderRequest(
                 tradingsymbol=tradingsymbol, exchange=Exchange.NFO,
-                transaction_type=side, quantity=int(qty),
+                side=side, quantity=int(qty),
                 order_type=OrderType.MARKET,
                 product=ProductType.NRML if self.cfg["product"] == "NRML" else ProductType.MIS)
             resp = self.broker.place_order(req)
