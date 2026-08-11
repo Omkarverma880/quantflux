@@ -1,9 +1,14 @@
 """
-Universal Telegram notification layer — shared across the whole application.
+Telegram notification layer — shared across the whole application.
 
-One place stores the bot token / chat id (Settings → Telegram); every module
-(research live scans, live strategies, OPEI) sends through here so the user
-configures Telegram once. Stdlib-only, non-blocking, fails soft.
+Supports two independent bots:
+  • Bot A ("a") — the original universal bot (DB key ``telegram``); default.
+  • Bot B ("b") — a second bot (DB key ``telegram_b``) modules can opt into.
+
+Each module chooses which bot to send through. Configured once in Settings →
+Telegram. Persisted in PostgreSQL (survives Railway redeploys). Stdlib-only,
+non-blocking, fails soft. All functions default to bot="a" for backward
+compatibility with existing callers.
 """
 from __future__ import annotations
 
@@ -17,16 +22,19 @@ from core.logger import get_logger
 
 logger = get_logger("notify")
 
-# Legacy file (kept only for a one-time migration into the DB). The DB is now the
-# source of truth because Railway's filesystem is ephemeral (the file was wiped
-# on every redeploy, which is why the token kept disappearing).
-_FILE = settings.DATA_DIR / "telegram.json"
-_KEY = "telegram"
+# DB key per bot. Bot A keeps the original key (+ legacy-file migration).
+_KEYS = {"a": "telegram", "b": "telegram_b"}
+_LABELS = {"a": "Bot A", "b": "Bot B"}
+_FILE = settings.DATA_DIR / "telegram.json"      # legacy, Bot A only
 _DEFAULT = {"enabled": False, "bot_token": "", "chat_id": ""}
 
-# tiny in-memory cache so frequent enabled()/send() checks don't hit the DB each time
-_cache: dict = {"value": None, "ts": 0.0}
+# per-bot in-memory cache so frequent enabled()/send() checks don't hit the DB
+_cache: dict = {}
 _CACHE_TTL = 20.0
+
+
+def _dbkey(bot: str) -> str:
+    return _KEYS.get(bot, _KEYS["a"])
 
 
 def _norm(d: dict) -> dict:
@@ -44,70 +52,70 @@ def _read_file() -> dict:
     return dict(_DEFAULT)
 
 
-def _load_from_db() -> dict:
+def _write_to_db(db, bot: str, cfg: dict) -> None:
+    from core.models import AppSetting
+    key = _dbkey(bot)
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if row:
+        row.value = cfg
+    else:
+        db.add(AppSetting(key=key, value=cfg))
+    db.commit()
+
+
+def _load_from_db(bot: str) -> dict:
     from core.database import get_db_session
     from core.models import AppSetting
     db = get_db_session()
     try:
-        row = db.query(AppSetting).filter(AppSetting.key == _KEY).first()
+        row = db.query(AppSetting).filter(AppSetting.key == _dbkey(bot)).first()
         if row and row.value:
             return _norm(row.value)
-        # One-time migration: if a legacy file still exists, persist it to the DB.
-        filecfg = _read_file()
-        if filecfg.get("bot_token") or filecfg.get("chat_id"):
-            _write_to_db(db, filecfg)
-            return filecfg
+        if bot == "a":       # one-time legacy-file migration for the original bot
+            filecfg = _read_file()
+            if filecfg.get("bot_token") or filecfg.get("chat_id"):
+                _write_to_db(db, "a", filecfg)
+                return filecfg
         return dict(_DEFAULT)
     except Exception as exc:
-        logger.debug("telegram DB read failed (%s) — falling back to file", exc)
-        return _read_file()
+        logger.debug("telegram DB read failed (%s)", exc)
+        return _read_file() if bot == "a" else dict(_DEFAULT)
     finally:
         db.close()
 
 
-def _write_to_db(db, cfg: dict) -> None:
-    from core.models import AppSetting
-    row = db.query(AppSetting).filter(AppSetting.key == _KEY).first()
-    if row:
-        row.value = cfg
-    else:
-        db.add(AppSetting(key=_KEY, value=cfg))
-    db.commit()
-
-
-def load_config() -> dict:
+def load_config(bot: str = "a") -> dict:
     now = _time.monotonic()
-    if _cache["value"] is not None and now - _cache["ts"] < _CACHE_TTL:
-        return dict(_cache["value"])
-    cfg = _load_from_db()
-    _cache["value"] = cfg
-    _cache["ts"] = now
+    c = _cache.get(bot)
+    if c and now - c["ts"] < _CACHE_TTL:
+        return dict(c["value"])
+    cfg = _load_from_db(bot)
+    _cache[bot] = {"value": cfg, "ts": now}
     return dict(cfg)
 
 
-def save_config(partial: dict) -> dict:
-    cfg = load_config()
+def save_config(partial: dict, bot: str = "a") -> dict:
+    cfg = load_config(bot)
     for k in ("enabled", "bot_token", "chat_id"):
         if partial and k in partial and partial[k] is not None:
             cfg[k] = bool(partial[k]) if k == "enabled" else str(partial[k])
     cfg = _norm(cfg)
-    # persist to PostgreSQL (survives redeploys); best-effort file mirror too
     from core.database import get_db_session
     db = get_db_session()
     try:
-        _write_to_db(db, cfg)
+        _write_to_db(db, bot, cfg)
     except Exception as exc:
         db.rollback()
         logger.error("telegram DB save failed: %s", exc)
     finally:
         db.close()
-    try:
-        _FILE.parent.mkdir(parents=True, exist_ok=True)
-        _FILE.write_text(json.dumps(cfg, indent=2))
-    except Exception:
-        pass
-    _cache["value"] = dict(cfg)          # refresh cache immediately
-    _cache["ts"] = _time.monotonic()
+    if bot == "a":                       # best-effort legacy file mirror (Bot A only)
+        try:
+            _FILE.parent.mkdir(parents=True, exist_ok=True)
+            _FILE.write_text(json.dumps(cfg, indent=2))
+        except Exception:
+            pass
+    _cache[bot] = {"value": dict(cfg), "ts": _time.monotonic()}
     return cfg
 
 
@@ -128,9 +136,9 @@ def _send_raw(bot_token: str, chat_id: str, text: str, timeout: float = 6.0) -> 
         return {"ok": False, "error": str(exc)}
 
 
-def send(text: str, cfg: dict | None = None) -> dict:
-    """Send using the universal config. No-op (soft) if disabled/unconfigured."""
-    cfg = cfg or load_config()
+def send(text: str, bot: str = "a", cfg: dict | None = None) -> dict:
+    """Send using the selected bot's config. No-op (soft) if disabled/unconfigured."""
+    cfg = cfg or load_config(bot)
     if not cfg.get("enabled"):
         return {"ok": False, "error": "Telegram disabled"}
     return _send_raw(cfg["bot_token"], cfg["chat_id"], text)
@@ -140,6 +148,6 @@ def test(bot_token: str, chat_id: str) -> dict:
     return _send_raw(bot_token, chat_id, "✅ <b>QuantFlux</b> — Telegram connected successfully.")
 
 
-def enabled() -> bool:
-    c = load_config()
+def enabled(bot: str = "a") -> bool:
+    c = load_config(bot)
     return bool(c["enabled"] and c["bot_token"] and c["chat_id"])

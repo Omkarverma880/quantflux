@@ -57,6 +57,9 @@ DEFAULT_CONFIG: dict = {
     "paper_trade": True,
     "auto_start": False,
     "symbols": [],                    # strategy universe (watchlist) for paper/live
+    # ── telegram (per-strategy; picks which universal bot to use) ──
+    "telegram_alerts": False,
+    "telegram_bot": "a",              # a | b  (configured in Settings → Telegram)
 }
 
 _NUM = {"target_value", "sl_value", "max_positions", "max_calls", "max_puts", "lots",
@@ -88,8 +91,11 @@ def sanitize(cfg: dict) -> dict:
     out["lots"] = max(1, int(out["lots"]))
     out["scan_interval"] = max(10, min(600, int(out["scan_interval"])))
     out["history_days"] = max(5, min(400, int(out["history_days"])))
-    for b in ("hold_to_expiry", "one_signal_per_day", "apply_costs", "paper_trade", "auto_start"):
+    for b in ("hold_to_expiry", "one_signal_per_day", "apply_costs", "paper_trade",
+              "auto_start", "telegram_alerts"):
         out[b] = bool(out[b])
+    if out["telegram_bot"] not in ("a", "b"):
+        out["telegram_bot"] = "a"
     out["symbols"] = [str(s).strip().upper() for s in (out.get("symbols") or []) if str(s).strip()]
     return out
 

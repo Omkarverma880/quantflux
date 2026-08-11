@@ -542,9 +542,9 @@ export const api = {
   fcPositions: (date) => request(`/equity-strategy/fourth-candle/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
 
   // Universal Telegram notifications (shared across the app)
-  getTelegramSettings: () => request('/settings/telegram'),
-  saveTelegramSettings: (cfg) => request('/settings/telegram', { method: 'POST', body: JSON.stringify(cfg || {}) }),
-  testTelegramSettings: (cfg) => request('/settings/telegram/test', { method: 'POST', body: JSON.stringify(cfg || {}) }),
+  getTelegramSettings: (bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`),
+  saveTelegramSettings: (cfg, bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`, { method: 'POST', body: JSON.stringify(cfg || {}) }),
+  testTelegramSettings: (cfg, bot) => request(`/settings/telegram/test${bot ? `?bot=${bot}` : ''}`, { method: 'POST', body: JSON.stringify(cfg || {}) }),
 
   // Settings
   getSettings: () => request('/settings/'),

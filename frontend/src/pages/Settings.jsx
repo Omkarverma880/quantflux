@@ -583,7 +583,8 @@ export default function Settings() {
         </div>
       </div>
 
-      <TelegramCard />
+      <TelegramCard bot="a" title="Telegram — Bot A (universal)" subtitle="Research, OPEI, live strategies" />
+      <TelegramCard bot="b" title="Telegram — Bot B" subtitle="Opt-in per strategy (e.g. 4th Candle)" />
 
       {/* Sticky Save bar (mobile-friendly) */}
       {hasDirty && (
@@ -601,20 +602,20 @@ export default function Settings() {
 
 /* ── Sub-components ─────────────────────────────── */
 
-function TelegramCard() {
+function TelegramCard({ bot = 'a', title = 'Telegram Notifications', subtitle = 'Used across the whole app' }) {
   const [tg, setTg] = useState({ enabled: false, bot_token: '', chat_id: '' });
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
-  useEffect(() => { api.getTelegramSettings().then((r) => { if (r.status === 'ok') setTg({ enabled: r.enabled, bot_token: r.bot_token || '', chat_id: r.chat_id || '' }); }).catch(() => {}); }, []);
+  useEffect(() => { api.getTelegramSettings(bot).then((r) => { if (r.status === 'ok') setTg({ enabled: r.enabled, bot_token: r.bot_token || '', chat_id: r.chat_id || '' }); }).catch(() => {}); }, [bot]);
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 2500); };
   const fail = (m) => { setErr(m); setTimeout(() => setErr(''), 5000); };
-  const save = async () => { setBusy('save'); try { const r = await api.saveTelegramSettings(tg); if (r.status === 'ok') flash('Saved'); } catch (e) { fail(e.message); } finally { setBusy(''); } };
+  const save = async () => { setBusy('save'); try { const r = await api.saveTelegramSettings(tg, bot); if (r.status === 'ok') flash('Saved'); } catch (e) { fail(e.message); } finally { setBusy(''); } };
   const test = async () => {
     setBusy('test');
     try {
-      await api.saveTelegramSettings(tg);   // persist enabled + creds first, so Test == real path
-      const r = await api.testTelegramSettings({ bot_token: tg.bot_token, chat_id: tg.chat_id });
+      await api.saveTelegramSettings(tg, bot);   // persist enabled + creds first, so Test == real path
+      const r = await api.testTelegramSettings({ bot_token: tg.bot_token, chat_id: tg.chat_id }, bot);
       if (r.ok) flash(tg.enabled ? 'Sent — notifications are ACTIVE ✅' : 'Sent — now tick "Enable" and Save to actually activate alerts');
       else fail(r.error || 'Failed');
     } catch (e) { fail(e.message); } finally { setBusy(''); }
@@ -625,11 +626,11 @@ function TelegramCard() {
     <div className="card space-y-4">
       <div className="flex items-center gap-2 pb-2 border-b border-surface-3/60">
         <Send className="w-5 h-5 text-brand-400" />
-        <h3 className="font-semibold text-white">Telegram Notifications</h3>
+        <h3 className="font-semibold text-white">{title}</h3>
         <span className={`text-[10px] px-2 py-0.5 rounded-full border ${active ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border-amber-500/30'}`}>{active ? 'ACTIVE' : 'NOT ACTIVE'}</span>
-        <span className="ml-auto text-[11px] text-gray-500">Used across the whole app</span>
+        <span className="ml-auto text-[11px] text-gray-500">{subtitle}</span>
       </div>
-      <p className="text-xs text-gray-500">Configure once here. Research live scans, live strategies and OPEI all send alerts through this bot.</p>
+      <p className="text-xs text-gray-500">Configure once here. Modules that use this bot send alerts through it.</p>
       {err && <div className="text-red-400 text-sm">{err}</div>}
       {msg && <div className="text-emerald-400 text-sm">{msg}</div>}
       <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">

@@ -40,6 +40,19 @@ export default function FourthCandle() {
   const [simDate, setSimDate] = useState('');
   const [sim, setSim] = useState(null);
   const [simLoading, setSimLoading] = useState(false);
+  const [simSugg, setSimSugg] = useState([]);
+  const [simSearching, setSimSearching] = useState(false);
+  const simTimer = useRef(null);
+  useEffect(() => {
+    if (simTimer.current) clearTimeout(simTimer.current);
+    if (!simSym || simSym.trim().length < 2) { setSimSugg([]); return; }
+    setSimSearching(true);
+    simTimer.current = setTimeout(async () => {
+      try { const r = await api.researchSymbolSearch(simSym.trim()); setSimSugg(r.status === 'ok' ? (r.results || []) : []); }
+      catch { setSimSugg([]); } finally { setSimSearching(false); }
+    }, 250);
+    return () => simTimer.current && clearTimeout(simTimer.current);
+  }, [simSym]);
 
   // strategy
   const [status, setStatus] = useState(null);
@@ -49,7 +62,7 @@ export default function FourthCandle() {
 
   useEffect(() => {
     api.fcConfig().then((r) => { if (r.status === 'ok') { setCfg(r.config); setSymbolsText((r.config.symbols || []).join(', ')); } }).catch(() => setCfg({}));
-    api.researchPMVwapEquityUniverse?.().then((r) => { if (r?.status === 'ok') setUniverse(r.universe || []); }).catch(() => {});
+    api.researchPMVwapEquityUniverse?.().then((r) => { if (r?.status === 'ok') setUniverse(r.stocks || []); }).catch(() => {});
     const t = new Date(); const y = new Date(); y.setDate(t.getDate() - 20);
     setEnd(t.toISOString().slice(0, 10)); setStart(y.toISOString().slice(0, 10));
   }, []);
@@ -166,6 +179,9 @@ export default function FourthCandle() {
             <ConfigGrid />
           </div>
 
+          {data?.note && (
+            <div className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">{data.note}</div>
+          )}
           {data && (
             <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm bg-surface-2 border border-surface-3 rounded-xl px-4 py-2.5">
               <span className="text-gray-400">Trades <strong className="text-gray-100">{data.stats.total}</strong></span>
@@ -214,9 +230,26 @@ export default function FourthCandle() {
       {tab === 'simulate' && (
         <div className="space-y-4">
           <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 flex flex-wrap items-end gap-3">
-            <div><label className={lbl}>Stock (F&O)</label><input value={simSym} onChange={(e) => setSimSym(e.target.value)} placeholder="e.g. RELIANCE" className={sel} /></div>
+            <div className="relative">
+              <label className={lbl}>Stock (search NSE/BSE)</label>
+              <div className="flex items-center gap-2 bg-surface-3 border border-surface-4 rounded-lg px-3">
+                <input value={simSym} onChange={(e) => setSimSym(e.target.value.toUpperCase())} placeholder="Type e.g. RELIANCE, BSE, TCS…" className="w-64 bg-transparent py-1.5 text-sm text-gray-200 focus:outline-none" />
+                {simSearching && <Loader2 className="w-4 h-4 animate-spin text-gray-500" />}
+              </div>
+              {simSugg.length > 0 && (
+                <div className="absolute z-20 mt-1 w-full max-h-64 overflow-auto bg-surface-2 border border-surface-3 rounded-lg shadow-2xl">
+                  {simSugg.map((s) => (
+                    <button key={`${s.symbol}:${s.exchange}`} onClick={() => { setSimSym(s.symbol); setSimSugg([]); }} className="w-full text-left px-3 py-2 hover:bg-surface-3/40 flex items-center gap-2 border-b border-surface-3/40 last:border-0">
+                      <span className="text-sm text-gray-100 font-medium">{s.symbol}</span>
+                      <span className="text-[11px] text-gray-500 ml-auto">{s.exchange}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div><label className={lbl}>Date</label><input type="date" value={simDate} onChange={(e) => setSimDate(e.target.value)} className={sel} /></div>
             <button onClick={runSimulate} disabled={simLoading} className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50">{simLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CandlestickChart className="w-4 h-4" />} Simulate</button>
+            <span className="text-[11px] text-gray-600">Note: options-based — the stock must be F&O for a trade to simulate.</span>
           </div>
           {sim && <SimulateView sim={sim} />}
           {!sim && !simLoading && <div className="bg-surface-2 border border-surface-3 rounded-xl p-10 text-center text-gray-500 text-sm">Pick a stock &amp; date to see the first-3-candle colours, the 4th-candle lines, the breakout, and the resulting trade with max profit/loss & MTM.</div>}
@@ -241,6 +274,13 @@ export default function FourthCandle() {
             <div><label className={lbl}>Watchlist (comma / space separated F&O stocks)</label>
               <textarea value={symbolsText} onChange={(e) => setSymbolsText(e.target.value)} rows={2} placeholder="RELIANCE, TCS, HDFCBANK, INFY …" className={`w-full ${sel}`} /></div>
             <ConfigGrid />
+            <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-surface-3">
+              <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" checked={cfg.telegram_alerts} onChange={(e) => patch('telegram_alerts', e.target.checked)} className="accent-brand-500" /> Telegram alerts</label>
+              <div className="flex items-center gap-2 text-xs text-gray-400">Bot
+                <select value={cfg.telegram_bot || 'a'} onChange={(e) => patch('telegram_bot', e.target.value)} className={`${sel} py-1`}><option value="a">Bot A</option><option value="b">Bot B</option></select>
+              </div>
+              <span className="text-[11px] text-gray-600">Configure bots in Settings → Telegram, then Save to apply. Alerts fire on each entry/exit.</span>
+            </div>
             {!cfg.paper_trade && <p className="text-[11px] text-amber-400">⚠ REAL mode also needs global PAPER_TRADE=False + TRADING_ENABLED=True. Orders are {cfg.product} (positional).</p>}
           </div>
 

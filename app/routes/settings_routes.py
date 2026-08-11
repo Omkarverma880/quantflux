@@ -114,28 +114,31 @@ class TelegramConfig(BaseModel):
     chat_id: str | None = None
 
 
+def _bot(b) -> str:
+    return "b" if str(b or "a").lower() == "b" else "a"
+
+
 @router.get("/telegram")
-async def get_telegram(user_id: int = Depends(login_required)):
+async def get_telegram(bot: str = "a", user_id: int = Depends(login_required)):
     from core import notify
-    cfg = notify.load_config()
-    # Mask the token in the response (keep last 6 chars) for safety.
+    cfg = notify.load_config(_bot(bot))
     tok = cfg.get("bot_token") or ""
-    return {"status": "ok", "enabled": cfg["enabled"],
+    return {"status": "ok", "bot": _bot(bot), "enabled": cfg["enabled"],
             "bot_token": tok, "chat_id": cfg["chat_id"], "configured": bool(tok and cfg["chat_id"])}
 
 
 @router.post("/telegram")
-async def save_telegram(payload: TelegramConfig, user_id: int = Depends(login_required)):
+async def save_telegram(payload: TelegramConfig, bot: str = "a", user_id: int = Depends(login_required)):
     from core import notify
-    cfg = notify.save_config(payload.model_dump(exclude_none=True))
-    return {"status": "ok", "enabled": cfg["enabled"], "chat_id": cfg["chat_id"],
+    cfg = notify.save_config(payload.model_dump(exclude_none=True), _bot(bot))
+    return {"status": "ok", "bot": _bot(bot), "enabled": cfg["enabled"], "chat_id": cfg["chat_id"],
             "configured": bool(cfg["bot_token"] and cfg["chat_id"])}
 
 
 @router.post("/telegram/test")
-async def test_telegram(payload: TelegramConfig | None = None, user_id: int = Depends(login_required)):
+async def test_telegram(payload: TelegramConfig | None = None, bot: str = "a",
+                        user_id: int = Depends(login_required)):
     from core import notify
     p = payload.model_dump(exclude_none=True) if payload else {}
-    # test with provided creds, else the saved ones
-    saved = notify.load_config()
+    saved = notify.load_config(_bot(bot))
     return notify.test(p.get("bot_token") or saved["bot_token"], p.get("chat_id") or saved["chat_id"])

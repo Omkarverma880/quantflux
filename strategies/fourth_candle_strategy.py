@@ -177,6 +177,13 @@ class FourthCandleStrategy:
             self._entered_today.add(sym)
             logger.info("4th-candle ENTER %s %s %s qty=%d @ %.2f (paper=%s)", sym, side,
                         opt["tradingsymbol"], qty, ltp, self.cfg["paper_trade"])
+            self._notify(
+                f"🟢 <b>4th-CANDLE {'PAPER' if self.cfg['paper_trade'] else 'LIVE'}</b>\n\n"
+                f"Stock: <b>{sym}</b>  ·  {'CALL' if side == 'CE' else 'PUT'}\n"
+                f"Order: BUY {qty} {opt['tradingsymbol']} ({self.cfg['product']})\n"
+                f"Entry: ₹{round(ltp, 2)}  ·  Target ₹{target}  ·  SL ₹{stop}\n"
+                f"Trigger: broke 4th-candle {'high' if side == 'CE' else 'low'}\n"
+                f"Time: {now.strftime('%H:%M')}")
         except Exception as exc:
             db.rollback()
             logger.error("4th-candle position save failed: %s", exc)
@@ -220,12 +227,30 @@ class FourthCandleStrategy:
                     row.exit_time = now.strftime("%H:%M:%S")
                     row.hold_days = (now.date() - row.trade_date).days
                     logger.info("4th-candle EXIT %s %s @ %.2f mtm=%.2f", row.symbol, reason, ltp, mtm)
+                    emoji = {"TARGET": "🎯", "STOP": "🛑"}.get(reason, "⚪")
+                    self._notify(
+                        f"{emoji} <b>4th-CANDLE EXIT</b> · {'PAPER' if row.paper else 'LIVE'}\n\n"
+                        f"Stock: <b>{row.underlying}</b> ({row.opt_type})\n"
+                        f"Exit: ₹{round(ltp, 2)} ({reason})  ·  Entry ₹{float(row.entry_price)}\n"
+                        f"P&L: ₹{mtm}")
             db.commit()
         except Exception as exc:
             db.rollback()
             logger.error("4th-candle manage failed: %s", exc)
         finally:
             db.close()
+
+    # ── telegram (uses the selected universal bot) ──
+    def _notify(self, text: str):
+        if not self.cfg.get("telegram_alerts"):
+            return
+        try:
+            from core import notify
+            bot = self.cfg.get("telegram_bot", "a")
+            if notify.enabled(bot):
+                notify.send(text, bot=bot)
+        except Exception as exc:
+            logger.debug("4th-candle notify failed: %s", exc)
 
     # ── broker helpers (paper short-circuits) ──
     def _place(self, tradingsymbol, qty, side, ref_price) -> bool:

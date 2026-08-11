@@ -199,8 +199,14 @@ class FourthCandleResearch:
             else:
                 names = [x["name"] for x in self.universe.equities()]
                 mode = "multi"
-            if int(cfg["max_stocks"]) > 0:
-                names = names[: int(cfg["max_stocks"])]
+            # 5-min backtests are heavy — cap the multi (All F&O) universe so the
+            # request completes instead of hanging. Single/watchlist are uncapped
+            # unless the user sets Max Stocks.
+            total = len(names)
+            cap = int(cfg["max_stocks"]) or (40 if mode == "multi" else 0)
+            truncated = bool(cap and total > cap)
+            if cap:
+                names = names[:cap]
             rows, t0, scanned = [], _time.monotonic(), 0
             for nm in names:
                 try:
@@ -209,13 +215,16 @@ class FourthCandleResearch:
                     logger.warning("backtest_stock %s failed: %s", nm, exc)
                 scanned += 1
             rows.sort(key=lambda r: (r["date"], r.get("breakout_time") or "", r["underlying"]))
+            note = (f"Showing first {len(names)} of {total} F&O stocks — 5-min backtests are heavy. "
+                    "Use Single Stock / a Watchlist, or set Max Stocks, for more." if truncated else None)
             return {"status": "ok", "mode": mode, "start": s.isoformat(), "end": e.isoformat(),
-                    "stocks_scanned": scanned, "config": cfg, "stats": self._stats(rows),
+                    "stocks_scanned": scanned, "universe_size": total, "truncated": truncated,
+                    "note": note, "config": cfg, "stats": self._stats(rows),
                     "rows": rows, "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
-    # ── detailed single-stock simulate ──
+    # ── detailed single-stock simulate (lock-free: never block on a running backtest) ──
     def simulate(self, symbol: str, overrides=None, day: Optional[str] = None) -> dict:
-        with self._lock:
+        if True:
             cfg = sanitize({**self.load_config(), **(overrides or {})})
             name = symbol.strip().upper()
             try:
