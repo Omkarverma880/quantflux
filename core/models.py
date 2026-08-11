@@ -632,3 +632,45 @@ class AppSetting(Base):
     value = Column(JSONB, default=dict)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                         onupdate=lambda: datetime.now(timezone.utc))
+
+
+class FourthCandlePosition(Base):
+    """Paper/live position for the 4th-Candle Strategy (Equity Strategy #2).
+
+    Buys an ATM CE/PE of an F&O stock on a 4th-candle breakout; positional (NRML)
+    with target/SL on the option premium. Real orders only when paper_trade is
+    off AND the global trading gate is on. Auto-created via ``create_all``.
+    """
+    __tablename__ = "fourth_candle_positions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    trade_date = Column(Date, nullable=False)
+    underlying = Column(String(40))
+    opt_type = Column(String(2))            # CE | PE
+    symbol = Column(String(100))
+    strike = Column(Numeric(12, 2))
+    expiry = Column(String(12))
+    token = Column(Integer)
+    qty = Column(Integer)
+    lot = Column(Integer)
+    entry_price = Column(Numeric(12, 2))
+    entry_time = Column(String(12))
+    target = Column(Numeric(12, 2))
+    sl = Column(Numeric(12, 2))
+    ltp = Column(Numeric(12, 2))
+    mtm = Column(Numeric(14, 2), default=0)
+    mfe = Column(Numeric(14, 2), default=0)         # max profit
+    mae = Column(Numeric(14, 2), default=0)         # max loss
+    status = Column(String(12), default="OPEN")     # OPEN | TARGET | STOP | SQUAREOFF
+    exit_price = Column(Numeric(12, 2))
+    exit_time = Column(String(12))
+    exit_reason = Column(String(12))
+    product = Column(String(8), default="NRML")
+    paper = Column(Boolean, default=True)
+    hold_days = Column(Integer)
+
+    __table_args__ = (
+        Index("idx_fourthc_user_date", "user_id", "trade_date"),
+    )

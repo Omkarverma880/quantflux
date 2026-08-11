@@ -530,6 +530,17 @@ export const api = {
   eqHoldCheck: () => request('/equity-strategy/pmvwap-holding/check', { method: 'POST' }),
   eqHoldReset: () => request('/equity-strategy/pmvwap-holding/reset', { method: 'POST' }),
 
+  // Equity Strategy 2 — 4th Candle
+  fcBacktest: (body) => request('/equity-strategy/fourth-candle/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
+  fcSimulate: (body) => request('/equity-strategy/fourth-candle/simulate', { method: 'POST', body: JSON.stringify(body) }),
+  fcConfig: () => request('/equity-strategy/fourth-candle/config'),
+  fcConfigSave: (partial) => request('/equity-strategy/fourth-candle/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+  fcStatus: () => request('/equity-strategy/fourth-candle/status'),
+  fcStart: (config) => request('/equity-strategy/fourth-candle/start', { method: 'POST', body: JSON.stringify({ config: config || {} }) }),
+  fcStop: () => request('/equity-strategy/fourth-candle/stop', { method: 'POST' }),
+  fcUpdateConfig: (config) => request('/equity-strategy/fourth-candle/config', { method: 'PUT', body: JSON.stringify({ config: config || {} }) }),
+  fcPositions: (date) => request(`/equity-strategy/fourth-candle/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+
   // Universal Telegram notifications (shared across the app)
   getTelegramSettings: () => request('/settings/telegram'),
   saveTelegramSettings: (cfg) => request('/settings/telegram', { method: 'POST', body: JSON.stringify(cfg || {}) }),
