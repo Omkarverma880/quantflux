@@ -350,9 +350,88 @@ export default function FourthCandle() {
   );
 }
 
+const GREEN = '#10b981';
+const RED = '#ef4444';
+
+// Hand-rolled SVG candlestick chart (TradingView-lite) — draws the day's 5-min
+// candles, the 4th-candle high/low reference lines, and marks the breakout candle.
+function CandleChart({ timeline, fourthHigh, fourthLow, breakoutHHMM, exitHHMM, bias }) {
+  const n = (timeline || []).length;
+  if (!n) return null;
+  const step = 16, cw = 9, padL = 6, padR = 66, padT = 14, padB = 26, plotH = 340;
+  const width = padL + n * step + padR;
+  const height = padT + plotH + padB;
+  let lo = Math.min(fourthLow ?? Infinity, ...timeline.map((c) => c.low));
+  let hi = Math.max(fourthHigh ?? -Infinity, ...timeline.map((c) => c.high));
+  const pad = (hi - lo) * 0.04 || 1;
+  lo -= pad; hi += pad;
+  const y = (p) => padT + (hi - p) / (hi - lo) * plotH;
+  const xc = (i) => padL + i * step + step / 2;
+  const ticks = Array.from({ length: 5 }, (_, k) => lo + (hi - lo) * k / 4);
+  const boIdx = timeline.findIndex((c) => c.time === breakoutHHMM);
+  const exIdx = exitHHMM ? timeline.findIndex((c) => c.time === exitHHMM) : -1;
+  const biasColor = bias === 'call' ? GREEN : bias === 'put' ? RED : '#9ca3af';
+  return (
+    <div className="overflow-x-auto">
+      <svg width={width} height={height} className="block" style={{ minWidth: '100%' }}>
+        {/* price gridlines + labels */}
+        {ticks.map((p, k) => (
+          <g key={k}>
+            <line x1={padL} x2={padL + n * step} y1={y(p)} y2={y(p)} stroke="#ffffff10" />
+            <text x={padL + n * step + 6} y={y(p) + 3} fontSize="10" fill="#6b7280">{NUM(p, 1)}</text>
+          </g>
+        ))}
+        {/* 4th-candle high line */}
+        <line x1={padL} x2={padL + n * step} y1={y(fourthHigh)} y2={y(fourthHigh)} stroke={RED} strokeWidth="1.2" strokeDasharray="5 3" />
+        <rect x={padL + n * step + 2} y={y(fourthHigh) - 8} width={62} height={15} rx={3} fill={RED} />
+        <text x={padL + n * step + 6} y={y(fourthHigh) + 3} fontSize="9.5" fill="#fff" fontWeight="600">H {NUM(fourthHigh, 1)}</text>
+        {/* 4th-candle low line */}
+        <line x1={padL} x2={padL + n * step} y1={y(fourthLow)} y2={y(fourthLow)} stroke={GREEN} strokeWidth="1.2" strokeDasharray="5 3" />
+        <rect x={padL + n * step + 2} y={y(fourthLow) - 8} width={62} height={15} rx={3} fill={GREEN} />
+        <text x={padL + n * step + 6} y={y(fourthLow) + 3} fontSize="9.5" fill="#052e1b" fontWeight="600">L {NUM(fourthLow, 1)}</text>
+        {/* 4th-candle column highlight */}
+        <rect x={xc(3) - step / 2} y={padT} width={step} height={plotH} fill="#3b82f611" />
+        {/* breakout marker */}
+        {boIdx >= 0 && (
+          <g>
+            <line x1={xc(boIdx)} x2={xc(boIdx)} y1={padT} y2={padT + plotH} stroke={biasColor} strokeWidth="1" strokeDasharray="3 3" opacity="0.7" />
+            <polygon points={`${xc(boIdx) - 5},${padT + plotH + 2} ${xc(boIdx) + 5},${padT + plotH + 2} ${xc(boIdx)},${padT + plotH - 6}`} fill={biasColor} />
+          </g>
+        )}
+        {/* exit marker */}
+        {exIdx >= 0 && (
+          <line x1={xc(exIdx)} x2={xc(exIdx)} y1={padT} y2={padT + plotH} stroke="#f59e0b" strokeWidth="1" strokeDasharray="2 4" opacity="0.7" />
+        )}
+        {/* candles */}
+        {timeline.map((c, i) => {
+          const up = c.close >= c.open;
+          const col = c.color === 'green' ? GREEN : c.color === 'red' ? RED : '#9ca3af';
+          const yO = y(c.open), yC = y(c.close);
+          const top = Math.min(yO, yC);
+          const h = Math.max(Math.abs(yO - yC), 1);
+          return (
+            <g key={i}>
+              <line x1={xc(i)} x2={xc(i)} y1={y(c.high)} y2={y(c.low)} stroke={col} strokeWidth="1" />
+              <rect x={xc(i) - cw / 2} y={top} width={cw} height={h} fill={col} rx={0.5} />
+              <rect x={xc(i) - step / 2} y={padT} width={step} height={plotH} fill="transparent">
+                <title>{`${c.time}  O ${NUM(c.open)}  H ${NUM(c.high)}  L ${NUM(c.low)}  C ${NUM(c.close)}`}</title>
+              </rect>
+              {i % 6 === 0 && <text x={xc(i)} y={height - 8} fontSize="9" fill="#6b7280" textAnchor="middle">{c.time}</text>}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 function SimulateView({ sim }) {
+  const [showTable, setShowTable] = useState(false);
   const an = sim.analysis;
   const t = sim.trade;
+  const hhmm = (s) => (s ? String(s).slice(-5) : null);   // "11-Aug 09:35" → "09:35"
+  const boHHMM = hhmm(t?.breakout_time);
+  const exHHMM = hhmm(t?.exit_time);
   return (
     <div className="space-y-4">
       <div className="bg-surface-2 border border-surface-3 rounded-xl p-4">
@@ -367,39 +446,59 @@ function SimulateView({ sim }) {
         </div>
       </div>
 
+      {/* candlestick chart */}
+      {an && (
+        <div className="bg-surface-2 border border-surface-3 rounded-xl p-3">
+          <div className="flex items-center justify-between mb-2 px-1">
+            <div className="text-sm font-semibold text-gray-200">{sim.symbol} · 5m</div>
+            <div className="flex items-center gap-4 text-[11px]">
+              <span className="flex items-center gap-1 text-gray-400"><span className="inline-block w-3 border-t border-dashed" style={{ borderColor: RED }} /> 4th High {NUM(an.fourth_high, 1)}</span>
+              <span className="flex items-center gap-1 text-gray-400"><span className="inline-block w-3 border-t border-dashed" style={{ borderColor: GREEN }} /> 4th Low {NUM(an.fourth_low, 1)}</span>
+              {boHHMM && <span className="text-gray-400">▲ Breakout <strong className={an.bias === 'call' ? 'text-emerald-400' : 'text-red-400'}>{boHHMM}</strong></span>}
+            </div>
+          </div>
+          <CandleChart timeline={sim.timeline} fourthHigh={an.fourth_high} fourthLow={an.fourth_low}
+                       breakoutHHMM={boHHMM} exitHHMM={exHHMM} bias={an.bias} />
+        </div>
+      )}
+
       {t && t.opt_type && (
         <div className="bg-surface-2 border border-surface-3 rounded-xl p-4">
           <div className="text-sm font-semibold text-gray-200 mb-2">Trade</div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-y-2 text-sm">
-            <span className="text-gray-500">Signal</span><span className="text-right"><OptBadge t={t.opt_type} /></span>
-            <span className="text-gray-500">Breakout</span><span className="text-right text-gray-200">{t.breakout_time}</span>
+            <span className="text-gray-500">Signal</span><span className="text-right"><OptBadge t={t.opt_type} /> <span className="text-gray-500">@ {t.breakout_time}</span></span>
             <span className="text-gray-500">Option</span><span className="text-right text-gray-300">{t.symbol}</span>
             <span className="text-gray-500">Entry</span><span className="text-right text-gray-100">₹{NUM(t.entry)}</span>
             <span className="text-gray-500">Target / SL</span><span className="text-right"><span className="text-emerald-400">₹{NUM(t.target)}</span> / <span className="text-red-400">₹{NUM(t.sl)}</span></span>
-            <span className="text-gray-500">Exit</span><span className="text-right text-gray-200">{t.exit == null ? '—' : `₹${NUM(t.exit)}`} <span className={stColor(t.exit_reason)}>({t.exit_reason})</span></span>
+            <span className="text-gray-500">Exit</span><span className="text-right text-gray-200">{t.exit == null ? '—' : `₹${NUM(t.exit)}`} <span className={stColor(t.exit_reason)}>({t.exit_reason})</span>{t.exit_time ? <span className="text-gray-500"> @ {t.exit_time}</span> : null}</span>
+            <span className="text-gray-500">Hold</span><span className="text-right text-gray-300">{t.hold_label ?? (t.open ? 'open' : '—')}</span>
             <span className="text-gray-500">MTM</span><span className={`text-right font-semibold ${t.mtm >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>₹{NUM(t.mtm, 0)}</span>
             <span className="text-gray-500">Max Profit / Loss</span><span className="text-right"><span className="text-emerald-400">₹{NUM(t.max_profit, 0)}</span> / <span className="text-red-400">₹{NUM(t.max_loss, 0)}</span></span>
           </div>
         </div>
       )}
-      {(!t || !t.opt_type) && <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 text-sm text-gray-400">{an && !an.bias ? 'No trade — first 3 candles were mixed.' : 'No breakout of the 4th-candle level during the day.'}</div>}
+      {(!t || !t.opt_type) && <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 text-sm text-gray-400">{t?.status === 'NO OPTION DATA' ? `Breakout at ${boHHMM} but no option price — ${t.notes}` : an && !an.bias ? 'No trade — first 3 candles were mixed.' : 'No breakout of the 4th-candle level during the day.'}</div>}
 
       <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
-        <div className="px-3 py-2 border-b border-surface-3 text-sm font-semibold text-gray-200">5-min candles</div>
-        <div className="overflow-x-auto max-h-[360px]"><table className="w-full text-xs whitespace-nowrap">
-          <thead className="bg-surface-3 text-gray-400 sticky top-0"><tr>{['#', 'Time', 'Open', 'High', 'Low', 'Close', 'Color'].map((h) => <th key={h} className="px-2.5 py-1.5 text-right first:text-left font-semibold">{h}</th>)}</tr></thead>
-          <tbody>{(sim.timeline || []).map((c, i) => (
-            <tr key={i} className={`border-t border-surface-3/30 ${i === 3 ? 'bg-brand-600/10' : ''}`}>
-              <td className="px-2.5 py-1 text-left text-gray-500">{i + 1}{i === 3 ? ' ◄4th' : i < 3 ? '' : ''}</td>
-              <td className="px-2.5 py-1 text-left text-gray-300">{c.time}</td>
-              <td className="px-2.5 py-1 text-right text-gray-400">{NUM(c.open)}</td>
-              <td className="px-2.5 py-1 text-right text-gray-400">{NUM(c.high)}</td>
-              <td className="px-2.5 py-1 text-right text-gray-400">{NUM(c.low)}</td>
-              <td className="px-2.5 py-1 text-right text-gray-200">{NUM(c.close)}</td>
-              <td className={`px-2.5 py-1 text-right font-semibold ${c.color === 'green' ? 'text-emerald-400' : c.color === 'red' ? 'text-red-400' : 'text-gray-500'}`}>{c.color}</td>
-            </tr>
-          ))}</tbody>
-        </table></div>
+        <button onClick={() => setShowTable((v) => !v)} className="w-full px-3 py-2 flex items-center justify-between text-sm font-semibold text-gray-300 hover:text-white">
+          <span>5-min candle table</span><span className="text-xs text-gray-500">{showTable ? 'Hide ▲' : 'Show ▼'}</span>
+        </button>
+        {showTable && (
+          <div className="overflow-x-auto max-h-[360px] border-t border-surface-3"><table className="w-full text-xs whitespace-nowrap">
+            <thead className="bg-surface-3 text-gray-400 sticky top-0"><tr>{['#', 'Time', 'Open', 'High', 'Low', 'Close', 'Color'].map((h) => <th key={h} className="px-2.5 py-1.5 text-right first:text-left font-semibold">{h}</th>)}</tr></thead>
+            <tbody>{(sim.timeline || []).map((c, i) => (
+              <tr key={i} className={`border-t border-surface-3/30 ${i === 3 ? 'bg-brand-600/10' : ''} ${c.time === boHHMM ? 'bg-emerald-600/10' : ''}`}>
+                <td className="px-2.5 py-1 text-left text-gray-500">{i + 1}{i === 3 ? ' ◄4th' : ''}{c.time === boHHMM ? ' ◄break' : ''}</td>
+                <td className="px-2.5 py-1 text-left text-gray-300">{c.time}</td>
+                <td className="px-2.5 py-1 text-right text-gray-400">{NUM(c.open)}</td>
+                <td className="px-2.5 py-1 text-right text-gray-400">{NUM(c.high)}</td>
+                <td className="px-2.5 py-1 text-right text-gray-400">{NUM(c.low)}</td>
+                <td className="px-2.5 py-1 text-right text-gray-200">{NUM(c.close)}</td>
+                <td className={`px-2.5 py-1 text-right font-semibold ${c.color === 'green' ? 'text-emerald-400' : c.color === 'red' ? 'text-red-400' : 'text-gray-500'}`}>{c.color}</td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        )}
       </div>
     </div>
   );
