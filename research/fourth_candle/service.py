@@ -49,12 +49,20 @@ class FourthCandleResearch:
         return save_config(partial)
 
     # ── candle fetch ──
+    @staticmethod
+    def _fetch_window(end: date):
+        """(to, is_today). Kite's historical API returns nothing when to_date is in
+        the future, so for the current day clamp `to` to now (not 15:30)."""
+        now = datetime.now()
+        eod = datetime.combine(end, MARKET_CLOSE)
+        return (min(eod, now), end >= now.date())
+
     def _underlying_5m(self, token: int, start: date, end: date) -> list[dict]:
         key = (token, start, end)
-        if key in self._ul_cache:
+        to, is_today = self._fetch_window(end)
+        if not is_today and key in self._ul_cache:   # today is still forming — don't reuse
             return self._ul_cache[key]
         frm = datetime.combine(start, MARKET_OPEN)
-        to = datetime.combine(end, MARKET_CLOSE)
         try:
             raw = self.broker.get_historical_data(token, frm, to, TIMEFRAME) or []
         except Exception as exc:
@@ -62,15 +70,16 @@ class FourthCandleResearch:
             raw = []
         for c in raw:
             c["_dt"] = _candle_dt(c)
-        self._ul_cache[key] = raw
+        if not is_today:
+            self._ul_cache[key] = raw
         return raw
 
     def _option_ohlc(self, token: int, start: date, end: date) -> dict:
         key = (token, start, end)
-        if key in self._opt_cache:
+        to, is_today = self._fetch_window(end)
+        if not is_today and key in self._opt_cache:
             return self._opt_cache[key]
         frm = datetime.combine(start, MARKET_OPEN)
-        to = datetime.combine(end, MARKET_CLOSE)
         series = {}
         try:
             for c in self.broker.get_historical_data(token, frm, to, TIMEFRAME) or []:
@@ -80,7 +89,8 @@ class FourthCandleResearch:
                                   float(c.get("low", 0) or 0))
         except Exception as exc:
             logger.warning("option ohlc failed (%s): %s", token, exc)
-        self._opt_cache[key] = series
+        if not is_today:
+            self._opt_cache[key] = series
         return series
 
     # ── one stock/day → a trade row (or None) ──

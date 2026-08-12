@@ -68,11 +68,30 @@ export default function FourthCandle() {
   const [status, setStatus] = useState(null);
   const [symbolsText, setSymbolsText] = useState('');
   const [positions, setPositions] = useState([]);
+  const [savedWls, setSavedWls] = useState([]);
   const pollRef = useRef(null);
+
+  const loadWlIntoSymbols = async (id, { append = false } = {}) => {
+    if (!id) return;
+    try {
+      const r = await api.researchWatchlistGet(id);
+      if (r.status === 'ok') {
+        const syms = r.watchlist.symbols || [];
+        setSymbolsText((prev) => {
+          if (!append) return syms.join(', ');
+          const have = new Set(prev.split(/[\s,;\n]+/).map((s) => s.trim().toUpperCase()).filter(Boolean));
+          syms.forEach((s) => have.add(String(s).toUpperCase()));
+          return [...have].join(', ');
+        });
+        flash(`Loaded ${syms.length} stocks`);
+      }
+    } catch { /* ignore */ }
+  };
 
   useEffect(() => {
     api.fcConfig().then((r) => { if (r.status === 'ok') { setCfg(r.config); setSymbolsText((r.config.symbols || []).join(', ')); } }).catch(() => setCfg({}));
     api.researchPMVwapEquityUniverse?.().then((r) => { if (r?.status === 'ok') setUniverse(r.stocks || []); }).catch(() => {});
+    api.researchWatchlists?.().then((r) => { if (r?.status === 'ok') setSavedWls(r.watchlists || []); }).catch(() => {});
     const t = new Date(); const y = new Date(); y.setDate(t.getDate() - 20);
     setEnd(t.toISOString().slice(0, 10)); setStart(y.toISOString().slice(0, 10));
   }, []);
@@ -130,6 +149,18 @@ export default function FourthCandle() {
     const lines = [cols.join(',')].concat(rows.map((r) => cols.map((c) => esc(r[c])).join(',')));
     const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '4th_candle_backtest.csv'; a.click();
+  };
+
+  const downloadPositionsCSV = () => {
+    if (!positions.length) return;
+    const cols = ['date', 'underlying', 'opt_type', 'symbol', 'strike', 'qty', 'lot', 'entry_time', 'entry_price', 'target', 'sl', 'ltp', 'mtm', 'mfe', 'mae', 'status', 'exit_time', 'exit_price', 'exit_reason', 'product', 'paper', 'hold_days'];
+    const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const lines = [cols.join(',')].concat(positions.map((r) => cols.map((c) => esc(r[c])).join(',')));
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+    const mode = positions.every((p) => p.paper) ? 'paper' : positions.some((p) => p.paper) ? 'mixed' : 'live';
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `4th_candle_positions_${mode}_${stamp}.csv`; a.click();
   };
 
   if (!cfg) return <div className="p-6 text-gray-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>;
@@ -212,7 +243,7 @@ export default function FourthCandle() {
           {data && (
             <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
               <div className="overflow-x-auto"><table className="w-full text-xs whitespace-nowrap">
-                <thead className="bg-surface-3 text-gray-300"><tr>{['Date', 'Stock', 'Bias', '4th High', '4th Low', 'Breakout', 'Opt', 'Symbol', 'Strike', 'Lot', 'Qty', 'Entry', 'Target', 'SL', 'Exit', 'Reason', 'MTM', 'Max Profit', 'Max Loss', 'Hold'].map((h) => <th key={h} className="px-2.5 py-2 font-semibold text-right first:text-left">{h}</th>)}</tr></thead>
+                <thead className="bg-surface-3 text-gray-300"><tr>{['Date', 'Stock', 'Bias', '4th High', '4th Low', 'Breakout', 'Opt', 'Symbol', 'Strike', 'Qty', 'Entry', 'Target', 'SL', 'Exit', 'Reason', 'MTM', 'Max Profit', 'Max Loss', 'Hold'].map((h) => <th key={h} className="px-2.5 py-2 font-semibold text-right first:text-left">{h}</th>)}</tr></thead>
                 <tbody>{rows.map((r, i) => (r.qty ? (
                   <tr key={i} className="border-t border-surface-3/40 hover:bg-surface-3/10">
                     <td className="px-2.5 py-1.5 text-left text-gray-400">{r.date}</td>
@@ -224,7 +255,6 @@ export default function FourthCandle() {
                     <td className="px-2.5 py-1.5 text-right"><OptBadge t={r.opt_type} /></td>
                     <td className="px-2.5 py-1.5 text-right text-gray-500">{r.symbol}</td>
                     <td className="px-2.5 py-1.5 text-right text-gray-300">{INT(r.strike)}</td>
-                    <td className="px-2.5 py-1.5 text-right text-gray-400">{INT(r.lot)}</td>
                     <td className="px-2.5 py-1.5 text-right text-gray-200 font-medium">{INT(r.qty)}</td>
                     <td className="px-2.5 py-1.5 text-right text-gray-200">₹{NUM(r.entry)}</td>
                     <td className="px-2.5 py-1.5 text-right text-emerald-400">₹{NUM(r.target)}</td>
@@ -245,10 +275,10 @@ export default function FourthCandle() {
                     <td className="px-2.5 py-1.5 text-right">{NUM(r.fourth_low)}</td>
                     <td className="px-2.5 py-1.5 text-right">{r.breakout_time || '—'}</td>
                     <td className="px-2.5 py-1.5 text-right"><OptBadge t={r.opt_type} /></td>
-                    <td className="px-2.5 py-1.5 text-left text-amber-400/80 italic" colSpan={13}>{r.status} — {r.notes}</td>
+                    <td className="px-2.5 py-1.5 text-left text-amber-400/80 italic" colSpan={12}>{r.status} — {r.notes}</td>
                   </tr>
                 )))}
-                {!rows.length && <tr><td colSpan={20} className="px-4 py-8 text-center text-gray-500">No breakout trades in range.{!showNonTrades && ' Tick “Show non-trade days” to see why stocks were skipped.'}</td></tr>}
+                {!rows.length && <tr><td colSpan={19} className="px-4 py-8 text-center text-gray-500">No breakout trades in range.{!showNonTrades && ' Tick “Show non-trade days” to see why stocks were skipped.'}</td></tr>}
                 </tbody>
               </table></div>
             </div>
@@ -300,8 +330,26 @@ export default function FourthCandle() {
                 <button onClick={() => { loadStatus(); loadPositions(); }} className="text-gray-400 hover:text-white"><RefreshCw className="w-4 h-4" /></button>
               </div>
             </div>
-            <div><label className={lbl}>Watchlist (comma / space separated F&O stocks)</label>
-              <textarea value={symbolsText} onChange={(e) => setSymbolsText(e.target.value)} rows={2} placeholder="RELIANCE, TCS, HDFCBANK, INFY …" className={`w-full ${sel}`} /></div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <label className={`${lbl} !mb-0`}>Watchlist (F&O stocks the strategy trades)</label>
+                {savedWls.length > 0 && (
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <select defaultValue="" onChange={(e) => { loadWlIntoSymbols(e.target.value); e.target.value = ''; }} className={`${sel} py-1 text-xs`}>
+                      <option value="">Load saved watchlist…</option>
+                      {savedWls.map((w) => <option key={w.id} value={w.id}>{w.name} ({w.count})</option>)}
+                    </select>
+                    <select defaultValue="" onChange={(e) => { loadWlIntoSymbols(e.target.value, { append: true }); e.target.value = ''; }} className={`${sel} py-1 text-xs`}>
+                      <option value="">+ Add from…</option>
+                      {savedWls.map((w) => <option key={w.id} value={w.id}>{w.name} ({w.count})</option>)}
+                    </select>
+                    <button onClick={() => setSymbolsText('')} className="text-xs px-2 py-1 rounded-lg border bg-surface-3 text-gray-400 border-surface-4 hover:text-white">Clear</button>
+                  </div>
+                )}
+              </div>
+              <textarea value={symbolsText} onChange={(e) => setSymbolsText(e.target.value)} rows={2} placeholder="RELIANCE, TCS, HDFCBANK, INFY …  (or load a saved watchlist above)" className={`w-full ${sel}`} />
+              <div className="text-[11px] text-gray-600 mt-0.5">{symbolsText.split(/[\s,;\n]+/).filter(Boolean).length} stocks · manage lists in Backtest → My Watchlist → Manage</div>
+            </div>
             {ConfigGrid()}
             <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-surface-3">
               <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" checked={cfg.telegram_alerts} onChange={(e) => patch('telegram_alerts', e.target.checked)} className="accent-brand-500" /> Telegram alerts</label>
@@ -313,8 +361,28 @@ export default function FourthCandle() {
             {!cfg.paper_trade && <p className="text-[11px] text-amber-400">⚠ REAL mode also needs global PAPER_TRADE=False + TRADING_ENABLED=True. Orders are {cfg.product} (positional).</p>}
           </div>
 
+          {positions.length > 0 && (() => {
+            const s = positions.reduce((a, p) => {
+              a.mtm += p.mtm || 0; a.mfe += p.mfe || 0; a.mae += p.mae || 0;
+              if (p.status === 'OPEN') a.open += 1; else { a.closed += 1; a.realized += p.mtm || 0; }
+              return a;
+            }, { mtm: 0, mfe: 0, mae: 0, open: 0, closed: 0, realized: 0 });
+            return (
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm bg-surface-2 border border-surface-3 rounded-xl px-4 py-2.5">
+                <span className="text-gray-400">Positions <strong className="text-gray-100">{positions.length}</strong> <span className="text-gray-600">({s.open} open · {s.closed} closed)</span></span>
+                <span className="text-gray-400">Total MTM <strong className={s.mtm >= 0 ? 'text-emerald-400' : 'text-red-400'}>₹{NUM(s.mtm, 0)}</strong></span>
+                <span className="text-gray-400">Realized <strong className={s.realized >= 0 ? 'text-emerald-400' : 'text-red-400'}>₹{NUM(s.realized, 0)}</strong></span>
+                <span className="text-gray-400">Σ Max Profit <strong className="text-emerald-400">₹{NUM(s.mfe, 0)}</strong></span>
+                <span className="text-gray-400">Σ Max Loss <strong className="text-red-400">₹{NUM(s.mae, 0)}</strong></span>
+              </div>
+            );
+          })()}
+
           <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 border-b border-surface-3 text-sm font-semibold text-gray-200">Positions (today) <span className="text-gray-500">({positions.length})</span></div>
+            <div className="px-3 py-2 border-b border-surface-3 flex items-center justify-between">
+              <span className="text-sm font-semibold text-gray-200">Positions (today) <span className="text-gray-500">({positions.length})</span></span>
+              <button onClick={downloadPositionsCSV} disabled={!positions.length} className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg border bg-surface-3 text-gray-300 border-surface-4 hover:text-white disabled:opacity-40" title="Download positions log (paper/live) as CSV"><Download className="w-3.5 h-3.5" /> CSV</button>
+            </div>
             {!positions.length ? <div className="px-4 py-8 text-center text-gray-500 text-sm">No positions yet — the strategy opens them on 4th-candle breakouts while Live is on.</div> : (
               <div className="overflow-x-auto"><table className="w-full text-xs whitespace-nowrap">
                 <thead className="bg-surface-3 text-gray-300"><tr>{['Stock', 'Opt', 'Symbol', 'Strike', 'Entry@', 'Entry', 'Target', 'SL', 'LTP', 'MTM', 'Max Profit', 'Max Loss', 'Status', 'Exit@'].map((h) => <th key={h} className="px-2.5 py-2 font-semibold text-right first:text-left">{h}</th>)}</tr></thead>
