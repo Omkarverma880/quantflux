@@ -47,6 +47,8 @@ class FourthCandleStrategy:
         self._entered_today: set = set()      # symbols entered today (one per day)
         self._auto_started_date = None
         self._manual_stop_date = None
+        self._candle_bucket = None             # current 5-min bucket for the candle cache
+        self._candle_cache: dict = {}          # token → today's 5-min candles (this bucket)
         self._load_runtime()
 
     # ── config / control ──
@@ -277,6 +279,17 @@ class FourthCandleStrategy:
             return None
 
     def _today_5m(self, token, now):
+        # Cache per 5-min bucket: with a large live watchlist this method would
+        # otherwise re-fetch every stock on every tick and saturate Zerodha's
+        # ~3 req/s historical limit — starving other strategies and the research
+        # modules (they'd get throttled and return "no stocks"). One fetch per
+        # stock per 5-min candle is enough for a 5-min breakout strategy.
+        bucket = now.replace(second=0, microsecond=0, minute=(now.minute // 5) * 5)
+        if bucket != self._candle_bucket:
+            self._candle_bucket = bucket
+            self._candle_cache = {}
+        if token in self._candle_cache:
+            return self._candle_cache[token]
         frm = datetime.combine(now.date(), MARKET_OPEN)
         try:
             raw = self.broker.get_historical_data(token, frm, now, TIMEFRAME) or []
@@ -284,6 +297,7 @@ class FourthCandleStrategy:
             raw = []
         for c in raw:
             c["_dt"] = _candle_dt(c)
+        self._candle_cache[token] = raw
         return raw
 
     def _open_positions(self):
