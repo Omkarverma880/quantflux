@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   CandlestickChart, Play, Loader2, AlertCircle, Download, Info, TrendingUp, TrendingDown,
-  FlaskConical, Wallet, Radio, RefreshCw, Save,
+  FlaskConical, Wallet, Radio, RefreshCw, Save, Upload,
 } from 'lucide-react';
 import { api } from '../../api';
 import WatchlistBar from '../../components/WatchlistBar';
@@ -71,20 +71,47 @@ export default function FourthCandle() {
   const [savedWls, setSavedWls] = useState([]);
   const pollRef = useRef(null);
 
+  const applySymbols = (syms, append) => {
+    setSymbolsText((prev) => {
+      if (!append) return syms.join(', ');
+      const have = new Set(prev.split(/[\s,;\n]+/).map((s) => s.trim().toUpperCase()).filter(Boolean));
+      syms.forEach((s) => have.add(String(s).toUpperCase()));
+      return [...have].join(', ');
+    });
+    flash(`Loaded ${syms.length} stocks`);
+  };
+
+  const uploadSymbolsCSV = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      if (!lines.length) return showErr('Empty file');
+      const split = (l) => l.split(/[,;\t]/).map((c) => c.trim().replace(/^"|"$/g, ''));
+      const header = split(lines[0]).map((h) => h.toLowerCase());
+      let col = header.indexOf('symbol');
+      if (col < 0) col = header.indexOf('tradingsymbol');
+      const hasHeader = col >= 0 || header.some((h) => ['symbol', 'tradingsymbol', 'stock', 'name'].includes(h));
+      if (col < 0) col = 0;                                   // no 'symbol' header → first column
+      const body = hasHeader ? lines.slice(1) : lines;
+      const syms = body.map((l) => (split(l)[col] || '').toUpperCase()).filter((s) => /^[A-Z0-9&.\-]+$/.test(s));
+      if (!syms.length) return showErr('No symbols found — need a "symbol" column');
+      applySymbols(syms, true);
+    } catch (err) { showErr(err.message || 'Could not read file'); }
+  };
+
   const loadWlIntoSymbols = async (id, { append = false } = {}) => {
     if (!id) return;
+    if (id === '__ALL_FNO__') {                         // all F&O stocks
+      const names = universe.map((u) => (typeof u === 'string' ? u : u.name)).filter(Boolean);
+      applySymbols(names, append);
+      return;
+    }
     try {
       const r = await api.researchWatchlistGet(id);
-      if (r.status === 'ok') {
-        const syms = r.watchlist.symbols || [];
-        setSymbolsText((prev) => {
-          if (!append) return syms.join(', ');
-          const have = new Set(prev.split(/[\s,;\n]+/).map((s) => s.trim().toUpperCase()).filter(Boolean));
-          syms.forEach((s) => have.add(String(s).toUpperCase()));
-          return [...have].join(', ');
-        });
-        flash(`Loaded ${syms.length} stocks`);
-      }
+      if (r.status === 'ok') applySymbols(r.watchlist.symbols || [], append);
     } catch { /* ignore */ }
   };
 
@@ -333,16 +360,22 @@ export default function FourthCandle() {
             <div>
               <div className="flex flex-wrap items-center gap-2 mb-1">
                 <label className={`${lbl} !mb-0`}>Watchlist (F&O stocks the strategy trades)</label>
-                {savedWls.length > 0 && (
+                {(savedWls.length > 0 || universe.length > 0) && (
                   <div className="flex items-center gap-1.5 ml-auto">
                     <select defaultValue="" onChange={(e) => { loadWlIntoSymbols(e.target.value); e.target.value = ''; }} className={`${sel} py-1 text-xs`}>
                       <option value="">Load saved watchlist…</option>
+                      {universe.length > 0 && <option value="__ALL_FNO__">All F&O ({universe.length})</option>}
                       {savedWls.map((w) => <option key={w.id} value={w.id}>{w.name} ({w.count})</option>)}
                     </select>
                     <select defaultValue="" onChange={(e) => { loadWlIntoSymbols(e.target.value, { append: true }); e.target.value = ''; }} className={`${sel} py-1 text-xs`}>
                       <option value="">+ Add from…</option>
+                      {universe.length > 0 && <option value="__ALL_FNO__">All F&O ({universe.length})</option>}
                       {savedWls.map((w) => <option key={w.id} value={w.id}>{w.name} ({w.count})</option>)}
                     </select>
+                    <label className="text-xs px-2 py-1 rounded-lg border bg-surface-3 text-gray-300 border-surface-4 hover:text-white cursor-pointer flex items-center gap-1" title='Upload a CSV/TXT with a "symbol" column — merges into the watchlist'>
+                      <Upload className="w-3.5 h-3.5" /> CSV
+                      <input type="file" accept=".csv,.txt" onChange={uploadSymbolsCSV} className="hidden" />
+                    </label>
                     <button onClick={() => setSymbolsText('')} className="text-xs px-2 py-1 rounded-lg border bg-surface-3 text-gray-400 border-surface-4 hover:text-white">Clear</button>
                   </div>
                 )}
