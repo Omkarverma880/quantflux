@@ -85,7 +85,7 @@ def sanitize(cfg: dict) -> dict:
         out["product"] = "NRML"
     out["target_value"] = max(0.0, out["target_value"])
     out["sl_value"] = max(0.0, out["sl_value"])
-    out["max_positions"] = max(1, min(50, int(out["max_positions"])))
+    out["max_positions"] = max(1, min(500, int(out["max_positions"])))
     out["max_calls"] = max(0, int(out["max_calls"]))
     out["max_puts"] = max(0, int(out["max_puts"]))
     out["lots"] = max(1, int(out["lots"]))
