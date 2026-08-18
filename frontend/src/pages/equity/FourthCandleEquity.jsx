@@ -152,9 +152,10 @@ export default function FourthCandleEquity() {
 
   const rows = data?.rows || [];
   const downloadCSV = () => {
-    const cols = ['date', 'underlying', 'bias', 'fourth_high', 'fourth_low', 'breakout_time', 'side', 'qty', 'entry', 'target', 'sl', 'exit', 'exit_time', 'exit_reason', 'mtm', 'max_profit', 'max_loss', 'hold_days', 'hold_label', 'product', 'status', 'notes'];
+    const cols = ['date', 'underlying', 'candles', 'fourth_high', 'fourth_low', 'breakout_time', 'side', 'qty', 'entry', 'target', 'sl', 'exit', 'exit_time', 'exit_reason', 'mtm', 'max_profit', 'max_loss', 'hold_days', 'hold_label', 'product', 'status', 'notes'];
     const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const lines = [cols.join(',')].concat(rows.map((r) => cols.map((c) => esc(r[c])).join(',')));
+    const val = (r, c) => (c === 'candles' ? biasLabel(r) : r[c]);   // 3 RED / 3 GREEN, not the internal call/put
+    const lines = [cols.join(',')].concat(rows.map((r) => cols.map((c) => esc(val(r, c))).join(',')));
     const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '4th_candle_cash_backtest.csv'; a.click();
   };
