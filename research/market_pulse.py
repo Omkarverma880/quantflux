@@ -184,6 +184,78 @@ class MarketPulse:
                        + (" (last session)" if stale else "")),
         }
 
+    # ── Monthly VWAP (current month vs previous month) — informational only ──
+    @staticmethod
+    def _row_date(c) -> Optional[date]:
+        d = c.get("date")
+        if isinstance(d, datetime):
+            return d.date()
+        if isinstance(d, date):
+            return d
+        try:
+            return date.fromisoformat(str(d)[:10])
+        except Exception:
+            return None
+
+    def _monthly_vwap_block(self, token: int, spot: float) -> dict:
+        """Current-month vs previous-month VWAP for the index (HLC3 — no volume),
+        the gap between them, and the last day the running current-month VWAP
+        crossed the previous-month level. Purely informational; not a signal."""
+        today = date.today()
+        first_this = today.replace(day=1)
+        first_prev = (first_this - timedelta(days=1)).replace(day=1)
+        try:
+            rows = self.broker.get_historical_data(
+                token, datetime.combine(first_prev, MARKET_OPEN),
+                datetime.combine(today, MARKET_CLOSE), "day") or []
+        except Exception:
+            return {"available": False}
+        cur_rows, prev_rows = [], []
+        for c in rows:
+            d = self._row_date(c)
+            if d is None:
+                continue
+            if d >= first_this:
+                cur_rows.append(c)
+            elif d >= first_prev:
+                prev_rows.append(c)
+        if not cur_rows or not prev_rows:
+            return {"available": False}
+        prev_vwap = self._vwap(prev_rows)
+        cur_vwap = self._vwap(cur_rows)
+        if not prev_vwap or not cur_vwap:
+            return {"available": False}
+        price = spot or float(cur_rows[-1].get("close", 0) or 0)
+        dist = cur_vwap - prev_vwap
+        dist_pct = (dist / prev_vwap * 100.0) if prev_vwap else 0.0
+        # running current-month VWAP crossing the previous-month level
+        last_cross = None
+        prev_sign = None
+        acc = []
+        for c in cur_rows:
+            acc.append(c)
+            cv = self._vwap(acc)
+            sign = 1 if cv >= prev_vwap else -1
+            if prev_sign is not None and sign != prev_sign:
+                last_cross = self._row_date(c)
+            prev_sign = sign
+        thr = prev_vwap * 0.0015          # within 0.15% = effectively intersecting
+        intersecting = abs(dist) <= thr or (last_cross is not None and last_cross == self._row_date(cur_rows[-1]))
+        days_ago = (today - last_cross).days if last_cross else None
+        return {
+            "available": True,
+            "cur_vwap": round(cur_vwap, 2), "prev_vwap": round(prev_vwap, 2),
+            "price": round(price, 2),
+            "distance": round(dist, 2), "distance_pct": round(dist_pct, 2),
+            "position": "ABOVE" if dist > 0 else "BELOW" if dist < 0 else "AT",
+            "intersecting": bool(intersecting),
+            "last_cross_date": last_cross.isoformat() if last_cross else None,
+            "last_cross_days_ago": days_ago,
+            "cur_month": first_this.strftime("%b %Y"),
+            "prev_month": first_prev.strftime("%b %Y"),
+            "cur_days": len(cur_rows),
+        }
+
     # ── Broader index quotes (quick-view strip) ──
     INDICES = [
         ("NIFTY 50", "NSE:NIFTY 50"),
@@ -475,6 +547,7 @@ class MarketPulse:
 
             dma = self._dma(token, spot)
             vwap = self._vwap_block(token, spot)
+            monthly_vwap = self._monthly_vwap_block(token, spot)
             psych = self._psychological(spot, prev_close)
             gann = self._gann(spot, prev_close)
             five_dfh = self._five_day_first_hour(token, spot, prev_close)
@@ -495,6 +568,7 @@ class MarketPulse:
                 "indices": self._indices(),
                 "fii_dii": self._fii_dii(),
                 "signals": signals,
+                "monthly_vwap": monthly_vwap,
                 "confirmation": {"bullish": bull, "bearish": bear,
                                  "neutral": len(biases) - bull - bear,
                                  "total": len(biases), "net": net, "verdict": verdict,

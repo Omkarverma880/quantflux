@@ -50,6 +50,73 @@ function Tile({ icon: Icon, title, bias, value, detail, sub }) {
   );
 }
 
+/* Monthly VWAP — informational card (current vs previous month VWAP of NIFTY) */
+function MonthlyVwapCard({ mv }) {
+  if (!mv || !mv.available) {
+    return (
+      <div className="rounded-xl border border-surface-3 bg-surface-2 p-4">
+        <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-gray-400 mb-2"><Activity className="w-3.5 h-3.5" /> Monthly VWAP (NIFTY)</div>
+        <div className="text-sm text-gray-500">Monthly VWAP unavailable — needs index history.</div>
+      </div>
+    );
+  }
+  const vals = [mv.prev_vwap, mv.cur_vwap, mv.price].filter((v) => v != null);
+  const span = Math.max(...vals) - Math.min(...vals) || 1;
+  const lo = Math.min(...vals) - span * 0.25;
+  const hi = Math.max(...vals) + span * 0.25;
+  const pos = (v) => `${((v - lo) / (hi - lo)) * 100}%`;
+  const above = mv.position === 'ABOVE';
+  const distColor = above ? 'text-emerald-400' : mv.position === 'BELOW' ? 'text-red-400' : 'text-amber-400';
+  return (
+    <div className={`rounded-xl border p-4 relative overflow-hidden ${mv.intersecting ? 'border-amber-400/70 bg-amber-500/10 ring-2 ring-amber-400/40 animate-pulse' : 'border-surface-3 bg-surface-2'}`}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-gray-400"><Activity className="w-3.5 h-3.5" /> Monthly VWAP (NIFTY)</div>
+        {mv.intersecting
+          ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400 text-black animate-pulse">◉ INTERSECTING</span>
+          : <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${above ? 'border-emerald-500/40 text-emerald-400' : 'border-red-500/40 text-red-400'}`}>{mv.position}</span>}
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-sky-400/80">{mv.cur_month} (curr)</div>
+          <div className="text-lg font-bold text-sky-300 leading-tight">{INR(mv.cur_vwap, 0)}</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-amber-400/80">{mv.prev_month} (prev)</div>
+          <div className="text-lg font-bold text-amber-300 leading-tight">{INR(mv.prev_vwap, 0)}</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-gray-500">NIFTY</div>
+          <div className="text-lg font-bold text-gray-200 leading-tight">{INR(mv.price, 0)}</div>
+        </div>
+      </div>
+
+      {/* number-line: prev · cur · price positioned by value */}
+      <div className="relative h-9 mb-3">
+        <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-surface-4 rounded" />
+        <div className="absolute top-1/2 -translate-y-1/2 flex flex-col items-center" style={{ left: pos(mv.prev_vwap), transform: 'translate(-50%,-50%)' }} title={`Prev VWAP ${INR(mv.prev_vwap, 0)}`}>
+          <div className="w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-amber-400/30" /><span className="text-[9px] text-amber-400 mt-0.5">P</span>
+        </div>
+        <div className="absolute top-1/2 -translate-y-1/2 flex flex-col items-center" style={{ left: pos(mv.cur_vwap), transform: 'translate(-50%,-50%)' }} title={`Curr VWAP ${INR(mv.cur_vwap, 0)}`}>
+          <div className="w-3 h-3 rounded-full bg-sky-400 ring-2 ring-sky-400/30" /><span className="text-[9px] text-sky-400 mt-0.5">C</span>
+        </div>
+        <div className="absolute top-1/2 -translate-y-1/2 flex flex-col items-center" style={{ left: pos(mv.price), transform: 'translate(-50%,-50%)' }} title={`NIFTY ${INR(mv.price, 0)}`}>
+          <div className="w-1.5 h-5 rounded bg-gray-300/70" />
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+        <span className="text-gray-400">Gap <strong className={distColor}>{mv.distance >= 0 ? '+' : ''}{INR(mv.distance, 0)} pts ({mv.distance_pct >= 0 ? '+' : ''}{mv.distance_pct}%)</strong></span>
+        <span className="text-gray-400">Curr is <strong className={distColor}>{mv.position}</strong> prev</span>
+        <span className="text-gray-500 ml-auto">{mv.last_cross_date
+          ? `Last crossed ${mv.last_cross_date}${mv.last_cross_days_ago != null ? ` (${mv.last_cross_days_ago}d ago)` : ''}`
+          : 'No cross this month'}</span>
+      </div>
+      <div className="text-[10px] text-gray-600 mt-1">Informational · index VWAP uses HLC3 (no index volume) · not a signal</div>
+    </div>
+  );
+}
+
 export default function MarketDashboard() {
   const [pulse, setPulse] = useState(null);
   const [nifty, setNifty] = useState(null);
@@ -271,6 +338,9 @@ export default function MarketDashboard() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         {tiles.map((t) => <Tile key={t.title} {...t} />)}
       </div>
+
+      {/* Monthly VWAP — informational */}
+      <MonthlyVwapCard mv={pulse?.monthly_vwap} />
 
       {/* Top contributors + sectors */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
