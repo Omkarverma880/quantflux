@@ -674,3 +674,44 @@ class FourthCandlePosition(Base):
     __table_args__ = (
         Index("idx_fourthc_user_date", "user_id", "trade_date"),
     )
+
+
+class FourthCandleEquityPosition(Base):
+    """Paper/live position for the 4th-Candle CASH-EQUITY Strategy (Equity #3).
+
+    Same 4th-candle setup but trades the STOCK directly — LONG (buy) on a CALL
+    bias, SHORT (sell) on a PUT bias — as MIS intraday or CNC holding, with
+    target/SL on the stock price. Real orders only when paper_trade is off AND
+    the global trading gate is on. Auto-created via ``create_all``.
+    """
+    __tablename__ = "fourth_candle_equity_positions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    trade_date = Column(Date, nullable=False)
+    underlying = Column(String(40))
+    direction = Column(String(5))           # LONG | SHORT
+    symbol = Column(String(60))             # NSE tradingsymbol (same as underlying)
+    exchange = Column(String(8), default="NSE")
+    token = Column(Integer)
+    qty = Column(Integer)
+    entry_price = Column(Numeric(12, 2))
+    entry_time = Column(String(12))
+    target = Column(Numeric(12, 2))
+    sl = Column(Numeric(12, 2))
+    ltp = Column(Numeric(12, 2))
+    mtm = Column(Numeric(14, 2), default=0)
+    mfe = Column(Numeric(14, 2), default=0)         # max profit
+    mae = Column(Numeric(14, 2), default=0)         # max loss
+    status = Column(String(12), default="OPEN")     # OPEN | TARGET | STOP | SQUAREOFF
+    exit_price = Column(Numeric(12, 2))
+    exit_time = Column(String(12))
+    exit_reason = Column(String(12))
+    product = Column(String(8), default="MIS")      # MIS | CNC
+    paper = Column(Boolean, default=True)
+    hold_days = Column(Integer)
+
+    __table_args__ = (
+        Index("idx_fourthc_eq_user_date", "user_id", "trade_date"),
+    )

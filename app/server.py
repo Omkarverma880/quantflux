@@ -38,6 +38,7 @@ from app.routes.strategy11_routes import router as s11_router
 from app.routes.strategy12_routes import router as s12_router
 from app.routes.equity_strategy_routes import router as equity_strategy_router
 from app.routes.fourth_candle_routes import router as fourth_candle_router
+from app.routes.fourth_candle_equity_routes import router as fourth_candle_equity_router
 from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
@@ -258,6 +259,12 @@ def _run_strategies_for_user(uid: int):
         fc = _get_fourthc(broker, uid)
         if authenticated and (fc.is_active or fc.cfg.get("auto_start")):
             fc.check()
+
+        # 4th-Candle CASH-EQUITY Strategy (LONG/SHORT the stock; MIS/CNC).
+        from app.routes.fourth_candle_equity_routes import _get_strategy as _get_fourthc_eq
+        fce = _get_fourthc_eq(broker, uid)
+        if authenticated and (fce.is_active or fce.cfg.get("auto_start")):
+            fce.check()
     finally:
         db.close()
 
@@ -389,6 +396,7 @@ app.include_router(s11_router, prefix="/api/strategy11-trade", tags=["Strategy11
 app.include_router(s12_router, prefix="/api/strategy12-trade", tags=["Strategy12-EmaPullback"])
 app.include_router(equity_strategy_router, prefix="/api/equity-strategy/pmvwap-holding", tags=["Equity-PMVwapHolding"])
 app.include_router(fourth_candle_router, prefix="/api/equity-strategy/fourth-candle", tags=["Equity-FourthCandle"])
+app.include_router(fourth_candle_equity_router, prefix="/api/equity-strategy/fourth-candle-cash", tags=["Equity-FourthCandleCash"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])

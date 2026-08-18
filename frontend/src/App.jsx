@@ -39,6 +39,7 @@ import QMIE from './pages/research/QMIE';
 import DataDownloader from './pages/research/DataDownloader';
 import DemandSupply from './pages/research/DemandSupply';
 import FourthCandle from './pages/equity/FourthCandle';
+import FourthCandleEquity from './pages/equity/FourthCandleEquity';
 import EquityPMVwapHolding from './pages/equity/PMVwapHolding';
 
 export default function App() {
@@ -84,6 +85,7 @@ export default function App() {
           <Route path="research/demand-supply" element={<DemandSupply />} />
           <Route path="equity-strategy/pmvwap-holding" element={<EquityPMVwapHolding />} />
           <Route path="equity-strategy/fourth-candle" element={<FourthCandle />} />
+          <Route path="equity-strategy/fourth-candle-cash" element={<FourthCandleEquity />} />
           <Route path="research/market-dashboard" element={<MarketDashboard />} />
           <Route path="portfolio" element={<PortfolioAnalytics />} />
           <Route path="portfolio/analytics-world" element={<AnalyticsWorld />} />

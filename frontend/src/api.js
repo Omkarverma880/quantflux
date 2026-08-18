@@ -548,6 +548,17 @@ export const api = {
   fcUpdateConfig: (config) => request('/equity-strategy/fourth-candle/config', { method: 'PUT', body: JSON.stringify({ config: config || {} }) }),
   fcPositions: (date) => request(`/equity-strategy/fourth-candle/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
 
+  // Equity Strategy 3 — 4th Candle (Cash Equity)
+  fceBacktest: (body) => request('/equity-strategy/fourth-candle-cash/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
+  fceSimulate: (body) => request('/equity-strategy/fourth-candle-cash/simulate', { method: 'POST', body: JSON.stringify(body) }),
+  fceConfig: () => request('/equity-strategy/fourth-candle-cash/config'),
+  fceConfigSave: (partial) => request('/equity-strategy/fourth-candle-cash/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+  fceStatus: () => request('/equity-strategy/fourth-candle-cash/status'),
+  fceStart: (config) => request('/equity-strategy/fourth-candle-cash/start', { method: 'POST', body: JSON.stringify({ config: config || {} }) }),
+  fceStop: () => request('/equity-strategy/fourth-candle-cash/stop', { method: 'POST' }),
+  fceUpdateConfig: (config) => request('/equity-strategy/fourth-candle-cash/config', { method: 'PUT', body: JSON.stringify({ config: config || {} }) }),
+  fcePositions: (date) => request(`/equity-strategy/fourth-candle-cash/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+
   // Universal Telegram notifications (shared across the app)
   getTelegramSettings: (bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`),
   saveTelegramSettings: (cfg, bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`, { method: 'POST', body: JSON.stringify(cfg || {}) }),
