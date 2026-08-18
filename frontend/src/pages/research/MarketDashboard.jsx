@@ -108,11 +108,11 @@ function MonthlyVwapCard({ mv }) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
         <span className="text-gray-400">Gap <strong className={distColor}>{mv.distance >= 0 ? '+' : ''}{INR(mv.distance, 0)} pts ({mv.distance_pct >= 0 ? '+' : ''}{mv.distance_pct}%)</strong></span>
         <span className="text-gray-400">Curr is <strong className={distColor}>{mv.position}</strong> prev</span>
-        <span className="text-gray-500 ml-auto">{mv.last_cross_date
-          ? `Last crossed ${mv.last_cross_date}${mv.last_cross_days_ago != null ? ` (${mv.last_cross_days_ago}d ago)` : ''}`
+        <span className="text-gray-500 ml-auto" title="Last day the daily VWAP crossed the previous-month VWAP level">{mv.last_cross_date
+          ? `Last crossed prev VWAP: ${mv.last_cross_date}${mv.last_cross_days_ago != null ? ` (${mv.last_cross_days_ago}d ago)` : ''}`
           : 'No cross this month'}</span>
       </div>
-      <div className="text-[10px] text-gray-600 mt-1">Informational · index VWAP uses HLC3 (no index volume) · not a signal</div>
+      <div className="text-[10px] text-gray-600 mt-1">Informational · index VWAP uses HLC3 (no index volume) · “last crossed” = daily VWAP vs prev-month level · not a signal</div>
     </div>
   );
 }

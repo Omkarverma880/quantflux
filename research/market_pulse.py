@@ -228,15 +228,18 @@ class MarketPulse:
         price = spot or float(cur_rows[-1].get("close", 0) or 0)
         dist = cur_vwap - prev_vwap
         dist_pct = (dist / prev_vwap * 100.0) if prev_vwap else 0.0
-        # running current-month VWAP crossing the previous-month level
+        # Last day the market's daily VWAP crossed the previous-month VWAP level
+        # (the month-to-date VWAP is too sticky to cross once the month trends).
+        # Seed the sign from the previous month's last day so an early-month cross
+        # (e.g. the 4th) is caught.
+        def _typ(c):
+            return (float(c.get("high", 0) or 0) + float(c.get("low", 0) or 0)
+                    + float(c.get("close", 0) or 0)) / 3.0
         last_cross = None
-        prev_sign = None
-        acc = []
+        prev_sign = 1 if _typ(prev_rows[-1]) >= prev_vwap else -1
         for c in cur_rows:
-            acc.append(c)
-            cv = self._vwap(acc)
-            sign = 1 if cv >= prev_vwap else -1
-            if prev_sign is not None and sign != prev_sign:
+            sign = 1 if _typ(c) >= prev_vwap else -1
+            if sign != prev_sign:
                 last_cross = self._row_date(c)
             prev_sign = sign
         thr = prev_vwap * 0.0015          # within 0.15% = effectively intersecting
