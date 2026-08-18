@@ -36,6 +36,7 @@ from research.opei import positions as opei_positions
 from research.qmie import QMIEEngine
 from research.qmie import store as qmie_store
 from research.data_downloader import DataDownloader
+from research.demand_supply import DemandSupplyScanner
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -53,7 +54,20 @@ _pmvwap_equities: dict[int, PMVwapEquityResearch] = {}
 _opei_engines: dict[int, OPEIEngine] = {}
 _qmie_engines: dict[int, QMIEEngine] = {}
 _downloaders: dict[int, DataDownloader] = {}
+_demand_supply: dict[int, DemandSupplyScanner] = {}
 _news_sentiment = NewsSentiment()   # shared (public RSS — not per-user)
+
+
+def _get_demand_supply(broker: Broker, user_id: int) -> DemandSupplyScanner:
+    eng = _demand_supply.get(user_id)
+    if eng is None:
+        eng = DemandSupplyScanner(broker, user_id=user_id)
+        _demand_supply[user_id] = eng
+    else:
+        eng.broker = broker
+        eng.universe.broker = broker
+    eng.user_id = user_id
+    return eng
 
 
 def _get_downloader(broker: Broker, user_id: int) -> DataDownloader:
@@ -1250,6 +1264,70 @@ def qmie_universe(user_id: int = Depends(login_required), db: Session = Depends(
     """F&O underlyings available for the default universe (read-only, for display)."""
     try:
         eng = _get_qmie(get_user_broker(db, user_id), user_id)
+        return {"status": "ok", "symbols": [e["name"] for e in eng.universe.equities()]}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+# ──────────────── Research → Demand-Supply Equity Scanner (read-only) ────────────────
+class DSScanRequest(BaseModel):
+    overrides: dict | None = None
+    mode: str | None = "all"          # all | watchlist | selected | single
+    symbols: list[str] | None = None
+
+
+@router.post("/demand-supply/scan")
+def ds_scan(payload: DSScanRequest | None = None,
+            user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Live/simulated demand-supply ranking (read-only — never trades)."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated — the scanner needs live market data"}
+    p = payload or DSScanRequest()
+    try:
+        return _get_demand_supply(broker, user_id).scan(p.overrides, mode=p.mode or "all", symbols=p.symbols)
+    except Exception as exc:
+        logger.error("demand-supply scan failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/demand-supply/detail")
+def ds_detail(payload: dict | None = None,
+              user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Detailed order-book + score-breakdown + timeline for one stock."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    p = payload or {}
+    try:
+        return _get_demand_supply(broker, user_id).detail(p.get("symbol", ""), p.get("overrides"))
+    except Exception as exc:
+        logger.error("demand-supply detail failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/demand-supply/config")
+def ds_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_demand_supply(get_user_broker(db, user_id), user_id).load_config()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/demand-supply/config")
+def ds_config_save(payload: dict | None = None,
+                   user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": _get_demand_supply(get_user_broker(db, user_id), user_id).save_config(payload or {})}
+    except Exception as exc:
+        logger.error("demand-supply config save failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/demand-supply/universe")
+def ds_universe(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        eng = _get_demand_supply(get_user_broker(db, user_id), user_id)
         return {"status": "ok", "symbols": [e["name"] for e in eng.universe.equities()]}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}

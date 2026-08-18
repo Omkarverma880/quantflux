@@ -28,6 +28,47 @@ function Tile({ label, children }) {
   );
 }
 
+// generic column sorter: nulls/blanks always sort last, strings vs numbers handled
+const sortRows = (arr, s) => {
+  if (!s || !s.key) return arr;
+  const d = s.dir === 'asc' ? 1 : -1;
+  const norm = (v) => (v == null || v === '' ? null : v);
+  return [...arr].sort((a, b) => {
+    const av = norm(a[s.key]); const bv = norm(b[s.key]);
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === 'string' && typeof bv === 'string') return av < bv ? -d : av > bv ? d : 0;
+    return (Number(av) - Number(bv)) * d;
+  });
+};
+const nextSort = (s, k) => (s.key === k ? { key: k, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: k, dir: 'desc' });
+// candle-colour label (independent of bias, so it stays correct when the signal is reversed)
+const biasLabel = (r) => {
+  const c = r.colors;
+  if (Array.isArray(c) && c.length >= 3) {
+    if (c.slice(0, 3).every((x) => x === 'red')) return '3 RED';
+    if (c.slice(0, 3).every((x) => x === 'green')) return '3 GREEN';
+    return 'MIXED';
+  }
+  return r.bias === 'call' ? '3 RED' : r.bias === 'put' ? '3 GREEN' : 'MIXED';
+};
+function SortTh({ label, k, align, sort, onSort }) {
+  const active = sort.key === k;
+  return (
+    <th onClick={() => onSort(k)} className={`px-2.5 py-2 font-semibold cursor-pointer select-none ${align === 'l' ? 'text-left' : 'text-right'} ${active ? 'text-brand-300' : ''}`}>
+      {label}{active ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+    </th>
+  );
+}
+const BT_COLS = [['Date', 'date', 'l'], ['Stock', 'underlying', 'l'], ['Bias', 'bias', 'r'], ['4th High', 'fourth_high', 'r'],
+  ['4th Low', 'fourth_low', 'r'], ['Breakout', 'breakout_time', 'r'], ['Opt', 'opt_type', 'r'], ['Symbol', 'symbol', 'r'],
+  ['Strike', 'strike', 'r'], ['Qty', 'qty', 'r'], ['Entry', 'entry', 'r'], ['Target', 'target', 'r'], ['SL', 'sl', 'r'],
+  ['Exit', 'exit', 'r'], ['Reason', 'status', 'r'], ['MTM', 'mtm', 'r'], ['Max Profit', 'max_profit', 'r'], ['Max Loss', 'max_loss', 'r'], ['Hold', 'hold_days', 'r']];
+const POS_COLS = [['Stock', 'underlying', 'l'], ['Opt', 'opt_type', 'r'], ['Symbol', 'symbol', 'r'], ['Strike', 'strike', 'r'],
+  ['Entry@', 'entry_time', 'r'], ['Entry', 'entry_price', 'r'], ['Target', 'target', 'r'], ['SL', 'sl', 'r'], ['LTP', 'ltp', 'r'],
+  ['MTM', 'mtm', 'r'], ['Max Profit', 'mfe', 'r'], ['Max Loss', 'mae', 'r'], ['Status', 'status', 'r'], ['Exit@', 'exit_time', 'r']];
+
 export default function FourthCandle() {
   const [cfg, setCfg] = useState(null);
   const [tab, setTab] = useState('backtest');
@@ -44,6 +85,9 @@ export default function FourthCandle() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showNonTrades, setShowNonTrades] = useState(false);
+  const [applyCaps, setApplyCaps] = useState(true);
+  const [btSort, setBtSort] = useState({ key: null, dir: 'desc' });
+  const [posSort, setPosSort] = useState({ key: null, dir: 'desc' });
 
   // simulate
   const [simSym, setSimSym] = useState('');
@@ -128,14 +172,14 @@ export default function FourthCandle() {
     setLoading(true); setErr('');
     try {
       const body = {
-        overrides: cfg, start, end, include_non_trades: showNonTrades,
+        overrides: cfg, start, end, include_non_trades: showNonTrades, apply_caps: applyCaps,
         symbol: sel2.mode === 'single' ? sel2.symbol : null,
         symbols: sel2.mode === 'watchlist' ? sel2.symbols : null,
       };
       const r = await api.fcBacktest(body);
       if (r.status === 'ok') setData(r); else showErr(r.message || 'Backtest failed');
     } catch (e) { showErr(e.message); } finally { setLoading(false); }
-  }, [cfg, sel2, start, end, showNonTrades]);
+  }, [cfg, sel2, start, end, showNonTrades, applyCaps]);
 
   const runSimulate = async () => {
     if (!simSym.trim()) return showErr('Enter a stock symbol');
@@ -211,6 +255,7 @@ export default function FourthCandle() {
       <div><label className={lbl}>Max Puts</label>{num('max_puts', 0, 1)}</div>
       <div><label className={lbl}>Product</label><select value={cfg.product} onChange={(e) => patch('product', e.target.value)} className={`w-full ${sel}`}><option value="NRML">NRML (normal)</option><option value="MIS">MIS (intraday)</option></select></div>
       <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer self-end"><input type="checkbox" checked={cfg.apply_costs} onChange={(e) => patch('apply_costs', e.target.checked)} className="accent-brand-500" /> Net of costs</label>
+      <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer self-end" title="Default: 3 red → CALL, 3 green → PUT. Reversed: 3 red → PUT (break the 4th LOW), 3 green → CALL (break the 4th HIGH)."><input type="checkbox" checked={!!cfg.reverse_signal} onChange={(e) => patch('reverse_signal', e.target.checked)} className="accent-brand-500" /> Reverse signal</label>
     </div>
   );
 
@@ -249,12 +294,18 @@ export default function FourthCandle() {
               <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer ml-1" title="Also list stocks that had a bias/breakout but produced no trade (no breakout by cutoff, mixed candles, or missing option data), with the reason.">
                 <input type="checkbox" checked={showNonTrades} onChange={(e) => setShowNonTrades(e.target.checked)} className="accent-brand-500" /> Show non-trade days
               </label>
+              <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer" title="Apply the live portfolio caps (Max Positions / Max Calls / Max Puts) so the backtest matches what Live/Paper would actually take. Uncheck to see every signal.">
+                <input type="checkbox" checked={applyCaps} onChange={(e) => setApplyCaps(e.target.checked)} className="accent-brand-500" /> Apply caps (match live)
+              </label>
             </div>
             {ConfigGrid()}
           </div>
 
           {data?.note && (
             <div className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">{data.note}</div>
+          )}
+          {data?.caps_note && (
+            <div className="text-xs text-sky-300/90 bg-sky-500/10 border border-sky-500/30 rounded-lg px-3 py-2">{data.caps_note}</div>
           )}
           {data && (
             <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm bg-surface-2 border border-surface-3 rounded-xl px-4 py-2.5">
@@ -270,12 +321,12 @@ export default function FourthCandle() {
           {data && (
             <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
               <div className="overflow-x-auto"><table className="w-full text-xs whitespace-nowrap">
-                <thead className="bg-surface-3 text-gray-300"><tr>{['Date', 'Stock', 'Bias', '4th High', '4th Low', 'Breakout', 'Opt', 'Symbol', 'Strike', 'Qty', 'Entry', 'Target', 'SL', 'Exit', 'Reason', 'MTM', 'Max Profit', 'Max Loss', 'Hold'].map((h) => <th key={h} className="px-2.5 py-2 font-semibold text-right first:text-left">{h}</th>)}</tr></thead>
-                <tbody>{rows.map((r, i) => (r.qty ? (
+                <thead className="bg-surface-3 text-gray-300"><tr>{BT_COLS.map(([label, k, a]) => <SortTh key={k} label={label} k={k} align={a} sort={btSort} onSort={(kk) => setBtSort((s) => nextSort(s, kk))} />)}</tr></thead>
+                <tbody>{sortRows(rows, btSort).map((r, i) => (r.qty ? (
                   <tr key={i} className="border-t border-surface-3/40 hover:bg-surface-3/10">
                     <td className="px-2.5 py-1.5 text-left text-gray-400">{r.date}</td>
                     <td className="px-2.5 py-1.5 text-left text-brand-300 font-semibold">{r.underlying}</td>
-                    <td className="px-2.5 py-1.5 text-right text-gray-400">{r.bias === 'call' ? '3 RED' : '3 GREEN'}</td>
+                    <td className="px-2.5 py-1.5 text-right text-gray-400">{biasLabel(r)}</td>
                     <td className="px-2.5 py-1.5 text-right text-gray-300">{NUM(r.fourth_high)}</td>
                     <td className="px-2.5 py-1.5 text-right text-gray-300">{NUM(r.fourth_low)}</td>
                     <td className="px-2.5 py-1.5 text-right text-gray-400">{r.breakout_time}</td>
@@ -297,7 +348,7 @@ export default function FourthCandle() {
                   <tr key={i} className="border-t border-surface-3/40 bg-surface-3/10 text-gray-500">
                     <td className="px-2.5 py-1.5 text-left text-gray-500">{r.date}</td>
                     <td className="px-2.5 py-1.5 text-left text-gray-400 font-semibold">{r.underlying}</td>
-                    <td className="px-2.5 py-1.5 text-right">{r.bias ? (r.bias === 'call' ? '3 RED' : '3 GREEN') : 'MIXED'}</td>
+                    <td className="px-2.5 py-1.5 text-right">{biasLabel(r)}</td>
                     <td className="px-2.5 py-1.5 text-right">{NUM(r.fourth_high)}</td>
                     <td className="px-2.5 py-1.5 text-right">{NUM(r.fourth_low)}</td>
                     <td className="px-2.5 py-1.5 text-right">{r.breakout_time || '—'}</td>
@@ -418,8 +469,8 @@ export default function FourthCandle() {
             </div>
             {!positions.length ? <div className="px-4 py-8 text-center text-gray-500 text-sm">No positions yet — the strategy opens them on 4th-candle breakouts while Live is on.</div> : (
               <div className="overflow-x-auto"><table className="w-full text-xs whitespace-nowrap">
-                <thead className="bg-surface-3 text-gray-300"><tr>{['Stock', 'Opt', 'Symbol', 'Strike', 'Entry@', 'Entry', 'Target', 'SL', 'LTP', 'MTM', 'Max Profit', 'Max Loss', 'Status', 'Exit@'].map((h) => <th key={h} className="px-2.5 py-2 font-semibold text-right first:text-left">{h}</th>)}</tr></thead>
-                <tbody>{positions.map((p) => (
+                <thead className="bg-surface-3 text-gray-300"><tr>{POS_COLS.map(([label, k, a]) => <SortTh key={k} label={label} k={k} align={a} sort={posSort} onSort={(kk) => setPosSort((s) => nextSort(s, kk))} />)}</tr></thead>
+                <tbody>{sortRows(positions, posSort).map((p) => (
                   <tr key={p.id} className="border-t border-surface-3/40">
                     <td className="px-2.5 py-1.5 text-left text-brand-300 font-semibold">{p.underlying}{p.paper && <span className="ml-1 text-[9px] px-1 rounded bg-surface-3 text-gray-500 border border-surface-4">paper</span>}</td>
                     <td className="px-2.5 py-1.5 text-right"><OptBadge t={p.opt_type} /></td>

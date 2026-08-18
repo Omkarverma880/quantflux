@@ -33,6 +33,7 @@ DEFAULT_CONFIG: dict = {
     "hold_to_expiry": True,           # NRML positional — hold until target/SL or expiry
     "square_off": "15:20",            # expiry-day square-off time
     "one_signal_per_day": True,       # one entry per stock per day
+    "reverse_signal": False,          # flip the bias: 3 red→PUT, 3 green→CALL
     # ── target / SL (on the option premium) ──
     "target_mode": "percent",         # percent | points
     "sl_mode": "percent",             # percent | points
@@ -91,8 +92,8 @@ def sanitize(cfg: dict) -> dict:
     out["lots"] = max(1, int(out["lots"]))
     out["scan_interval"] = max(10, min(600, int(out["scan_interval"])))
     out["history_days"] = max(5, min(400, int(out["history_days"])))
-    for b in ("hold_to_expiry", "one_signal_per_day", "apply_costs", "paper_trade",
-              "auto_start", "telegram_alerts"):
+    for b in ("hold_to_expiry", "one_signal_per_day", "reverse_signal", "apply_costs",
+              "paper_trade", "auto_start", "telegram_alerts"):
         out[b] = bool(out[b])
     if out["telegram_bot"] not in ("a", "b"):
         out["telegram_bot"] = "a"

@@ -95,7 +95,7 @@ class FourthCandleResearch:
 
     # ── one stock/day → a trade row (or None) ──
     def _row_for_day(self, name, day, day_candles, cfg) -> Optional[dict]:
-        an = calc.analyze_day(day_candles)
+        an = calc.analyze_day(day_candles, reverse=bool(cfg.get("reverse_signal")))
         if not an:
             return None
         base = {"date": day.isoformat(), "underlying": name,
@@ -221,7 +221,7 @@ class FourthCandleResearch:
         return rows
 
     def backtest(self, overrides=None, *, symbol=None, symbols=None, start=None, end=None,
-                 include_non_trades=False) -> dict:
+                 include_non_trades=False, apply_caps=True) -> dict:
         with self._lock:
             cfg = sanitize({**self.load_config(), **(overrides or {})})
             try:
@@ -257,12 +257,59 @@ class FourthCandleResearch:
                     logger.warning("backtest_stock %s failed: %s", nm, exc)
                 scanned += 1
             rows.sort(key=lambda r: (r["date"], r.get("breakout_time") or "", r["underlying"]))
+            signals_total = sum(1 for r in rows if r.get("qty"))
+            caps_note = None
+            if apply_caps:
+                taken = self._apply_caps(rows, cfg, include_non_trades)
+                if taken < signals_total:
+                    caps_note = (f"Portfolio caps applied — {taken} of {signals_total} signals taken "
+                                 f"(Max Positions {cfg['max_positions']}, Max Calls {cfg['max_calls']}, "
+                                 f"Max Puts {cfg['max_puts']}). This matches what Live/Paper would do. "
+                                 "Uncheck 'Apply caps' to see every signal.")
             note = (f"Showing first {len(names)} of {total} F&O stocks (Max Stocks = {cap}). "
                     "Set Max Stocks to 0 to scan all — heavier but complete." if truncated else None)
             return {"status": "ok", "mode": mode, "start": s.isoformat(), "end": e.isoformat(),
                     "stocks_scanned": scanned, "universe_size": total, "truncated": truncated,
-                    "note": note, "config": cfg, "stats": self._stats(rows),
+                    "note": note, "caps_note": caps_note, "caps_applied": bool(apply_caps),
+                    "signals_total": signals_total, "config": cfg, "stats": self._stats(rows),
                     "rows": rows, "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+    @staticmethod
+    def _apply_caps(rows: list[dict], cfg: dict, include_non_trades: bool) -> int:
+        """Mutates ``rows`` in place to reflect the live portfolio caps: walk each
+        day's breakouts in the same order Live scans them (breakout time, then
+        symbol) and only 'take' a trade while under Max Positions / Max Calls /
+        Max Puts. Skipped signals become CAP-SKIPPED rows (qty cleared so they drop
+        out of stats and render like a non-trade). Returns the number taken."""
+        max_pos = int(cfg["max_positions"]); max_c = int(cfg["max_calls"]); max_p = int(cfg["max_puts"])
+        per_day: dict = {}
+        taken = 0
+        trades = sorted((r for r in rows if r.get("qty")),
+                        key=lambda r: (r["date"], r.get("breakout_time") or "", r["underlying"]))
+        drop = []
+        for r in trades:
+            d = r["date"]
+            cnt = per_day.setdefault(d, [0, 0, 0])   # [positions, calls, puts]
+            is_ce = r.get("opt_type") == "CE"
+            full = (cnt[0] >= max_pos or (is_ce and cnt[1] >= max_c)
+                    or (not is_ce and cnt[2] >= max_p))
+            if full:
+                if include_non_trades:
+                    r["status"] = "CAP SKIPPED"
+                    r["notes"] = f"portfolio cap reached ({'CALL' if is_ce else 'PUT'})"
+                    r["capped"] = True
+                    r["qty"] = None          # → excluded from stats, renders as a non-trade row
+                else:
+                    drop.append(id(r))
+            else:
+                cnt[0] += 1
+                cnt[1] += 1 if is_ce else 0
+                cnt[2] += 0 if is_ce else 1
+                taken += 1
+        if drop:
+            drop_set = set(drop)
+            rows[:] = [r for r in rows if id(r) not in drop_set]
+        return taken
 
     # ── detailed single-stock simulate (lock-free: never block on a running backtest) ──
     def simulate(self, symbol: str, overrides=None, day: Optional[str] = None) -> dict:
@@ -280,7 +327,7 @@ class FourthCandleResearch:
             dc = calc.day_candles(candles, d)
             if len(dc) < 5:
                 return {"status": "error", "message": f"{name} {d}: not enough 5-min candles"}
-            an = calc.analyze_day(dc)
+            an = calc.analyze_day(dc, reverse=bool(cfg.get("reverse_signal")))
             timeline = [{"time": c["_dt"].strftime("%H:%M"), "open": round(float(c["open"]), 2),
                          "high": round(float(c["high"]), 2), "low": round(float(c["low"]), 2),
                          "close": round(float(c["close"]), 2), "color": calc.candle_color(c)}

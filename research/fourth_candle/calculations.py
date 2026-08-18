@@ -31,22 +31,29 @@ def day_candles(candles: list[dict], day) -> list[dict]:
     return out
 
 
-def analyze_day(candles_day: list[dict]) -> dict | None:
-    """First-3-candle colours + 4th-candle high/low + the resulting bias."""
+def analyze_day(candles_day: list[dict], reverse: bool = False) -> dict | None:
+    """First-3-candle colours + 4th-candle high/low + the resulting bias.
+
+    Default: 3 red → CALL (break the 4th HIGH), 3 green → PUT (break the 4th LOW).
+    When ``reverse`` is set the bias is flipped: 3 red → PUT (break the 4th LOW),
+    3 green → CALL (break the 4th HIGH). Everything downstream follows the bias.
+    """
     if len(candles_day) < 5:
         return None
     pre = candles_day[:3]
     fourth = candles_day[3]
     colors = [candle_color(c) for c in pre]
     if all(x == "red" for x in colors):
-        bias = "call"       # 3 red → break the 4th HIGH → CALL
+        bias = "call"
     elif all(x == "green" for x in colors):
-        bias = "put"        # 3 green → break the 4th LOW → PUT
+        bias = "put"
     else:
         bias = None         # mixed → no trade
+    if reverse and bias:
+        bias = "put" if bias == "call" else "call"
     return {"colors": colors, "fourth_high": round(float(fourth["high"]), 2),
             "fourth_low": round(float(fourth["low"]), 2), "fourth_dt": fourth["_dt"],
-            "bias": bias}
+            "bias": bias, "reversed": bool(reverse)}
 
 
 def find_breakout(candles_day: list[dict], analysis: dict, *, entry_cutoff: str) -> dict | None:

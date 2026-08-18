@@ -88,6 +88,7 @@ class BacktestReq(BaseModel):
     start: str | None = None
     end: str | None = None
     include_non_trades: bool = False
+    apply_caps: bool = True
 
 
 class SimulateReq(BaseModel):
@@ -110,7 +111,8 @@ def backtest(payload: BacktestReq | None = None, user_id: int = Depends(login_re
     try:
         return _get_research(broker, user_id).backtest(p.overrides, symbol=p.symbol,
                                                        symbols=p.symbols, start=p.start, end=p.end,
-                                                       include_non_trades=p.include_non_trades)
+                                                       include_non_trades=p.include_non_trades,
+                                                       apply_caps=p.apply_caps)
     except Exception as exc:
         logger.error("4th-candle backtest failed: %s", exc)
         return {"status": "error", "message": str(exc)}

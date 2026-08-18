@@ -138,7 +138,7 @@ class FourthCandleStrategy:
         dc = calc.day_candles(candles, now.date())
         if len(dc) < 5:
             return
-        an = calc.analyze_day(dc)
+        an = calc.analyze_day(dc, reverse=bool(self.cfg.get("reverse_signal")))
         if not an or not an["bias"]:
             self._entered_today.add(sym)      # decided (mixed) → skip for the day
             return

@@ -489,6 +489,13 @@ export const api = {
   researchWatchlistDelete: (id) => request(`/research/watchlists/${id}`, { method: 'DELETE' }),
   researchWatchlistUpload: (formData) => requestUpload('/research/watchlists/upload', formData),
 
+  // Demand-Supply Equity Scanner (Research #12)
+  dsScan: (body) => request('/research/demand-supply/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
+  dsDetail: (symbol, overrides) => request('/research/demand-supply/detail', { method: 'POST', body: JSON.stringify({ symbol, overrides: overrides || null }) }),
+  dsConfig: () => request('/research/demand-supply/config'),
+  dsConfigSave: (config) => request('/research/demand-supply/config', { method: 'POST', body: JSON.stringify(config || {}) }),
+  dsUniverse: () => request('/research/demand-supply/universe'),
+
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),
   getPortfolioWatchlists: () => request('/portfolio/watchlists'),
