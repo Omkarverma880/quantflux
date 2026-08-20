@@ -51,6 +51,7 @@ const NAV = [
       { to: '/research/qmie', label: '10. Quantum Market Intelligence (QMIE)' },
       { to: '/research/data-downloader', label: '11. Data Downloader' },
       { to: '/research/demand-supply', label: '12. Demand Supply Scanner' },
+      { to: '/research/qmre', label: '13. Momentum & Replay Engine' },
     ],
   },
   {

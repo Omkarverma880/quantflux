@@ -496,6 +496,20 @@ export const api = {
   dsConfigSave: (config) => request('/research/demand-supply/config', { method: 'POST', body: JSON.stringify(config || {}) }),
   dsUniverse: () => request('/research/demand-supply/universe'),
 
+  // Research #13 — QMRE (Momentum & Replay Engine, paper only)
+  qmreScan: (body) => request('/research/qmre/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
+  qmreSingle: (body) => request('/research/qmre/single', { method: 'POST', body: JSON.stringify(body) }),
+  qmreBacktest: (body) => request('/research/qmre/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
+  qmreBacktests: () => request('/research/qmre/backtests'),
+  qmreConfig: () => request('/research/qmre/config'),
+  qmreConfigSave: (config) => request('/research/qmre/config', { method: 'POST', body: JSON.stringify(config || {}) }),
+  qmreSaveProfile: (name, config) => request('/research/qmre/profile', { method: 'POST', body: JSON.stringify({ name, config }) }),
+  qmreUniverse: () => request('/research/qmre/universe'),
+  qmrePositions: (date) => request(`/research/qmre/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+  qmrePortfolio: () => request('/research/qmre/portfolio'),
+  qmrePaperOpen: (body) => request('/research/qmre/paper/open', { method: 'POST', body: JSON.stringify(body) }),
+  qmrePaperClose: (id) => request(`/research/qmre/paper/close/${id}`, { method: 'POST' }),
+
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),
   getPortfolioWatchlists: () => request('/portfolio/watchlists'),

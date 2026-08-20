@@ -37,6 +37,9 @@ from research.qmie import QMIEEngine
 from research.qmie import store as qmie_store
 from research.data_downloader import DataDownloader
 from research.demand_supply import DemandSupplyScanner
+from research.qmre import QMREService, QMREPaperManager
+from research.qmre import config as qmre_config
+from research.qmre import positions as qmre_positions
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -63,6 +66,21 @@ def _get_demand_supply(broker: Broker, user_id: int) -> DemandSupplyScanner:
     if eng is None:
         eng = DemandSupplyScanner(broker, user_id=user_id)
         _demand_supply[user_id] = eng
+    else:
+        eng.broker = broker
+        eng.universe.broker = broker
+    eng.user_id = user_id
+    return eng
+
+
+_qmre: dict[int, QMREService] = {}
+
+
+def _get_qmre(broker: Broker, user_id: int) -> QMREService:
+    eng = _qmre.get(user_id)
+    if eng is None:
+        eng = QMREService(broker, user_id=user_id)
+        _qmre[user_id] = eng
     else:
         eng.broker = broker
         eng.universe.broker = broker
@@ -1331,6 +1349,193 @@ def ds_universe(user_id: int = Depends(login_required), db: Session = Depends(ge
         return {"status": "ok", "symbols": [e["name"] for e in eng.universe.equities()]}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
+
+
+# ──────────────── Research #13 → QMRE (Momentum & Replay Engine — paper only) ────────────────
+class QMREScanReq(BaseModel):
+    overrides: dict | None = None
+    symbols: list[str] | None = None
+    date: str | None = None            # set → replay at a historical cutoff
+    at_time: str | None = None
+    top_n: int | None = None
+
+
+class QMRESingleReq(BaseModel):
+    symbol: str
+    overrides: dict | None = None
+    date: str | None = None
+    at_time: str | None = None
+
+
+class QMREBacktestReq(BaseModel):
+    overrides: dict | None = None
+    symbols: list[str] | None = None
+    start: str | None = None
+    end: str | None = None
+    label: str | None = None
+    save: bool = True
+
+
+class QMREPaperReq(BaseModel):
+    symbol: str
+    qty: int
+    entry: float
+    sl: float | None = None
+    target: float | None = None
+    mode: str | None = "intraday"
+    direction: str | None = "LONG"
+    note: str | None = None
+
+
+def _qmre_cfg(db, overrides):
+    return qmre_config.sanitize({**qmre_config.load_config(db), **(overrides or {})})
+
+
+@router.post("/qmre/scan")
+def qmre_scan(payload: QMREScanReq | None = None, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated — the scanner needs market data"}
+    p = payload or QMREScanReq()
+    try:
+        cfg = _qmre_cfg(db, p.overrides)
+        return _get_qmre(broker, user_id).scan(cfg, symbols=p.symbols, day=p.date,
+                                               at_time=p.at_time, top_n=p.top_n, live=not p.date)
+    except Exception as exc:
+        logger.error("QMRE scan failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/qmre/single")
+def qmre_single(payload: QMRESingleReq, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    try:
+        cfg = _qmre_cfg(db, payload.overrides)
+        return _get_qmre(broker, user_id).single_stock(payload.symbol, cfg, day=payload.date, at_time=payload.at_time)
+    except Exception as exc:
+        logger.error("QMRE single failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/qmre/backtest")
+def qmre_backtest(payload: QMREBacktestReq | None = None, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    p = payload or QMREBacktestReq()
+    try:
+        cfg = _qmre_cfg(db, p.overrides)
+        res = _get_qmre(broker, user_id).backtest(cfg, symbols=p.symbols, start=p.start, end=p.end)
+        if res.get("status") == "ok" and p.save:
+            try:
+                from core.models import QMREBacktestRun
+                from datetime import date as _d
+                run = QMREBacktestRun(user_id=user_id, label=p.label or f"{res['start']}→{res['end']}",
+                                      start_date=_d.fromisoformat(res["start"]), end_date=_d.fromisoformat(res["end"]),
+                                      strategy_version=cfg["strategy_version"], config=cfg,
+                                      stats=res["stats"], trades=res["trades"])
+                db.add(run); db.commit(); db.refresh(run)
+                res["run_id"] = run.id
+            except Exception as exc:
+                logger.debug("QMRE backtest save failed: %s", exc)
+        return res
+    except Exception as exc:
+        logger.error("QMRE backtest failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/qmre/backtests")
+def qmre_backtests(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        from core.models import QMREBacktestRun
+        rows = (db.query(QMREBacktestRun).filter(QMREBacktestRun.user_id == user_id)
+                .order_by(QMREBacktestRun.created_at.desc()).limit(50).all())
+        return {"status": "ok", "runs": [{"id": r.id, "label": r.label, "start": r.start_date.isoformat(),
+                                          "end": r.end_date.isoformat(), "version": r.strategy_version,
+                                          "stats": r.stats, "created_at": r.created_at.isoformat()} for r in rows]}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/qmre/backtest/{run_id}")
+def qmre_backtest_get(run_id: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    from core.models import QMREBacktestRun
+    r = db.query(QMREBacktestRun).filter(QMREBacktestRun.id == run_id, QMREBacktestRun.user_id == user_id).first()
+    if not r:
+        return {"status": "error", "message": "Run not found"}
+    return {"status": "ok", "id": r.id, "label": r.label, "config": r.config, "stats": r.stats, "trades": r.trades}
+
+
+@router.get("/qmre/config")
+def qmre_get_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    return {"status": "ok", "config": qmre_config.load_config(db), "profiles": list(qmre_config.list_profiles(db).keys())}
+
+
+@router.post("/qmre/config")
+def qmre_save_config(payload: dict | None = None, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": qmre_config.save_config(db, payload or {})}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/qmre/profile")
+def qmre_save_profile(payload: dict | None = None, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    p = payload or {}
+    name = (p.get("name") or "").strip()
+    if not name:
+        return {"status": "error", "message": "Profile name required"}
+    profs = qmre_config.save_profile(db, name, p.get("config") or qmre_config.load_config(db))
+    return {"status": "ok", "profiles": profs}
+
+
+@router.get("/qmre/universe")
+def qmre_universe(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        eng = _get_qmre(get_user_broker(db, user_id), user_id)
+        return {"status": "ok", "symbols": [e["name"] for e in eng.universe.equities()]}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/qmre/positions")
+def qmre_positions(date: str | None = None, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    mgr = QMREPaperManager(get_user_broker(db, user_id), user_id)
+    return {"status": "ok", "positions": mgr.positions(date)}
+
+
+@router.get("/qmre/portfolio")
+def qmre_portfolio(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    mgr = QMREPaperManager(broker, user_id)
+    cfg = qmre_config.load_config(db)
+    try:
+        mgr.monitor(cfg)      # refresh LTP/MTM + close hit positions before reporting
+    except Exception:
+        pass
+    return {"status": "ok", "portfolio": mgr.portfolio(cfg)}
+
+
+@router.post("/qmre/paper/open")
+def qmre_paper_open(payload: QMREPaperReq, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    mgr = QMREPaperManager(get_user_broker(db, user_id), user_id)
+    cfg = qmre_config.load_config(db)
+    try:
+        pos = mgr.open_paper(symbol=payload.symbol, qty=payload.qty, entry=payload.entry, sl=payload.sl,
+                             target=payload.target, mode=payload.mode or cfg["mode"],
+                             direction=payload.direction or "LONG", version=cfg["strategy_version"],
+                             source="manual", note=payload.note)
+        return {"status": "ok", "position": pos}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/qmre/paper/close/{pos_id}")
+def qmre_paper_close(pos_id: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    mgr = QMREPaperManager(get_user_broker(db, user_id), user_id)
+    return mgr.close_paper(pos_id)
 
 
 # ──────────────── Research → Data Downloader (read-only historical data) ────────────────

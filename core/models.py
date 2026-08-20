@@ -715,3 +715,56 @@ class FourthCandleEquityPosition(Base):
     __table_args__ = (
         Index("idx_fourthc_eq_user_date", "user_id", "trade_date"),
     )
+
+
+class QMREPaperPosition(Base):
+    """Paper position for Research #13 (QMRE). SIMULATION ONLY — no real order is
+    ever placed. Auto-created via ``create_all``."""
+    __tablename__ = "qmre_paper_positions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    trade_date = Column(Date, nullable=False)
+    symbol = Column(String(40))
+    direction = Column(String(5), default="LONG")     # LONG | SHORT
+    mode = Column(String(10), default="intraday")     # intraday | swing
+    qty = Column(Integer)
+    entry_price = Column(Numeric(12, 2))
+    entry_time = Column(String(20))
+    sl = Column(Numeric(12, 2))
+    target = Column(Numeric(12, 2))
+    ltp = Column(Numeric(12, 2))
+    mtm = Column(Numeric(14, 2), default=0)
+    mfe = Column(Numeric(14, 2), default=0)
+    mae = Column(Numeric(14, 2), default=0)
+    status = Column(String(12), default="OPEN")       # OPEN | TARGET | STOP | SQUAREOFF | MANUAL
+    exit_price = Column(Numeric(12, 2))
+    exit_time = Column(String(20))
+    exit_reason = Column(String(12))
+    score = Column(Numeric(6, 1))
+    signal_class = Column(String(6))
+    strategy_version = Column(String(16))
+    source = Column(String(10), default="manual")     # manual | auto
+    note = Column(Text)
+
+    __table_args__ = (Index("idx_qmre_pos_user_date", "user_id", "trade_date"),)
+
+
+class QMREBacktestRun(Base):
+    """Stored QMRE backtest summary (reproducibility + audit). Full trades kept as
+    JSONB so a run can be reopened exactly as produced."""
+    __tablename__ = "qmre_backtest_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    label = Column(String(120))
+    start_date = Column(Date)
+    end_date = Column(Date)
+    strategy_version = Column(String(16))
+    config = Column(JSONB)
+    stats = Column(JSONB)
+    trades = Column(JSONB)
+
+    __table_args__ = (Index("idx_qmre_bt_user", "user_id", "created_at"),)
