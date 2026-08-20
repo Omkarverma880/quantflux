@@ -59,19 +59,22 @@ def compute_features(candles: list[dict], ctx: dict, cfg: dict) -> Optional[dict
     day_low = min(float(c["low"]) for c in candles)
     cum_vol = sum(float(c.get("volume", 0) or 0) for c in candles)
 
-    # ── VWAP structure ──
-    vwap = vwap_of(candles)
+    # ── VWAP structure (single O(n) pass: running VWAP prefix) ──
+    pv = v = tp = 0.0
+    running_vwap = []
+    above_cnt = 0
+    for i, c in enumerate(candles, 1):
+        vol = float(c.get("volume", 0) or 0)
+        t = hlc3(c)
+        pv += t * vol; v += vol; tp += t
+        rv = (pv / v) if v > 0 else (tp / i)
+        running_vwap.append(rv)
+        if float(c["close"]) >= rv:
+            above_cnt += 1
+    vwap = running_vwap[-1]
     vwap_dist = (ltp - vwap) / vwap * 100.0 if vwap else 0.0
     slope_n = int(cfg.get("vwap_slope_lookback", 6))
-    vseries = []
-    for i in range(max(1, len(candles) - slope_n), len(candles) + 1):
-        vseries.append(vwap_of(candles[:i]))
-    vwap_slope = _slope_pct(vseries)
-    # how consistently price has held above VWAP (fraction of candles closing > their running vwap)
-    above_cnt = 0
-    for i in range(1, len(candles) + 1):
-        if float(candles[i - 1]["close"]) >= vwap_of(candles[:i]):
-            above_cnt += 1
+    vwap_slope = _slope_pct(running_vwap[-slope_n:])
     vwap_hold = above_cnt / len(candles)
 
     # ── opening range ──

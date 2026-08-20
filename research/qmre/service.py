@@ -62,20 +62,25 @@ class QMREService:
         return rows
 
     def _intraday(self, token: int, day: date, cutoff: datetime) -> list[dict]:
+        # cache per (token, day); for a still-forming today, refresh at most once
+        # per 5-min bucket so auto-refresh doesn't re-hammer Kite every scan.
+        today = datetime.now(IST).date()
+        now = datetime.now()
+        bucket = now.replace(second=0, microsecond=0, minute=(now.minute // 5) * 5)
         key = (token, day)
-        rows = self._intra_cache.get(key)
-        if rows is None:
+        entry = self._intra_cache.get(key)
+        rows = entry[1] if entry else None
+        fresh = entry and (day < today or entry[0] == bucket)
+        if rows is None or not fresh:
             frm = datetime.combine(day, MKT_OPEN)
-            to = min(datetime.combine(day, MKT_CLOSE), datetime.now())
+            to = min(datetime.combine(day, MKT_CLOSE), now)
             try:
                 rows = self.broker.get_historical_data(token, frm, to, TIMEFRAME) or []
             except Exception:
                 rows = []
             for c in rows:
                 c["_dt"] = _candle_dt(c)
-            # only cache completed sessions (today keeps forming)
-            if day < datetime.now(IST).date():
-                self._intra_cache[key] = rows
+            self._intra_cache[key] = (bucket if day >= today else day, rows)
         return [c for c in rows if c.get("_dt") and c["_dt"] <= cutoff]
 
     @staticmethod
@@ -153,22 +158,28 @@ class QMREService:
                 pc = float(pi[-1]["close"]) or float(ic[0]["open"])
                 bench_ret = (float(ic[-1]["close"]) - pc) / pc * 100 if pc else 0.0
         return {"regime_score": regime["score"], "regime_label": regime["label"],
-                "regime_available": regime["available"], "bench_ret_pct": round(bench_ret, 2)}
+                "regime_available": regime["available"], "bench_ret_pct": round(bench_ret, 2),
+                "day_change_pct": round(bench_ret, 2)}
 
-    def _depth(self, name) -> Optional[dict]:
-        try:
-            key = f"NSE:{name}"
-            q = (self.broker.get_quote([key]) or {}).get(key) or {}
-            d = q.get("depth") or {}
-            bid = sum(float(l.get("quantity", 0) or 0) for l in (d.get("buy") or [])[:5])
-            ask = sum(float(l.get("quantity", 0) or 0) for l in (d.get("sell") or [])[:5])
-            tot = bid + ask
-            if tot <= 0:
-                return {"available": False}
-            return {"available": True, "imbalance": round((bid - ask) / tot, 3),
-                    "bid": int(bid), "ask": int(ask)}
-        except Exception:
-            return {"available": False}
+    def _depth_batch(self, names) -> dict:
+        """One batched Kite quote() for the whole universe (not one call/stock).
+        Returns {symbol: depth-imbalance dict}."""
+        out: dict = {}
+        keys = [f"NSE:{n}" for n in names]
+        for i in range(0, len(keys), 400):
+            chunk = keys[i:i + 400]
+            try:
+                q = self.broker.get_quote(chunk) or {}
+            except Exception:
+                q = {}
+            for k, v in q.items():
+                d = (v or {}).get("depth") or {}
+                bid = sum(float(l.get("quantity", 0) or 0) for l in (d.get("buy") or [])[:5])
+                ask = sum(float(l.get("quantity", 0) or 0) for l in (d.get("sell") or [])[:5])
+                tot = bid + ask
+                out[k.split(":", 1)[-1]] = ({"available": True, "imbalance": round((bid - ask) / tot, 3),
+                                             "bid": int(bid), "ask": int(ask)} if tot > 0 else {"available": False})
+        return out
 
     # ── LIVE / REPLAY scan (same path; live=True adds depth + regime) ──
     def scan(self, cfg, *, symbols=None, day=None, at_time=None, top_n=None, live=True) -> dict:
@@ -185,6 +196,7 @@ class QMREService:
                 now = datetime.now()
                 d, cutoff = now.date(), now
             market = self._market_ctx(d, cutoff, cfg, live)
+            depth_map = self._depth_batch(names) if live else {}
             items = []
             for nm in names:
                 token, _ex = self.universe.resolve_equity_token(nm)
@@ -193,11 +205,11 @@ class QMREService:
                 candles = self._intraday(token, d, cutoff)
                 if len(candles) < 3:
                     continue
-                ctx = self._stock_ctx(nm, token, d, cutoff, cfg)
-                if live:
-                    ctx["depth"] = self._depth(nm)
                 if cfg.get("min_price") and float(candles[-1]["close"]) < float(cfg["min_price"]):
                     continue
+                ctx = self._stock_ctx(nm, token, d, cutoff, cfg)
+                if live:
+                    ctx["depth"] = depth_map.get(nm)
                 items.append({"symbol": nm, "candles": candles, "ctx": ctx})
             ranked = engine.rank(items, market, cfg)
             n = int(top_n or cfg.get("top_n", 5))

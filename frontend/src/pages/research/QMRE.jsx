@@ -91,17 +91,20 @@ function ScanTab({ mode, cfg, universe, showErr, flash }) {
   const [detail, setDetail] = useState(null);
   const [rdate, setRdate] = useState(''); const [rtime, setRtime] = useState('09:45');
   const pollRef = useRef(null);
+  const inFlight = useRef(false);
 
   useEffect(() => { const t = new Date().toISOString().slice(0, 10); setRdate(t); }, []);
 
   const run = useCallback(async (silent = false) => {
+    if (inFlight.current) return;              // never overlap scans (avoids pile-up)
+    inFlight.current = true;
     if (!silent) setLoading(true);
     try {
       const body = { top_n: topN, symbols: selU.mode === 'single' ? (selU.symbol ? [selU.symbol] : null) : selU.mode === 'watchlist' ? selU.symbols : null };
       if (mode === 'replay') { body.date = rdate; body.at_time = rtime; }
       const r = await api.qmreScan(body);
       if (r.status === 'ok') setData(r); else if (!silent) showErr(r.message || 'Scan failed');
-    } catch (e) { if (!silent) showErr(e.message); } finally { if (!silent) setLoading(false); }
+    } catch (e) { if (!silent) showErr(e.message); } finally { inFlight.current = false; if (!silent) setLoading(false); }
   }, [mode, topN, selU, rdate, rtime]); // eslint-disable-line
 
   useEffect(() => {
@@ -161,11 +164,11 @@ function ScanTab({ mode, cfg, universe, showErr, flash }) {
       {data && (
         <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
           <div className="overflow-x-auto"><table className="w-full text-xs whitespace-nowrap">
-            <thead className="bg-surface-3 text-gray-300"><tr>{['#', 'Symbol', 'LTP', 'Chg%', 'RVOL', 'VWAP', 'Breakout', 'RS', 'Score', 'Class', 'RR', 'Reason', ''].map((h, i) => <th key={h + i} className={`px-2.5 py-2 font-semibold ${i < 2 ? 'text-left' : i === 11 ? 'text-left' : 'text-right'}`}>{h}</th>)}</tr></thead>
+            <thead className="bg-surface-3 text-gray-300"><tr>{['#', 'Symbol', 'LTP', 'Chg%', 'RVOL', 'VWAP', 'Breakout', 'RS', 'Score', 'Class', 'Entry', 'SL', 'Target', 'RR', 'Qty', ''].map((h, i) => <th key={h + i} className={`px-2.5 py-2 font-semibold ${i < 2 ? 'text-left' : 'text-right'}`}>{h}</th>)}</tr></thead>
             <tbody>{(data.top || []).map((c) => (
               <tr key={c.symbol} className="border-t border-surface-3/40 hover:bg-surface-3/20">
                 <td className="px-2.5 py-1.5 text-left text-gray-500">{c.rank}</td>
-                <td className="px-2.5 py-1.5 text-left"><button onClick={() => setDetail(c)} className="text-brand-300 font-semibold hover:underline">{c.symbol}</button></td>
+                <td className="px-2.5 py-1.5 text-left"><button onClick={() => setDetail(c)} className="text-brand-300 font-semibold hover:underline" title="Full score breakdown">{c.symbol}</button></td>
                 <td className="px-2.5 py-1.5 text-right text-gray-200">₹{NUM(c.features.ltp)}</td>
                 <td className={`px-2.5 py-1.5 text-right ${pcolor(c.features.change_pct)}`}>{PCT(c.features.change_pct)}</td>
                 <td className="px-2.5 py-1.5 text-right text-gray-300">{c.features.rvol == null ? 'N/A' : `${c.features.rvol}x`}</td>
@@ -174,12 +177,15 @@ function ScanTab({ mode, cfg, universe, showErr, flash }) {
                 <td className={`px-2.5 py-1.5 text-right ${pcolor(c.features.rs)}`}>{PCT(c.features.rs, 1)}</td>
                 <td className="px-2.5 py-1.5 text-right"><span className="font-bold" style={{ color: clsBg(c.class) }}>{c.score}</span></td>
                 <td className={`px-2.5 py-1.5 text-right font-bold ${clsColor(c.class)}`}>{c.class}</td>
-                <td className="px-2.5 py-1.5 text-right text-gray-300">{c.risk.rr}</td>
-                <td className="px-2.5 py-1.5 text-left text-gray-500 max-w-[240px] truncate">{c.signal_reason}</td>
+                <td className="px-2.5 py-1.5 text-right text-gray-200">₹{NUM(c.risk.entry)}</td>
+                <td className="px-2.5 py-1.5 text-right text-red-400">₹{NUM(c.risk.sl)}</td>
+                <td className="px-2.5 py-1.5 text-right text-emerald-400">₹{NUM(c.risk.target1)}</td>
+                <td className={`px-2.5 py-1.5 text-right ${c.risk.poor_rr ? 'text-amber-400' : 'text-gray-300'}`}>{c.risk.rr}</td>
+                <td className="px-2.5 py-1.5 text-right text-gray-400">{INT(c.sizing.qty)}</td>
                 <td className="px-2.5 py-1.5 text-right"><button onClick={() => openPaper(c)} className="px-2 py-0.5 text-[11px] rounded bg-brand-600/80 hover:bg-brand-600 text-white" title="Open paper position (simulation only)">Paper Buy</button></td>
               </tr>
             ))}
-            {!(data.top || []).length && <tr><td colSpan={13} className="px-4 py-8 text-center text-gray-500">No candidates.</td></tr>}
+            {!(data.top || []).length && <tr><td colSpan={16} className="px-4 py-8 text-center text-gray-500">No candidates.</td></tr>}
             </tbody>
           </table></div>
         </div>
