@@ -497,9 +497,9 @@ export const api = {
   dsUniverse: () => request('/research/demand-supply/universe'),
 
   // Research #13 — QMRE (Momentum & Replay Engine, paper only)
-  qmreScan: (body) => request('/research/qmre/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
-  qmreSingle: (body) => request('/research/qmre/single', { method: 'POST', body: JSON.stringify(body) }),
-  qmreBacktest: (body) => request('/research/qmre/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
+  qmreScan: (body, signal) => request('/research/qmre/scan', { method: 'POST', body: JSON.stringify(body || {}), signal }),
+  qmreSingle: (body, signal) => request('/research/qmre/single', { method: 'POST', body: JSON.stringify(body), signal }),
+  qmreBacktest: (body, signal) => request('/research/qmre/backtest', { method: 'POST', body: JSON.stringify(body || {}), signal }),
   qmreBacktests: () => request('/research/qmre/backtests'),
   qmreConfig: () => request('/research/qmre/config'),
   qmreConfigSave: (config) => request('/research/qmre/config', { method: 'POST', body: JSON.stringify(config || {}) }),

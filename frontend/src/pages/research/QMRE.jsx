@@ -92,19 +92,27 @@ function ScanTab({ mode, cfg, universe, showErr, flash }) {
   const [rdate, setRdate] = useState(''); const [rtime, setRtime] = useState('09:45');
   const pollRef = useRef(null);
   const inFlight = useRef(false);
+  const abortRef = useRef(null);
 
   useEffect(() => { const t = new Date().toISOString().slice(0, 10); setRdate(t); }, []);
+
+  const cancel = () => {
+    if (abortRef.current) abortRef.current.abort();
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    setAuto(false); inFlight.current = false; setLoading(false);
+  };
 
   const run = useCallback(async (silent = false) => {
     if (inFlight.current) return;              // never overlap scans (avoids pile-up)
     inFlight.current = true;
+    const ac = new AbortController(); abortRef.current = ac;
     if (!silent) setLoading(true);
     try {
       const body = { top_n: topN, symbols: selU.mode === 'single' ? (selU.symbol ? [selU.symbol] : null) : selU.mode === 'watchlist' ? selU.symbols : null };
       if (mode === 'replay') { body.date = rdate; body.at_time = rtime; }
-      const r = await api.qmreScan(body);
+      const r = await api.qmreScan(body, ac.signal);
       if (r.status === 'ok') setData(r); else if (!silent) showErr(r.message || 'Scan failed');
-    } catch (e) { if (!silent) showErr(e.message); } finally { inFlight.current = false; if (!silent) setLoading(false); }
+    } catch (e) { if (e.name !== 'AbortError' && !silent) showErr(e.message); } finally { inFlight.current = false; if (!silent) setLoading(false); }
   }, [mode, topN, selU, rdate, rtime]); // eslint-disable-line
 
   useEffect(() => {
@@ -145,6 +153,7 @@ function ScanTab({ mode, cfg, universe, showErr, flash }) {
             <select value={topN} onChange={(e) => setTopN(Number(e.target.value))} className={sel}>{[1, 3, 5, 10, 20, 50, 999].map((n) => <option key={n} value={n}>{n === 999 ? 'All' : `Top ${n}`}</option>)}</select>
           </div>
           <button onClick={() => run(false)} disabled={loading} className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50 self-end">{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Radio className="w-4 h-4" />} Scan</button>
+          {loading && <button onClick={cancel} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-red-600/80 hover:bg-red-600 text-white font-semibold self-end"><X className="w-4 h-4" /> Cancel</button>}
           {mode === 'live' && <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer self-end"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="accent-brand-500" /> Auto-refresh</label>}
           {data && <span className="text-xs text-gray-500 self-end ml-auto">Scanned {data.scanned} · cutoff {data.cutoff} · v{data.config_version}</span>}
         </div>
@@ -232,12 +241,14 @@ function ForensicDrawer({ c, onClose, onPaper }) {
 function SingleTab({ cfg, showErr }) {
   const [sym, setSym] = useState(''); const [date, setDate] = useState(''); const [time, setTime] = useState('09:45');
   const [data, setData] = useState(null); const [loading, setLoading] = useState(false);
+  const abortRef = useRef(null);
   useEffect(() => { setDate(new Date().toISOString().slice(0, 10)); }, []);
+  const cancel = () => { if (abortRef.current) abortRef.current.abort(); setLoading(false); };
   const run = async () => {
     if (!sym.trim()) return showErr('Enter a symbol');
-    setLoading(true);
-    try { const r = await api.qmreSingle({ symbol: sym.trim().toUpperCase(), date, at_time: time }); if (r.status === 'ok') setData(r); else showErr(r.message); }
-    catch (e) { showErr(e.message); } finally { setLoading(false); }
+    const ac = new AbortController(); abortRef.current = ac; setLoading(true);
+    try { const r = await api.qmreSingle({ symbol: sym.trim().toUpperCase(), date, at_time: time }, ac.signal); if (r.status === 'ok') setData(r); else showErr(r.message); }
+    catch (e) { if (e.name !== 'AbortError') showErr(e.message); } finally { setLoading(false); }
   };
   const c = data?.candidate;
   return (
@@ -247,6 +258,7 @@ function SingleTab({ cfg, showErr }) {
         <div><label className={lbl}>Date</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={sel} /></div>
         <div><label className={lbl}>Time</label><input value={time} onChange={(e) => setTime(e.target.value)} className={`${sel} w-24`} /></div>
         <button onClick={run} disabled={loading} className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50">{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />} Analyze</button>
+        {loading && <button onClick={cancel} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-red-600/80 hover:bg-red-600 text-white font-semibold"><X className="w-4 h-4" /> Cancel</button>}
       </div>
       {data && c && (
         <>
@@ -276,14 +288,16 @@ function BacktestTab({ cfg, universe, showErr }) {
   const [selU, setSelU] = useState({ mode: 'watchlist', symbol: null, symbols: null });
   const [start, setStart] = useState(''); const [end, setEnd] = useState('');
   const [data, setData] = useState(null); const [loading, setLoading] = useState(false);
+  const abortRef = useRef(null);
   useEffect(() => { const t = new Date().toISOString().slice(0, 10); setStart(t); setEnd(t); }, []);
+  const cancel = () => { if (abortRef.current) abortRef.current.abort(); setLoading(false); };
   const run = async () => {
-    setLoading(true);
+    const ac = new AbortController(); abortRef.current = ac; setLoading(true);
     try {
       const body = { start, end, symbols: selU.mode === 'single' ? (selU.symbol ? [selU.symbol] : null) : selU.mode === 'watchlist' ? selU.symbols : null };
-      const r = await api.qmreBacktest(body);
+      const r = await api.qmreBacktest(body, ac.signal);
       if (r.status === 'ok') setData(r); else showErr(r.message);
-    } catch (e) { showErr(e.message); } finally { setLoading(false); }
+    } catch (e) { if (e.name !== 'AbortError') showErr(e.message); } finally { setLoading(false); }
   };
   const s = data?.stats;
   const exportCSV = () => {
@@ -302,6 +316,7 @@ function BacktestTab({ cfg, universe, showErr }) {
           <div><label className={lbl}>From</label><input type="date" value={start} onChange={(e) => setStart(e.target.value)} className={sel} /></div>
           <div><label className={lbl}>To</label><input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className={sel} /></div>
           <button onClick={run} disabled={loading} className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50">{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />} Run Backtest</button>
+          {loading && <button onClick={cancel} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-red-600/80 hover:bg-red-600 text-white font-semibold"><X className="w-4 h-4" /> Cancel</button>}
           <span className="text-[11px] text-gray-600">One paper trade per stock per day, entered at the first A+/A cutoff · costs &amp; slippage applied · no look-ahead.</span>
         </div>
       </div>
