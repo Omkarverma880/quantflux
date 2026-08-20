@@ -83,20 +83,50 @@ def score_features(f: dict, ctx: dict, cfg: dict) -> dict:
     return {"score": score, "breakdown": breakdown, "class": signal_class(score, cfg), "sub": sub}
 
 
-def risk_plan(f: dict, cfg: dict) -> dict:
-    """Entry / SL / targets / RR from the configured mode. Long-only momentum
-    (paper). ``day_low`` / ``or_low`` give the structure stop."""
-    entry = float(f["ltp"])
-    atr = float(f.get("atr") or 0) or entry * 0.01
+def entry_plan(f: dict, cfg: dict) -> dict:
+    """Smart LONG entry (paper). Decides WHERE and HOW to enter from market
+    structure instead of blindly using LTP:
+
+      • BREAK    — price hasn't cleared the trigger yet → buy-stop just above it.
+      • NOW      — cleared the trigger and not over-extended → enter at market.
+      • PULLBACK — already stretched from VWAP (chasing risk) → wait for a retest
+                   toward VWAP; entry is BELOW the current price.
+
+    The stop is anchored to structure (below VWAP / trigger / OR-low), targets are
+    measured from the ENTRY (not LTP), and an ``entry_quality`` (0-1) rewards clean
+    setups and penalises extended/late ones so the scanner doesn't chase."""
+    ltp = float(f["ltp"])
+    atr = float(f.get("atr") or 0) or ltp * 0.01
+    vwap = float(f.get("vwap") or ltp) or ltp
+    or_high = float(f.get("or_high") or 0)
+    prev_high = float(f.get("prev_high") or 0)
+    trigger = max(or_high, prev_high, 0) or ltp
+    ext_atr = (ltp - vwap) / atr if atr else 0.0       # how many ATRs above VWAP
+    ext_ok, ext_hot = 1.0, 2.2
+    buf = 0.0005                                        # 5 bps trigger buffer
+
+    if ltp < trigger * (1 - 0.0002):                   # approaching, not yet broken
+        etype, entry = "BREAK", round(trigger * (1 + buf), 2)
+        note = f"Buy-stop on break above ₹{round(trigger, 2)}"
+    elif ext_atr <= ext_ok:                            # broken, not extended
+        etype, entry = "NOW", round(ltp, 2)
+        note = "Confirmed — enter at market"
+    else:                                              # extended → don't chase
+        etype, entry = "PULLBACK", round(max(vwap, (trigger + vwap) / 2), 2)
+        note = f"Extended {ext_atr:.1f} ATR — enter on pullback toward VWAP ₹{round(vwap, 2)}"
+
+    zone = round(max(0.02, atr * 0.15), 2)
+    entry_low, entry_high = round(entry - zone, 2), round(entry + zone, 2)
+
     sl_mode, sl_v = cfg["sl_mode"], float(cfg["sl_value"])
+    struct = min([x for x in [f.get("day_low"), f.get("or_low"), vwap, trigger * (1 - 0.001)] if x] or [entry * 0.99])
     if sl_mode == "percent":
         sl = entry * (1 - sl_v / 100.0)
     elif sl_mode == "structure":
-        base = min(x for x in [f.get("day_low"), f.get("or_low"), f.get("vwap")] if x)
-        sl = float(base) * 0.999
+        sl = float(struct) * 0.999
     else:  # atr
         sl = entry - atr * sl_v
-    sl = max(0.01, round(sl, 2))
+    sl = max(0.01, round(min(sl, entry * 0.999), 2))   # always below entry
     risk = max(0.01, entry - sl)
 
     t_mode, t_v = cfg["target_mode"], float(cfg["target_value"])
@@ -107,13 +137,28 @@ def risk_plan(f: dict, cfg: dict) -> dict:
     else:  # atr
         primary = entry + atr * t_v
     reward = max(0.01, primary - entry)
-    t1 = round(entry + reward, 2)
-    t2 = round(entry + reward * 1.7, 2)
-    t3 = round(entry + reward * 2.5, 2)
     rr = round(reward / risk, 2)
-    return {"entry": round(entry, 2), "sl": sl, "risk_per_share": round(risk, 2),
-            "target1": t1, "target2": t2, "target3": t3, "rr": rr,
-            "poor_rr": rr < float(cfg.get("min_rr", 1.5))}
+
+    if etype == "NOW":
+        eq = 1.0 - min(0.5, max(0.0, ext_atr - 0.3) * 0.4)
+    elif etype == "BREAK":
+        eq = 0.85
+    else:                                              # PULLBACK / extended
+        eq = max(0.2, 0.6 - (ext_atr - ext_ok) * 0.15)
+    if ext_atr > ext_hot:                              # exhaustion risk
+        eq *= 0.6
+
+    return {"entry": entry, "entry_low": entry_low, "entry_high": entry_high,
+            "entry_type": etype, "entry_note": note, "ext_atr": round(ext_atr, 2),
+            "sl": sl, "risk_per_share": round(risk, 2),
+            "target1": round(entry + reward, 2), "target2": round(entry + reward * 1.7, 2),
+            "target3": round(entry + reward * 2.5, 2), "rr": rr,
+            "poor_rr": rr < float(cfg.get("min_rr", 1.5)),
+            "entry_quality": round(_clamp01(eq), 2)}
+
+
+# backwards-compat alias
+risk_plan = entry_plan
 
 
 def size_position(entry: float, sl: float, cfg: dict) -> dict:

@@ -320,11 +320,31 @@ class QMREService:
             rp, sz = cand["risk"], cand["sizing"]
             if sz["qty"] <= 0:
                 return None
+            # first qualifying signal → attempt a fill per entry type (realistic):
+            #   NOW      → fill at the cutoff candle
+            #   BREAK    → fill only when a later candle trades through the buy-stop
+            #   PULLBACK → fill only when a later candle retraces to the entry
+            future = [c for c in full if c["_dt"] > cutoff and c["_dt"] <= eod]
+            etype, entry = rp["entry_type"], rp["entry"]
+            fill_dt = None
+            if etype == "NOW":
+                fill_dt = cutoff
+            elif etype == "BREAK":
+                for c in future:
+                    if float(c["high"]) >= entry:
+                        fill_dt = c["_dt"]; break
+            else:  # PULLBACK
+                for c in future:
+                    if float(c["low"]) <= entry:
+                        fill_dt = c["_dt"]; break
+            if fill_dt is None:
+                return None                       # signalled but never filled → no trade
             fwd = [(c["_dt"], float(c["close"]), float(c["high"]), float(c["low"]))
-                   for c in full if c["_dt"] > cutoff and c["_dt"] <= eod]
-            sim = paper.simulate_forward(rp["entry"], fwd, sl=rp["sl"], target=rp["target1"],
+                   for c in full if c["_dt"] > fill_dt and c["_dt"] <= eod]
+            sim = paper.simulate_forward(entry, fwd, sl=rp["sl"], target=rp["target1"],
                                          qty=sz["qty"], square_off_reached=True, cfg=cfg)
-            return {"date": day.isoformat(), "symbol": name, "entry_time": cutoff.strftime("%H:%M"),
+            return {"date": day.isoformat(), "symbol": name, "entry_time": fill_dt.strftime("%H:%M"),
+                    "signal_time": cutoff.strftime("%H:%M"), "entry_type": etype,
                     "class": cand["class"], "score": cand["score"], "regime": market["regime_label"],
                     "entry": sim["fill_entry"], "sl": rp["sl"], "target": rp["target1"], "rr": rp["rr"],
                     "qty": sz["qty"], "exit": sim["exit"],

@@ -21,6 +21,12 @@ function Bar({ value, max, color }) {
   return <div className="h-2 rounded bg-surface-3 overflow-hidden"><div className="h-full rounded" style={{ width: `${pct}%`, background: color }} /></div>;
 }
 
+function EntryTag({ t }) {
+  const m = { NOW: ['ENTER NOW', 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'], BREAK: ['BUY-STOP ↑', 'bg-sky-500/15 text-sky-300 border-sky-500/40'], PULLBACK: ['PULLBACK ↓', 'bg-amber-500/15 text-amber-300 border-amber-500/40'] };
+  const [label, cls] = m[t] || ['—', 'text-gray-500 border-surface-4'];
+  return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${cls}`}>{label}</span>;
+}
+
 export default function QMRE() {
   const [tab, setTab] = useState('live');
   const [cfg, setCfg] = useState(null);
@@ -173,20 +179,19 @@ function ScanTab({ mode, cfg, universe, showErr, flash }) {
       {data && (
         <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
           <div className="overflow-x-auto"><table className="w-full text-xs whitespace-nowrap">
-            <thead className="bg-surface-3 text-gray-300"><tr>{['#', 'Symbol', 'LTP', 'Chg%', 'RVOL', 'VWAP', 'Breakout', 'RS', 'Score', 'Class', 'Entry', 'SL', 'Target', 'RR', 'Qty', ''].map((h, i) => <th key={h + i} className={`px-2.5 py-2 font-semibold ${i < 2 ? 'text-left' : 'text-right'}`}>{h}</th>)}</tr></thead>
+            <thead className="bg-surface-3 text-gray-300"><tr>{['#', 'Symbol', 'LTP', 'Chg%', 'RVOL', 'RS', 'Score', 'Class', 'Type', 'Entry', 'SL', 'Target', 'RR', 'Qty', ''].map((h, i) => <th key={h + i} className={`px-2.5 py-2 font-semibold ${i < 2 ? 'text-left' : i === 8 ? 'text-center' : 'text-right'}`}>{h}</th>)}</tr></thead>
             <tbody>{(data.top || []).map((c) => (
               <tr key={c.symbol} className="border-t border-surface-3/40 hover:bg-surface-3/20">
                 <td className="px-2.5 py-1.5 text-left text-gray-500">{c.rank}</td>
-                <td className="px-2.5 py-1.5 text-left"><button onClick={() => setDetail(c)} className="text-brand-300 font-semibold hover:underline" title="Full score breakdown">{c.symbol}</button></td>
+                <td className="px-2.5 py-1.5 text-left"><button onClick={() => setDetail(c)} className="text-brand-300 font-semibold hover:underline" title="Full score breakdown & entry plan">{c.symbol}</button></td>
                 <td className="px-2.5 py-1.5 text-right text-gray-200">₹{NUM(c.features.ltp)}</td>
                 <td className={`px-2.5 py-1.5 text-right ${pcolor(c.features.change_pct)}`}>{PCT(c.features.change_pct)}</td>
                 <td className="px-2.5 py-1.5 text-right text-gray-300">{c.features.rvol == null ? 'N/A' : `${c.features.rvol}x`}</td>
-                <td className={`px-2.5 py-1.5 text-right ${c.features.above_vwap ? 'text-emerald-400' : 'text-red-400'}`}>{c.features.above_vwap ? '▲' : '▼'} {NUM(c.features.vwap, 0)}</td>
-                <td className={`px-2.5 py-1.5 text-right ${c.features.breakout_confirmed ? 'text-emerald-400' : 'text-gray-500'}`}>{c.features.breakout_confirmed ? 'confirmed' : c.features.orb === 'breakout' ? 'OR' : '—'}</td>
                 <td className={`px-2.5 py-1.5 text-right ${pcolor(c.features.rs)}`}>{PCT(c.features.rs, 1)}</td>
                 <td className="px-2.5 py-1.5 text-right"><span className="font-bold" style={{ color: clsBg(c.class) }}>{c.score}</span></td>
                 <td className={`px-2.5 py-1.5 text-right font-bold ${clsColor(c.class)}`}>{c.class}</td>
-                <td className="px-2.5 py-1.5 text-right text-gray-200">₹{NUM(c.risk.entry)}</td>
+                <td className="px-2.5 py-1.5 text-center"><EntryTag t={c.risk.entry_type} /></td>
+                <td className="px-2.5 py-1.5 text-right text-gray-100 font-medium" title={c.risk.entry_note}>₹{NUM(c.risk.entry)}</td>
                 <td className="px-2.5 py-1.5 text-right text-red-400">₹{NUM(c.risk.sl)}</td>
                 <td className="px-2.5 py-1.5 text-right text-emerald-400">₹{NUM(c.risk.target1)}</td>
                 <td className={`px-2.5 py-1.5 text-right ${c.risk.poor_rr ? 'text-amber-400' : 'text-gray-300'}`}>{c.risk.rr}</td>
@@ -194,7 +199,7 @@ function ScanTab({ mode, cfg, universe, showErr, flash }) {
                 <td className="px-2.5 py-1.5 text-right"><button onClick={() => openPaper(c)} className="px-2 py-0.5 text-[11px] rounded bg-brand-600/80 hover:bg-brand-600 text-white" title="Open paper position (simulation only)">Paper Buy</button></td>
               </tr>
             ))}
-            {!(data.top || []).length && <tr><td colSpan={16} className="px-4 py-8 text-center text-gray-500">No candidates.</td></tr>}
+            {!(data.top || []).length && <tr><td colSpan={15} className="px-4 py-8 text-center text-gray-500">No candidates.</td></tr>}
             </tbody>
           </table></div>
         </div>
@@ -216,6 +221,11 @@ function ForensicDrawer({ c, onClose, onPaper }) {
         </div>
         <div className="p-4 space-y-4">
           <div className="text-sm text-gray-400">Why this signal: <span className="text-gray-200">{c.signal_reason}</span></div>
+          <div className="bg-surface-2 border border-surface-3 rounded-lg p-3 flex flex-wrap items-center gap-3">
+            <EntryTag t={c.risk.entry_type} />
+            <span className="text-sm text-gray-200">{c.risk.entry_note}</span>
+            <span className="text-xs text-gray-500 ml-auto">Entry zone ₹{NUM(c.risk.entry_low)} – ₹{NUM(c.risk.entry_high)} · {c.risk.ext_atr} ATR from VWAP · entry quality {Math.round((c.risk.entry_quality || 0) * 100)}%</span>
+          </div>
           <div className="bg-surface-2 border border-surface-3 rounded-lg p-3">
             <div className="text-sm font-semibold text-gray-200 mb-2">Score Breakdown</div>
             <div className="space-y-1.5 text-xs">

@@ -27,23 +27,26 @@ def evaluate(candles: list[dict], stock_ctx: dict, market_ctx: dict, cfg: dict) 
     f = feat.compute_features(candles, ctx, cfg)
     if not f:
         return None
-    rp = scoring.risk_plan(f, cfg)
+    rp = scoring.entry_plan(f, cfg)
     ctx["rr"] = rp["rr"]
     sc = scoring.score_features(f, ctx, cfg)
     sz = scoring.size_position(rp["entry"], rp["sl"], cfg)
     cutoff = candles[-1]["_dt"]
+    # rank by score, tilted up by R:R and DOWN when the entry is a chase
+    opp = sc["score"] * (1 + 0.08 * min(rp["rr"], 3)) * (0.7 + 0.3 * rp["entry_quality"])
     return {
         "symbol": stock_ctx.get("symbol"),
         "cutoff": cutoff.strftime("%Y-%m-%d %H:%M") if cutoff else None,
         "score": sc["score"], "class": sc["class"], "breakdown": sc["breakdown"],
         "features": f, "risk": rp, "sizing": sz,
+        "entry_type": rp["entry_type"], "entry_quality": rp["entry_quality"],
         "signal_reason": _reason(f, sc, rp),
-        "opportunity": round(sc["score"] * (1 + 0.08 * min(rp["rr"], 3)), 2),  # score, RR-tilted
+        "opportunity": round(opp, 2),
     }
 
 
 def _reason(f: dict, sc: dict, rp: dict) -> str:
-    bits = []
+    bits = [{"NOW": "enter now", "BREAK": "buy-stop on breakout", "PULLBACK": "wait for pullback"}.get(rp["entry_type"], rp["entry_type"])]
     if f.get("rvol") is not None:
         bits.append(f"RVOL {f['rvol']}x")
     if f.get("breakout_confirmed"):
@@ -53,6 +56,8 @@ def _reason(f: dict, sc: dict, rp: dict) -> str:
     bits.append("above VWAP" if f.get("above_vwap") else "below VWAP")
     if f.get("rs") is not None:
         bits.append(f"RS {f['rs']:+.1f}%")
+    if rp.get("ext_atr") is not None:
+        bits.append(f"{rp['ext_atr']} ATR from VWAP")
     bits.append(f"RR {rp['rr']}")
     return " · ".join(bits)
 

@@ -87,13 +87,24 @@ def test_scoring_and_class():
     assert abs(sum(b["points"] for b in sc["breakdown"].values()) - sc["score"]) < 0.5
 
 
-def test_risk_and_sizing():
-    f = {"ltp": 100.0, "atr": 2.0, "day_low": 98.0, "or_low": 98.5, "vwap": 99.5}
-    rp = scoring.risk_plan(f, CFG)
-    assert rp["sl"] < 100 < rp["target1"] and rp["rr"] > 0
+def test_entry_and_sizing():
+    # NOW: broken above trigger, not extended → entry ≈ LTP
+    f = {"ltp": 100.0, "atr": 2.0, "day_low": 98.0, "or_low": 98.5, "vwap": 99.5, "or_high": 99.6, "prev_high": 99.0}
+    rp = scoring.entry_plan(f, CFG)
+    assert rp["entry_type"] == "NOW" and rp["sl"] < rp["entry"] < rp["target1"] and rp["rr"] > 0
     sz = scoring.size_position(rp["entry"], rp["sl"], CFG)
-    assert sz["qty"] == int(20000 // 100) == 200
-    assert sz["risk_amount"] > 0
+    assert sz["qty"] == int(20000 // rp["entry"]) and sz["risk_amount"] > 0
+
+
+def test_entry_break_and_pullback():
+    # BREAK: price below the trigger → entry ABOVE ltp
+    fb = {"ltp": 100.0, "atr": 2.0, "day_low": 98, "or_low": 98.5, "vwap": 99.5, "or_high": 101.0, "prev_high": 101.5}
+    rb = scoring.entry_plan(fb, CFG)
+    assert rb["entry_type"] == "BREAK" and rb["entry"] > 100.0
+    # PULLBACK: extended far above VWAP → entry BELOW ltp, lower quality
+    fp = {"ltp": 110.0, "atr": 2.0, "day_low": 100, "or_low": 101, "vwap": 100.0, "or_high": 101, "prev_high": 101}
+    rp = scoring.entry_plan(fp, CFG)
+    assert rp["entry_type"] == "PULLBACK" and rp["entry"] < 110.0 and rp["entry_quality"] < 0.6
 
 
 def test_paper_forward_target_and_costs():
