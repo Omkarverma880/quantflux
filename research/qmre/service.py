@@ -181,22 +181,40 @@ class QMREService:
                                              "bid": int(bid), "ask": int(ask)} if tot > 0 else {"available": False})
         return out
 
+    # ── session resolution: fall back to the last session that actually traded ──
+    def _resolve_session(self, cfg) -> tuple:
+        """(day, cutoff, stale). Before the open / after midnight / on a holiday
+        or weekend, 'today' has no candles — fall back to the most recent session
+        that does, so the scanner always shows the latest real market picture."""
+        now = datetime.now()
+        tok = self._index_token(cfg.get("rs_benchmark", "NIFTY 50"))
+        d = now.date()
+        for _ in range(8):
+            cutoff = min(datetime.combine(d, MKT_CLOSE), now) if d == now.date() else datetime.combine(d, MKT_CLOSE)
+            if d.weekday() < 5 and (not tok or self._intraday(tok, d, cutoff)):
+                if not tok:
+                    return (d, cutoff, d != now.date())
+                return (d, cutoff, d != now.date() or now.time() > MKT_CLOSE)
+            d -= timedelta(days=1)
+        return (now.date(), now, False)
+
     # ── LIVE / REPLAY scan (same path; live=True adds depth + regime) ──
     def scan(self, cfg, *, symbols=None, day=None, at_time=None, top_n=None, live=True) -> dict:
         with self._lock:
             names = self._names(cfg, symbols)
             if not names:
                 return {"status": "error", "message": "No stocks in universe"}
+            stale = False
             if day:
                 d = date.fromisoformat(day)
                 hh, mm = (at_time or "15:15").split(":")
                 cutoff = datetime.combine(d, dtime(int(hh), int(mm)))
                 live = False
             else:
-                now = datetime.now()
-                d, cutoff = now.date(), now
+                d, cutoff, stale = self._resolve_session(cfg)
             market = self._market_ctx(d, cutoff, cfg, live)
-            depth_map = self._depth_batch(names) if live else {}
+            # don't use order-book depth from a closed market — it's a stale snapshot
+            depth_map = self._depth_batch(names) if (live and not stale) else {}
             items = []
             for nm in names:
                 token, _ex = self.universe.resolve_equity_token(nm)
@@ -216,7 +234,8 @@ class QMREService:
             classes = {}
             for c in ranked:
                 classes[c["class"]] = classes.get(c["class"], 0) + 1
-            return {"status": "ok", "live": live, "date": d.isoformat(),
+            return {"status": "ok", "live": live, "date": d.isoformat(), "stale": stale,
+                    "session_label": ("Last session" if stale else "Live"),
                     "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S"),
                     "market": market, "scanned": len(items), "counts": classes,
                     "top": ranked[:n], "all": ranked, "config_version": cfg["strategy_version"],
@@ -229,12 +248,17 @@ class QMREService:
             token, ex = self.universe.resolve_equity_token(name)
             if not token:
                 return {"status": "error", "message": f"{name}: not a tradable NSE/BSE equity"}
-            d = date.fromisoformat(day) if day else datetime.now(IST).date()
+            if day:
+                d = date.fromisoformat(day)
+            else:
+                d, _c, _s = self._resolve_session(cfg)     # last session if today hasn't traded
             hh, mm = (at_time or "09:45").split(":")
             cutoff = datetime.combine(d, dtime(int(hh), int(mm)))
             candles = self._intraday(token, d, cutoff)
             if len(candles) < 3:
-                return {"status": "error", "message": "Not enough candles by that time"}
+                return {"status": "error",
+                        "message": f"{name}: no 5-min candles for {d} by {at_time or '09:45'} "
+                                   "— pick a trading day/time with data."}
             market = self._market_ctx(d, cutoff, cfg, live=(day is None))
             ctx = self._stock_ctx(name, token, d, cutoff, cfg)
             cand = engine.evaluate(candles, {**ctx, "symbol": name}, market, cfg)

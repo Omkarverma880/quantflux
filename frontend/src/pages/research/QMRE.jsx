@@ -161,7 +161,12 @@ function ScanTab({ mode, cfg, universe, showErr, flash }) {
           <button onClick={() => run(false)} disabled={loading} className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50 self-end">{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Radio className="w-4 h-4" />} Scan</button>
           {loading && <button onClick={cancel} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-red-600/80 hover:bg-red-600 text-white font-semibold self-end"><X className="w-4 h-4" /> Cancel</button>}
           {mode === 'live' && <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer self-end"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="accent-brand-500" /> Auto-refresh</label>}
-          {data && <span className="text-xs text-gray-500 self-end ml-auto">Scanned {data.scanned} · cutoff {data.cutoff} · v{data.config_version}</span>}
+          {data && (
+            <span className="text-xs self-end ml-auto flex items-center gap-2">
+              {data.stale && <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/40 font-semibold">LAST SESSION {data.date}</span>}
+              <span className="text-gray-500">Scanned {data.scanned} · cutoff {data.cutoff} · v{data.config_version}</span>
+            </span>
+          )}
         </div>
       </div>
 
@@ -172,7 +177,11 @@ function ScanTab({ mode, cfg, universe, showErr, flash }) {
           {['A+', 'A', 'B', 'WATCH', 'NO TRADE'].map((k) => (
             <span key={k} className="px-2 py-1 rounded-lg bg-surface-2 border border-surface-3"><strong className={clsColor(k)}>{k}</strong> <span className="text-gray-400">{data.counts?.[k] || 0}</span></span>
           ))}
-          {!(data.top || []).some((c) => c.class === 'A+' || c.class === 'A') && <span className="px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300">Market conditions weak — no A+/A setup; best watchlist candidates shown.</span>}
+          {data.scanned === 0
+            ? <span className="px-2 py-1 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300">No candles for this session — the market may not have traded yet. Try Replay with a past trading date.</span>
+            : !(data.top || []).some((c) => c.class === 'A+' || c.class === 'A')
+              ? <span className="px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300">No A+/A setup right now — best candidates shown below.</span>
+              : null}
         </div>
       )}
 
