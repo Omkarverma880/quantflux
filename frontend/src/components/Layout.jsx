@@ -52,6 +52,7 @@ const NAV = [
       { to: '/research/data-downloader', label: '11. Data Downloader' },
       { to: '/research/demand-supply', label: '12. Demand Supply Scanner' },
       { to: '/research/qmre', label: '13. Momentum & Replay Engine' },
+      { to: '/research/market-hub', label: '14. Market Intelligence Hub' },
     ],
   },
   {

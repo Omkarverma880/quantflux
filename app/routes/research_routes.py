@@ -40,6 +40,9 @@ from research.demand_supply import DemandSupplyScanner
 from research.qmre import QMREService, QMREPaperManager
 from research.qmre import config as qmre_config
 from research.qmre import positions as qmre_positions
+from research.mih import MarketHub
+from research.mih import config as mih_config
+from research.mih import scanners as mih_scanners
 
 router = APIRouter()
 logger = get_logger("api.research")
@@ -1536,6 +1539,84 @@ def qmre_paper_open(payload: QMREPaperReq, user_id: int = Depends(login_required
 def qmre_paper_close(pos_id: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     mgr = QMREPaperManager(get_user_broker(db, user_id), user_id)
     return mgr.close_paper(pos_id)
+
+
+
+# ──────────────── Research #14 → Market Intelligence Hub (read-only) ────────────────
+class MIHReq(BaseModel):
+    overrides: dict | None = None
+    symbols: list[str] | None = None
+    limit: int | None = None
+
+
+def _mih_cfg(db, overrides):
+    return mih_config.sanitize({**mih_config.load_config(db), **(overrides or {})})
+
+
+@router.post("/mih/dashboard")
+def mih_dashboard(payload: MIHReq | None = None, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Movers, sector breadth, scanners, stock scores and research ideas in one payload."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated — market data required"}
+    p = payload or MIHReq()
+    try:
+        return _get_mih(broker, user_id).dashboard(_mih_cfg(db, p.overrides), symbols=p.symbols)
+    except Exception as exc:
+        logger.error("MIH dashboard failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/mih/scanner/{key}")
+def mih_scanner(key: str, payload: MIHReq | None = None, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    p = payload or MIHReq()
+    try:
+        return _get_mih(broker, user_id).scanner(key, _mih_cfg(db, p.overrides),
+                                                 symbols=p.symbols, limit=p.limit or 0)
+    except Exception as exc:
+        logger.error("MIH scanner failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/mih/stock/{symbol}")
+def mih_stock(symbol: str, payload: MIHReq | None = None, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    p = payload or MIHReq()
+    try:
+        return _get_mih(broker, user_id).stock(symbol, _mih_cfg(db, p.overrides))
+    except Exception as exc:
+        logger.error("MIH stock failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/mih/news")
+def mih_news(limit: int = 8, user_id: int = Depends(login_required)):
+    return MarketHub.news(limit)
+
+
+@router.get("/mih/scanners")
+def mih_scanner_list(user_id: int = Depends(login_required)):
+    out = [{"key": k, "label": v[0], "description": v[1], "direction": v[2], "needs": v[3]}
+           for k, v in mih_scanners.SCANNERS.items()]
+    return {"status": "ok", "scanners": out, "groups": mih_scanners.GROUPS}
+
+
+@router.get("/mih/config")
+def mih_get_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    return {"status": "ok", "config": mih_config.load_config(db)}
+
+
+@router.post("/mih/config")
+def mih_save_config(payload: dict | None = None, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    try:
+        return {"status": "ok", "config": mih_config.save_config(db, payload or {})}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
 
 
 # ──────────────── Research → Data Downloader (read-only historical data) ────────────────

@@ -510,6 +510,15 @@ export const api = {
   qmrePaperOpen: (body) => request('/research/qmre/paper/open', { method: 'POST', body: JSON.stringify(body) }),
   qmrePaperClose: (id) => request(`/research/qmre/paper/close/${id}`, { method: 'POST' }),
 
+  // Research #14 — Market Intelligence Hub
+  mihDashboard: (body, signal) => request('/research/mih/dashboard', { method: 'POST', body: JSON.stringify(body || {}), signal }),
+  mihScanner: (key, body, signal) => request(`/research/mih/scanner/${key}`, { method: 'POST', body: JSON.stringify(body || {}), signal }),
+  mihStock: (symbol, body) => request(`/research/mih/stock/${encodeURIComponent(symbol)}`, { method: 'POST', body: JSON.stringify(body || {}) }),
+  mihNews: (limit) => request(`/research/mih/news${limit ? `?limit=${limit}` : ''}`),
+  mihScanners: () => request('/research/mih/scanners'),
+  mihConfig: () => request('/research/mih/config'),
+  mihConfigSave: (cfg) => request('/research/mih/config', { method: 'POST', body: JSON.stringify(cfg || {}) }),
+
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),
   getPortfolioWatchlists: () => request('/portfolio/watchlists'),
