@@ -91,6 +91,21 @@ def _get_qmre(broker: Broker, user_id: int) -> QMREService:
     return eng
 
 
+_mih: dict[int, MarketHub] = {}
+
+
+def _get_mih(broker: Broker, user_id: int) -> MarketHub:
+    eng = _mih.get(user_id)
+    if eng is None:
+        eng = MarketHub(broker, user_id=user_id)
+        _mih[user_id] = eng
+    else:
+        eng.broker = broker
+        eng.universe.broker = broker
+    eng.user_id = user_id
+    return eng
+
+
 def _get_downloader(broker: Broker, user_id: int) -> DataDownloader:
     eng = _downloaders.get(user_id)
     if eng is None:

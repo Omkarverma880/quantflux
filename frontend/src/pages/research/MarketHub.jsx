@@ -155,6 +155,7 @@ export default function MarketHub() {
   const [detail, setDetail] = useState(null);
   const [news, setNews] = useState(null);
   const [q, setQ] = useState('');
+  const [failed, setFailed] = useState('');
   const abortRef = useRef(null);
   const showErr = (m) => { setErr(m); setTimeout(() => setErr(''), 6000); };
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 2500); };
@@ -163,8 +164,11 @@ export default function MarketHub() {
     const ac = new AbortController(); abortRef.current = ac; setLoading(true);
     try {
       const r = await api.mihDashboard({}, ac.signal);
-      if (r.status === 'ok') setData(r); else showErr(r.message || 'Failed to load');
-    } catch (e) { if (e.name !== 'AbortError') showErr(e.message); } finally { setLoading(false); }
+      if (r.status === 'ok') { setData(r); setFailed(''); }
+      else { setFailed(r.message || 'Failed to load'); showErr(r.message || 'Failed to load'); }
+    } catch (e) {
+      if (e.name !== 'AbortError') { setFailed(e.message); showErr(e.message); }
+    } finally { setLoading(false); }
   }, []);
   const cancel = () => { if (abortRef.current) abortRef.current.abort(); setLoading(false); };
 
@@ -241,6 +245,14 @@ export default function MarketHub() {
       {err && <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{err}</div>}
       {msg && <div className="text-sm text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">{msg}</div>}
       {!data && loading && <div className="p-10 text-center text-gray-500"><Loader2 className="w-5 h-5 animate-spin inline" /> Loading market intelligence…</div>}
+      {!data && !loading && (
+        <div className="bg-surface-2 border border-surface-3 rounded-xl p-10 text-center space-y-3">
+          <div className="text-sm text-gray-300">{failed ? 'Could not load market intelligence.' : 'No data loaded yet.'}</div>
+          {failed && <div className="text-xs text-red-400 font-mono break-all max-w-xl mx-auto">{failed}</div>}
+          <div className="text-xs text-gray-500">Zerodha must be connected for live market data.</div>
+          <button onClick={load} className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold"><RefreshCw className="w-4 h-4" /> Retry</button>
+        </div>
+      )}
 
       {data && tab === 'overview' && (
         <div className="space-y-4">
