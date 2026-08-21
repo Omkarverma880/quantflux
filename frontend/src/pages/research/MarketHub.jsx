@@ -69,21 +69,34 @@ function IdeaTrack({ idea }) {
   const p = Math.max(2, Math.min(98, idea.progress));
   const entryPos = Math.max(2, Math.min(98, ((idea.entry - idea.sl) / Math.max(0.01, idea.target - idea.sl)) * 100));
   return (
-    <div className="relative pt-6 pb-5">
-      <div className="absolute left-0 right-0 top-[26px] h-[3px] rounded bg-surface-4" />
-      <div className="absolute top-[26px] h-[3px] rounded bg-emerald-500/40" style={{ left: `${entryPos}%`, right: '0%' }} />
-      {/* current price marker */}
-      <div className="absolute -translate-x-1/2 flex flex-col items-center" style={{ left: `${p}%`, top: 0 }}>
-        <span className="text-[9px] px-1.5 py-0.5 rounded bg-surface-4 text-gray-200 whitespace-nowrap">₹{NUM(idea.ltp)}</span>
-        <span className="w-[9px] h-[9px] rounded-full bg-gray-100 mt-[6px] ring-2 ring-surface-2" />
+    <div className="mt-3 mb-1">
+      {/* track: fixed height so nothing can spill into the row below */}
+      <div className="relative h-9">
+        <div className="absolute left-0 right-0 top-[22px] h-[3px] rounded bg-surface-4" />
+        <div className="absolute top-[22px] h-[3px] rounded bg-emerald-500/40" style={{ left: `${entryPos}%`, right: 0 }} />
+        <div className="absolute -translate-x-1/2 flex flex-col items-center" style={{ left: `${p}%`, top: 0 }}>
+          <span className="text-[9px] leading-none px-1.5 py-0.5 rounded bg-surface-4 text-gray-200 whitespace-nowrap">₹{NUM(idea.ltp)}</span>
+          <span className="w-[9px] h-[9px] rounded-full bg-gray-100 mt-[5px] ring-2 ring-surface-2" />
+        </div>
+        <div className="absolute -translate-x-1/2 top-[17px]" style={{ left: `${entryPos}%` }}>
+          <span className="block w-[3px] h-[13px] rounded bg-sky-400" />
+        </div>
       </div>
-      {/* entry pin */}
-      <div className="absolute -translate-x-1/2" style={{ left: `${entryPos}%`, top: '22px' }}>
-        <span className="block w-[3px] h-[11px] rounded bg-sky-400" />
+      {/* labels in a static 3-column row — cannot overlap each other or the metrics */}
+      <div className="grid grid-cols-3 gap-2 mt-1.5">
+        <div className="text-left">
+          <div className="text-[9px] text-gray-500 leading-none">STOP LOSS</div>
+          <div className="text-[11px] text-red-400 font-semibold mt-1">₹{NUM(idea.sl)}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-[9px] text-gray-500 leading-none">ENTRY</div>
+          <div className="text-[11px] text-gray-200 font-semibold mt-1">₹{NUM(idea.entry)}</div>
+        </div>
+        <div className="text-right">
+          <div className="text-[9px] text-gray-500 leading-none">TARGET</div>
+          <div className="text-[11px] text-emerald-400 font-semibold mt-1">₹{NUM(idea.target)}</div>
+        </div>
       </div>
-      <div className="absolute left-0 top-[38px] text-left"><div className="text-[9px] text-gray-500">STOP LOSS</div><div className="text-[11px] text-red-400 font-semibold">₹{NUM(idea.sl)}</div></div>
-      <div className="absolute -translate-x-1/2 top-[38px] text-center" style={{ left: `${entryPos}%` }}><div className="text-[9px] text-gray-500">ENTRY</div><div className="text-[11px] text-gray-200 font-semibold">₹{NUM(idea.entry)}</div></div>
-      <div className="absolute right-0 top-[38px] text-right"><div className="text-[9px] text-gray-500">TARGET</div><div className="text-[11px] text-emerald-400 font-semibold">₹{NUM(idea.target)}</div></div>
     </div>
   );
 }
@@ -109,7 +122,7 @@ function IdeaCard({ idea, onPick }) {
         </div>
       </div>
       <IdeaTrack idea={idea} />
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] border-t border-surface-3 pt-2">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] border-t border-surface-3 pt-2 mt-2">
         <span className="text-gray-400">Upside to target <strong className="text-emerald-400">{PCT(idea.upside_pct)}</strong></span>
         <span className="text-gray-400">Risk <strong className="text-red-400">{PCT(idea.risk_pct)}</strong></span>
         <span className="text-gray-400">R:R <strong className="text-gray-200">{idea.rr}</strong></span>
