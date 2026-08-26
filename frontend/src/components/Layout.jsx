@@ -63,6 +63,12 @@ const NAV = [
       { to: '/equity-strategy/fourth-candle-cash', label: '3. 4th Candle (Cash Equity)' },
     ],
   },
+  {
+    label: 'Index Strategies', icon: Activity,
+    children: [
+      { to: '/index-strategy/vwap-options', label: '1. VWAP Options Engine' },
+    ],
+  },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },
   { to: '/orders', icon: ClipboardList, label: 'Orders' },
   { to: '/manual-trading', icon: Activity, label: 'Manual Trading' },

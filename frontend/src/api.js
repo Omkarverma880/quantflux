@@ -519,6 +519,18 @@ export const api = {
   mihConfig: () => request('/research/mih/config'),
   mihConfigSave: (cfg) => request('/research/mih/config', { method: 'POST', body: JSON.stringify(cfg || {}) }),
 
+  // VWAP Options Engine (NIFTY index options)
+  voChart: (body, signal) => request('/index-strategy/vwap-options/chart', { method: 'POST', body: JSON.stringify(body || {}), signal }),
+  voLadder: (body) => request('/index-strategy/vwap-options/ladder', { method: 'POST', body: JSON.stringify(body || {}) }),
+  voBacktest: (body, signal) => request('/index-strategy/vwap-options/backtest', { method: 'POST', body: JSON.stringify(body || {}), signal }),
+  voBacktests: () => request('/index-strategy/vwap-options/backtests'),
+  voConfig: () => request('/index-strategy/vwap-options/config'),
+  voConfigSave: (cfg) => request('/index-strategy/vwap-options/config', { method: 'POST', body: JSON.stringify(cfg || {}) }),
+  voStatus: () => request('/index-strategy/vwap-options/status'),
+  voStart: (config) => request('/index-strategy/vwap-options/start', { method: 'POST', body: JSON.stringify({ config: config || {} }) }),
+  voStop: () => request('/index-strategy/vwap-options/stop', { method: 'POST' }),
+  voPositions: (date) => request(`/index-strategy/vwap-options/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+
   // Portfolio Analytics (independent module — holdings/watchlist/research)
   getPortfolioHoldings: () => request('/portfolio/holdings'),
   getPortfolioWatchlists: () => request('/portfolio/watchlists'),

@@ -768,3 +768,67 @@ class QMREBacktestRun(Base):
     trades = Column(JSONB)
 
     __table_args__ = (Index("idx_qmre_bt_user", "user_id", "created_at"),)
+
+
+class VWAPOptionsPosition(Base):
+    """Paper/live position for the VWAP Options Engine (NIFTY index options).
+
+    Paper by default; a real order is only ever sent when the strategy's
+    ``paper_trade`` is off AND the global trading gate is on. Auto-created via
+    ``create_all``.
+    """
+    __tablename__ = "vwap_options_positions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    trade_date = Column(Date, nullable=False)
+    rule = Column(String(120))                      # line · event → action
+    line = Column(String(40))
+    event = Column(String(20))
+    opt_type = Column(String(2))                    # CE | PE
+    symbol = Column(String(100))
+    strike = Column(Numeric(12, 2))
+    expiry = Column(String(12))
+    offset_steps = Column(Integer)
+    token = Column(Integer)
+    qty = Column(Integer)
+    lot = Column(Integer)
+    index_price = Column(Numeric(12, 2))
+    vwap_level = Column(Numeric(12, 2))
+    entry_price = Column(Numeric(12, 2))
+    entry_time = Column(String(12))
+    target = Column(Numeric(12, 2))
+    sl = Column(Numeric(12, 2))
+    ltp = Column(Numeric(12, 2))
+    mtm = Column(Numeric(14, 2), default=0)
+    mfe = Column(Numeric(14, 2), default=0)
+    mae = Column(Numeric(14, 2), default=0)
+    status = Column(String(12), default="OPEN")     # OPEN | TARGET | STOP | SQUAREOFF | MANUAL
+    exit_price = Column(Numeric(12, 2))
+    exit_time = Column(String(12))
+    exit_reason = Column(String(12))
+    paper = Column(Boolean, default=True)
+    engine_version = Column(String(16))
+
+    __table_args__ = (Index("idx_vwapopt_user_date", "user_id", "trade_date"),)
+
+
+class VWAPOptionsBacktestRun(Base):
+    """Stored VWAP-options backtest (reproducibility + audit)."""
+    __tablename__ = "vwap_options_backtest_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    label = Column(String(120))
+    start_date = Column(Date)
+    end_date = Column(Date)
+    engine_version = Column(String(16))
+    config = Column(JSONB)
+    stats = Column(JSONB)
+    by_source = Column(JSONB)
+    trades = Column(JSONB)
+    skipped = Column(JSONB)
+
+    __table_args__ = (Index("idx_vwapopt_bt_user", "user_id", "created_at"),)
