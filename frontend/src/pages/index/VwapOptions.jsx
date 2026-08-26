@@ -175,17 +175,37 @@ function ChartTab({ cfg, meta, showErr }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [shown, setShown] = useState(() => Object.keys(LINE_COLORS).reduce((a, k) => ({ ...a, [k]: k === 'day_vwap' || k === 'prev_day_vwap' }), {}));
+  const [auto, setAuto] = useState(true);
+  const [lastAt, setLastAt] = useState(null);
   const abortRef = useRef(null);
+  const inFlight = useRef(false);
+  const pollRef = useRef(null);
+  const today = new Date().toISOString().slice(0, 10);
+  const isToday = day === today;
 
-  useEffect(() => { setDay(new Date().toISOString().slice(0, 10)); }, []);
-  const load = useCallback(async (d) => {
-    const ac = new AbortController(); abortRef.current = ac; setLoading(true);
+  useEffect(() => { setDay(today); }, []); // eslint-disable-line
+  const load = useCallback(async (d, silent = false) => {
+    if (inFlight.current) return;                 // never stack refreshes
+    inFlight.current = true;
+    const ac = new AbortController(); abortRef.current = ac;
+    if (!silent) setLoading(true);
     try {
       const r = await api.voChart({ date: d || null, overrides: cfg }, ac.signal);
-      if (r.status === 'ok') setData(r); else { setData(null); showErr(r.message); }
-    } catch (e) { if (e.name !== 'AbortError') showErr(e.message); } finally { setLoading(false); }
+      if (r.status === 'ok') { setData(r); setLastAt(new Date()); }
+      else if (!silent) { setData(null); showErr(r.message); }
+    } catch (e) { if (e.name !== 'AbortError' && !silent) showErr(e.message); }
+    finally { inFlight.current = false; if (!silent) setLoading(false); }
   }, [cfg]); // eslint-disable-line
   useEffect(() => { if (day) load(day); }, [day]); // eslint-disable-line
+
+  // Live auto-refresh — only meaningful for today; polls each bar bucket.
+  useEffect(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (!auto || !isToday || !day) return undefined;
+    const secs = cfg.timeframe === 'minute' ? 20 : cfg.timeframe === '3minute' ? 30 : 60;
+    pollRef.current = setInterval(() => load(day, true), secs * 1000);
+    return () => pollRef.current && clearInterval(pollRef.current);
+  }, [auto, isToday, day, cfg.timeframe]); // eslint-disable-line
 
   const overlays = useMemo(() => Object.keys(meta.lines || {})
     .filter((k) => shown[k])
@@ -209,6 +229,16 @@ function ChartTab({ cfg, meta, showErr }) {
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Load
           </button>
           {loading && <button onClick={() => abortRef.current?.abort()} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-red-600/80 hover:bg-red-600 text-white font-semibold"><X className="w-4 h-4" /> Cancel</button>}
+          <label className={`flex items-center gap-2 text-sm cursor-pointer ${isToday ? 'text-gray-300' : 'text-gray-600'}`}
+            title={isToday ? 'Refreshes automatically while the market is open' : 'Auto-refresh only applies to today'}>
+            <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} disabled={!isToday} className="accent-brand-500" /> Auto-refresh
+          </label>
+          <span className="ml-auto flex items-center gap-2 text-xs">
+            {isToday && auto
+              ? <span className="flex items-center gap-1 text-emerald-400"><Radio className="w-3.5 h-3.5 animate-pulse" /> LIVE</span>
+              : <span className="text-gray-500">{isToday ? 'Paused' : 'Historical'}</span>}
+            {lastAt && <span className="text-gray-500">Updated {lastAt.toLocaleTimeString('en-IN', { hour12: false })}</span>}
+          </span>
         </div>
         {/* VWAP checkboxes */}
         <div className="flex flex-wrap gap-3 pt-2 border-t border-surface-3">

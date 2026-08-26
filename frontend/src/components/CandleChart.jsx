@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * Reusable SVG candlestick chart with overlay lines and event markers.
@@ -16,14 +16,33 @@ const RED = '#ef4444';
 
 export default function CandleChart({ candles = [], overlays = [], markers = [], rails = [], height = 380 }) {
   const [hover, setHover] = useState(null);
+  const wrapRef = useRef(null);
+  const [avail, setAvail] = useState(1100);
   const n = candles.length;
+
+  // Track the container width so the plot always fills the panel instead of
+  // stopping short and leaving dead space on the right.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return undefined;
+    const set = () => setAvail(Math.max(320, el.clientWidth));
+    set();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', set);
+      return () => window.removeEventListener('resize', set);
+    }
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const geom = useMemo(() => {
     if (!n) return null;
-    const step = Math.max(6, Math.min(18, Math.floor(1100 / n)));
-    const cw = Math.max(2, step - 6);
     const padL = 6, padR = 78, padT = 12, padB = 26;
-    const width = padL + n * step + padR;
+    const usable = Math.max(120, avail - padL - padR);
+    const step = Math.max(3, Math.min(40, usable / n));   // fill the width
+    const cw = Math.max(1.5, Math.min(22, step - Math.max(2, step * 0.32)));
+    const width = Math.max(avail, padL + n * step + padR);
     const vals = [];
     candles.forEach((c) => { vals.push(c.high, c.low); });
     overlays.forEach((o) => (o.values || []).forEach((v) => { if (v != null) vals.push(v); }));
@@ -34,7 +53,7 @@ export default function CandleChart({ candles = [], overlays = [], markers = [],
     return { step, cw, padL, padR, padT, padB, width, lo, hi,
       y: (p) => padT + ((hi - p) / (hi - lo)) * height,
       xc: (i) => padL + i * step + step / 2 };
-  }, [candles, overlays, rails, n, height]);
+  }, [candles, overlays, rails, n, height, avail]);
 
   if (!n || !geom) {
     return <div className="py-16 text-center text-gray-500 text-sm">No candles to plot.</div>;
@@ -54,7 +73,7 @@ export default function CandleChart({ candles = [], overlays = [], markers = [],
   };
 
   return (
-    <div className="overflow-x-auto">
+    <div ref={wrapRef} className="w-full overflow-x-auto">
       <svg width={width} height={totalH} className="block" style={{ minWidth: '100%' }}>
         {/* price gridlines */}
         {ticks.map((p, k) => (
@@ -90,7 +109,7 @@ export default function CandleChart({ candles = [], overlays = [], markers = [],
               <rect x={xc(i) - cw / 2} y={top} width={cw} height={h} fill={col} rx={0.5} />
               <rect x={xc(i) - step / 2} y={padT} width={step} height={height} fill="transparent"
                 onMouseEnter={() => setHover({ i, c })} onMouseLeave={() => setHover(null)} />
-              {i % Math.max(1, Math.round(n / 10)) === 0 && (
+              {i % Math.max(1, Math.round(n / Math.max(4, Math.floor(width / 110)))) === 0 && (
                 <text x={xc(i)} y={totalH - 8} fontSize="9" fill="#6b7280" textAnchor="middle">{c.t}</text>
               )}
             </g>
