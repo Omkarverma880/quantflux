@@ -150,7 +150,10 @@ class VwapOptionsService:
         bars: list[dict] = []
         rolls = []
         cursor = frm
+        end_day = to.date()
         for f in futs:
+            if f["expiry"] < cursor.date():          # contract already expired — skip
+                continue
             f_end = min(to, datetime.combine(f["expiry"], MKT_CLOSE))
             if f_end <= cursor:
                 continue
@@ -160,7 +163,11 @@ class VwapOptionsService:
                     rolls.append({"at": part[0]["_dt"].isoformat(), "into": f["tradingsymbol"]})
                 bars.extend(part)
                 cursor = part[-1]["_dt"] + timedelta(minutes=1)
-            if cursor >= to:
+            # Roll ONLY when this contract has actually expired inside the window.
+            # Breaking on "data hasn't reached `to`" would splice the NEXT month's
+            # bars (which trade at a different price) onto the front contract
+            # intraday, because the latest candle always lags the clock.
+            if f["expiry"] >= end_day:
                 break
         return bars, {"source": "futures", "volume": True, "rolls": rolls,
                       "note": "True volume-weighted VWAP from NIFTY futures; contract rolls are stitched."}
@@ -179,6 +186,44 @@ class VwapOptionsService:
         frm = datetime.combine(start, MKT_OPEN)
         to = min(datetime.combine(end, MKT_CLOSE), datetime.now())
         return {b["_dt"]: float(b["close"]) for b in self._fetch(tok, frm, to, cfg["timeframe"])}
+
+    @staticmethod
+    def audit_bars(bars: list[dict], tf: str) -> dict:
+        """Flag suspicious candles instead of silently plotting them.
+
+        Catches the three things that actually go wrong with stitched/vendor
+        intraday data: timestamps that do not sit on the timeframe grid, repeated
+        timestamps, and price jumps far larger than the session's own range
+        (the signature of another contract's bars being spliced in).
+        """
+        mins = {"minute": 1, "3minute": 3, "5minute": 5, "15minute": 15,
+                "30minute": 30, "60minute": 60}.get(tf)
+        warnings, off_grid, dupes, jumps = [], [], [], []
+        seen = set()
+        closes = [float(b["close"]) for b in bars if b.get("close")]
+        med = sorted(closes)[len(closes) // 2] if closes else 0
+        for i, b in enumerate(bars):
+            dt = b.get("_dt")
+            if dt is None:
+                continue
+            if mins and ((dt.hour * 60 + dt.minute) % mins) != 0:
+                off_grid.append(dt.strftime("%H:%M"))
+            if dt in seen:
+                dupes.append(dt.strftime("%H:%M"))
+            seen.add(dt)
+            if med and abs(float(b["close"]) - med) / med > 0.02:      # >2% from the day's median
+                jumps.append({"t": dt.strftime("%H:%M"), "close": round(float(b["close"]), 2)})
+        if off_grid:
+            warnings.append(f"{len(off_grid)} candle(s) not aligned to the {tf} grid "
+                            f"({', '.join(off_grid[:5])}) — likely a partial or mis-stamped bar.")
+        if dupes:
+            warnings.append(f"{len(dupes)} duplicate timestamp(s) ({', '.join(dupes[:5])}).")
+        if jumps:
+            warnings.append(f"{len(jumps)} candle(s) >2% away from the session median "
+                            f"({', '.join(f"{j['t']}@{j['close']}" for j in jumps[:5])}) — "
+                            "check for a spliced contract or a bad tick.")
+        return {"ok": not warnings, "warnings": warnings,
+                "off_grid": off_grid[:20], "duplicates": dupes[:20], "outliers": jumps[:20]}
 
     # ── chart payload (candles + every VWAP line + rule hits) ──
     def chart(self, cfg: dict, day: Optional[str] = None) -> dict:
@@ -203,19 +248,27 @@ class VwapOptionsService:
             if cfg.get("vwap_source") == "futures":
                 tok = self.index_token()
                 if tok:
-                    ib = [b for b in self._fetch(tok, datetime.combine(d, MKT_OPEN),
-                                                 min(datetime.combine(d, MKT_CLOSE), datetime.now()),
-                                                 cfg["timeframe"]) if b["_dt"].date() == d]
-                    if ib:
-                        idx_series = build_series(ib, "index")
+                    # Fetch the SAME warmup window as the futures path, otherwise
+                    # previous-day / week / month and rolling lines have no prior
+                    # period to accumulate from and would render empty.
+                    warm = self._warmup_days(cfg)
+                    all_ib = self._fetch(tok, datetime.combine(d - timedelta(days=warm), MKT_OPEN),
+                                         min(datetime.combine(d, MKT_CLOSE), datetime.now()),
+                                         cfg["timeframe"])
+                    full_idx = build_series(all_ib, "index") if all_ib else []
+                    iday = [i for i, b in enumerate(all_ib) if b["_dt"].date() == d]
+                    if iday:
+                        ilo, ihi = iday[0], iday[-1] + 1
+                        idx_series = full_idx[ilo:ihi]
                         idx_candles = [{"t": b["_dt"].strftime("%H:%M"),
                                         "open": round(float(b["open"]), 2), "high": round(float(b["high"]), 2),
                                         "low": round(float(b["low"]), 2), "close": round(float(b["close"]), 2),
-                                        "volume": 0} for b in ib]
-                        basis = round(float(bars[hi - 1]["close"]) - float(ib[-1]["close"]), 2)
+                                        "volume": 0} for b in all_ib[ilo:ihi]]
+                        basis = round(float(bars[hi - 1]["close"]) - float(all_ib[ihi - 1]["close"]), 2)
 
             return {
                 "status": "ok", "date": d.isoformat(), "meta": meta,
+                "quality": self.audit_bars(bars[lo:hi], cfg["timeframe"]),
                 "index_candles": idx_candles, "index_series": idx_series, "basis": basis,
                 "timeframe": cfg["timeframe"], "lines": VWAP_LINES,
                 "candles": [{"t": b["_dt"].strftime("%H:%M"), "dt": b["_dt"].isoformat(),

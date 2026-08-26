@@ -258,6 +258,13 @@ function ChartTab({ cfg, meta, showErr }) {
         {data?.meta?.note && <div className="text-[11px] text-amber-300/80">{data.meta.note}</div>}
       </div>
 
+      {data && !data.quality?.ok && !!(data.quality?.warnings || []).length && (
+        <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 space-y-1">
+          <div className="font-semibold">Data quality warning — these candles look suspect</div>
+          {data.quality.warnings.map((w, i) => <div key={i} className="text-amber-300/85">• {w}</div>)}
+        </div>
+      )}
+
       {data && (
         <div className="bg-surface-2 border border-surface-3 rounded-xl p-3">
           <div className="flex items-center justify-between mb-2 px-1">
