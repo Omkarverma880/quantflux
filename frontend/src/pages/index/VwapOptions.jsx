@@ -255,7 +255,14 @@ function ChartTab({ cfg, meta, showErr }) {
       {data && (
         <div className="bg-surface-2 border border-surface-3 rounded-xl p-3">
           <div className="flex items-center justify-between mb-2 px-1">
-            <div className="text-sm font-semibold text-gray-200">NIFTY · {data.timeframe} · {data.date}</div>
+            <div className="text-sm font-semibold text-gray-200">
+              NIFTY {data.meta?.source === 'futures' ? 'FUTURES' : 'INDEX'} · {data.timeframe} · {data.date}
+              <span className="ml-2 text-[10px] font-normal text-gray-500">
+                {data.meta?.source === 'futures'
+                  ? 'candles & VWAP from futures · strikes anchored to index spot'
+                  : 'index candles · HLC3 average (no volume)'}
+              </span>
+            </div>
             <div className="text-[11px] text-gray-500">{(data.signals || []).length} rule hit(s) · {data.candles.length} candles</div>
           </div>
           <CandleChart candles={data.candles} overlays={overlays} markers={markers} />
@@ -407,7 +414,7 @@ function BacktestTab({ cfg, setCfg, meta, showErr, flash, saveCfg }) {
               </div>
             </div>
             <div className="overflow-x-auto max-h-[520px]"><table className="w-full text-xs whitespace-nowrap">
-              <thead className="bg-surface-3 text-gray-300 sticky top-0"><tr>{['Date', 'Signal', 'Rule', 'NIFTY', 'Level', 'Opt', 'Strike', 'Src', 'Entry@', 'Qty', 'Entry', 'Target', 'SL', 'Exit', 'Exit@', 'Reason', 'Net P&L', 'MFE', 'MAE'].map((h, i) => <th key={h} className={`px-2.5 py-1.5 font-semibold ${i < 3 ? 'text-left' : 'text-right'}`}>{h}</th>)}</tr></thead>
+              <thead className="bg-surface-3 text-gray-300 sticky top-0"><tr>{['Date', 'Signal', 'Rule', 'Index', 'Signal px', 'Level', 'Opt', 'Strike', 'Src', 'Entry@', 'Qty', 'Entry', 'Target', 'SL', 'Exit', 'Exit@', 'Reason', 'Net P&L', 'MFE', 'MAE'].map((h, i) => <th key={h} className={`px-2.5 py-1.5 font-semibold ${i < 3 ? 'text-left' : 'text-right'}`}>{h}</th>)}</tr></thead>
               <tbody>
                 {data.trades.map((t, i) => (
                   <tr key={i} className="border-t border-surface-3/40 hover:bg-surface-3/20">
@@ -415,6 +422,7 @@ function BacktestTab({ cfg, setCfg, meta, showErr, flash, saveCfg }) {
                     <td className="px-2.5 py-1 text-left text-gray-300">{t.signal_time}</td>
                     <td className="px-2.5 py-1 text-left text-gray-500 max-w-[200px] truncate" title={t.rule}>{t.rule}</td>
                     <td className="px-2.5 py-1 text-right text-gray-300">{NUM(t.index_price, 0)}</td>
+                    <td className="px-2.5 py-1 text-right text-gray-400" title={t.basis ? `basis ${t.basis > 0 ? '+' : ''}${t.basis}` : ''}>{NUM(t.signal_price, 0)}</td>
                     <td className="px-2.5 py-1 text-right text-gray-400">{NUM(t.vwap_level, 0)}</td>
                     <td className={`px-2.5 py-1 text-right font-semibold ${t.opt_type === 'CE' ? 'text-emerald-400' : 'text-red-400'}`}>{t.opt_type}</td>
                     <td className="px-2.5 py-1 text-right text-gray-300">{INT(t.strike)}</td>
@@ -438,11 +446,12 @@ function BacktestTab({ cfg, setCfg, meta, showErr, flash, saveCfg }) {
                     <td className="px-2.5 py-1 text-left">{k.signal_time}</td>
                     <td className="px-2.5 py-1 text-left truncate max-w-[200px]">{k.rule}</td>
                     <td className="px-2.5 py-1 text-right">{NUM(k.index_price, 0)}</td>
+                    <td className="px-2.5 py-1 text-right">—</td>
                     <td className="px-2.5 py-1 text-right">{NUM(k.vwap_level, 0)}</td>
-                    <td className="px-2.5 py-1 text-left text-amber-400/80 italic" colSpan={14}>SKIPPED — {k.reason}</td>
+                    <td className="px-2.5 py-1 text-left text-amber-400/80 italic" colSpan={15}>SKIPPED — {k.reason}</td>
                   </tr>
                 ))}
-                {!data.trades.length && !showSkips && <tr><td colSpan={19} className="px-4 py-8 text-center text-gray-500">No trades. {(data.skipped || []).length > 0 && 'Tick “Show skipped” to see why signals produced no trade.'}</td></tr>}
+                {!data.trades.length && !showSkips && <tr><td colSpan={20} className="px-4 py-8 text-center text-gray-500">No trades. {(data.skipped || []).length > 0 && 'Tick “Show skipped” to see why signals produced no trade.'}</td></tr>}
               </tbody>
             </table></div>
           </div>

@@ -144,8 +144,20 @@ class VwapOptionsStrategy:
             if len(self._open_positions()) >= int(self.cfg["max_positions"]):
                 break
 
+    def _index_spot(self) -> Optional[float]:
+        try:
+            key = "NSE:NIFTY 50"
+            d = self.broker.get_ltp([key]) or {}
+            v = d.get(key)
+            return float(v) if v else None
+        except Exception:
+            return None
+
     def _enter(self, s, now):
-        spot = s["index_price"]
+        signal_px = s["index_price"]                      # price on the VWAP source path
+        # NIFTY options are struck on the INDEX; in futures mode the signal path
+        # carries a basis, so anchor the strike to the live index spot.
+        spot = self._index_spot() or signal_px
         offset = offset_for(self.cfg, s["opt_type"])      # moneyness-aware in auto mode
         contract, reason = self.chain.resolve(spot, offset, s["opt_type"],
                                               self.cfg["expiry_type"], now.date(),
@@ -170,7 +182,7 @@ class VwapOptionsStrategy:
                 strike=contract["strike"], expiry=contract["expiry"].isoformat(),
                 offset_steps=int(offset),
                 token=int(contract["token"]) if contract.get("token") else None,
-                qty=qty, lot=lot, index_price=spot, vwap_level=s["level"],
+                qty=qty, lot=lot, index_price=round(spot, 2), vwap_level=s["level"],
                 entry_price=entry, entry_time=now.strftime("%H:%M:%S"),
                 target=target, sl=stop, ltp=entry, status="OPEN",
                 paper=bool(self.cfg["paper_trade"]),

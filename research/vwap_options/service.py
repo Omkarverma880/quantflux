@@ -165,6 +165,21 @@ class VwapOptionsService:
         return bars, {"source": "futures", "volume": True, "rolls": rolls,
                       "note": "True volume-weighted VWAP from NIFTY futures; contract rolls are stitched."}
 
+    def index_map(self, start: date, end: date, cfg: dict) -> dict:
+        """{bar datetime -> NIFTY index close} for the window.
+
+        NIFTY options are struck on the INDEX, but in futures mode the signal
+        bars are futures candles which carry a basis (premium/discount) to spot.
+        Deriving ATM from the futures price would pick a strike 1-2 steps off, so
+        the strike is always anchored to the index close at the same timestamp.
+        """
+        tok = self.index_token()
+        if not tok:
+            return {}
+        frm = datetime.combine(start, MKT_OPEN)
+        to = min(datetime.combine(end, MKT_CLOSE), datetime.now())
+        return {b["_dt"]: float(b["close"]) for b in self._fetch(tok, frm, to, cfg["timeframe"])}
+
     # ── chart payload (candles + every VWAP line + rule hits) ──
     def chart(self, cfg: dict, day: Optional[str] = None) -> dict:
         with self._lock:
@@ -205,10 +220,14 @@ class VwapOptionsService:
 
     # ── one signal → a fully simulated trade row ──
     def _trade_for_signal(self, s: dict, bars: list[dict], cfg: dict,
-                          start: date, end: date, qty: int) -> tuple[Optional[dict], Optional[dict]]:
+                          start: date, end: date, qty: int,
+                          idx_map: Optional[dict] = None) -> tuple[Optional[dict], Optional[dict]]:
         """(trade, skip). Exactly one of the two is populated."""
         d = s["date"]
-        spot = s["index_price"]
+        signal_px = s["index_price"]                     # price on the VWAP source path
+        # strike is anchored to the INDEX, not the futures price (basis would skew it)
+        spot = (idx_map or {}).get(s["dt"]) or signal_px
+        basis = round(signal_px - spot, 2)
         offset = offset_for(cfg, s["opt_type"])          # moneyness-aware in auto mode
         contract, reason = self.chain.resolve(spot, offset, s["opt_type"],
                                               cfg["expiry_type"], d, cfg["min_days_to_expiry"])
@@ -236,7 +255,9 @@ class VwapOptionsService:
         return {
             "date": d.isoformat(), "signal_time": s["time"], "rule": s["rule"],
             "line": s["line"], "event": s["event"], "action": s["action"],
-            "index_price": spot, "vwap_level": s["level"],
+            "index_price": round(spot, 2), "signal_price": signal_px,
+            "basis": basis, "spot_source": "index" if (idx_map or {}).get(s["dt"]) else "signal-path",
+            "vwap_level": s["level"],
             "opt_type": s["opt_type"], "offset_steps": offset,
             "strike_mode": cfg.get("strike_mode", "fixed"),
             "strike": contract["strike"], "symbol": contract["tradingsymbol"],
@@ -264,12 +285,13 @@ class VwapOptionsService:
             series = build_series(bars, cfg["vwap_source"])
             qty = self.lot_size() * int(cfg["lots"])
 
+            idx_map = self.index_map(s, e, cfg) if cfg.get("vwap_source") == "futures" else {}
             days = sorted({b["_dt"].date() for b in bars if s <= b["_dt"].date() <= e})
             trades, skips = [], []
             for d in days:
                 for sg in sig_mod.find_signals(bars, series, cfg, day=d):
                     try:
-                        t, skip = self._trade_for_signal(sg, bars, cfg, s, e, qty)
+                        t, skip = self._trade_for_signal(sg, bars, cfg, s, e, qty, idx_map)
                     except Exception as exc:
                         logger.debug("trade sim failed %s: %s", d, exc)
                         t, skip = None, {**_sig_brief(sg), "reason": f"error: {exc}"}
