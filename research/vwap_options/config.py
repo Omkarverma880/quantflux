@@ -7,7 +7,7 @@ Stored in the AppSetting table (survives Railway restarts).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from core.logger import get_logger
 
@@ -65,6 +65,28 @@ def band_pcts(cfg: dict) -> list:
             v = DEFAULT_BAND_PCTS[i]
         out.append(v if v > 0 else DEFAULT_BAND_PCTS[i])
     return out
+
+
+def warmup_days(cfg: dict, start: date | None = None) -> int:
+    """Calendar days of history required BEFORE ``start`` so every VWAP line is warm.
+
+    The previous-MONTH VWAP must accumulate the *whole* previous month, so the
+    window has to reach the 1st of that month — up to 62 days, not a flat 35.
+    A short window silently yields a PARTIAL-month VWAP under the previous-month
+    label, which is a wrong trade level, so this is sized from the real date.
+    """
+    need = 14                                        # prev-day / prev-week floor
+    if start is not None:
+        first_prev_month = (start.replace(day=1) - timedelta(days=1)).replace(day=1)
+        need = max(need, (start - first_prev_month).days + 3)      # +3 safety margin
+    else:
+        need = max(need, 62)                         # worst case: last day of a month
+    for r in (cfg or {}).get("rules") or []:
+        n = ROLLING_DAYS.get(r.get("line"))
+        if r.get("enabled") and n:
+            need = max(need, int(n * 1.5) + 10)      # trading → calendar days
+    return need
+
 
 EVENTS = {
     "touch": "Touches the line",

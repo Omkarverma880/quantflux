@@ -337,7 +337,16 @@ function ChartTab({ cfg, patch, meta, showErr }) {
                               <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle" style={{ background: LINE_COLORS[k] }} />
                               {meta.lines[k]}
                             </td>
-                            <td className="pr-4 py-0.5 text-right text-gray-200">{fv == null ? <span className="text-gray-600" title={seedNote(data.seed_info, k, 'futures')}>{seedShort(data.seed_info, k, 'futures')}</span> : NUM(fv)}</td>
+                            <td className="pr-4 py-0.5 text-right text-gray-200">
+                              {fv == null
+                                ? <span className="text-gray-600" title={seedNote(data.seed_info, k, 'futures')}>{seedShort(data.seed_info, k, 'futures')}</span>
+                                : <span title={(data.approx_lines || []).includes(k)
+                                    ? 'Approximate: part of this window is seeded from daily candles, where a session contributes HLC3×volume rather than the true sum of its intraday price×volume.'
+                                    : 'Accumulated from intraday bars across the full window.'}>
+                                    {(data.approx_lines || []).includes(k) && <span className="text-amber-400 mr-0.5">≈</span>}
+                                    {NUM(fv)}
+                                  </span>}
+                            </td>
                             <td className="pr-4 py-0.5 text-right text-gray-200">{iv == null ? <span className="text-gray-600" title={seedNote(data.seed_info, k, 'index')}>{seedShort(data.seed_info, k, 'index')}</span> : NUM(iv)}</td>
                             <td className={`pr-4 py-0.5 text-right ${diff == null ? 'text-gray-600' : diff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                               {diff == null ? '—' : `${diff >= 0 ? '+' : ''}${NUM(diff, 1)}`}

@@ -312,6 +312,59 @@ def test_volume_is_what_separates_vwap_from_average():
     assert vwap.build_series(skew, "index")[-1]["day_vwap"] == 150.0
 
 
+def test_warmup_reaches_the_whole_previous_month():
+    """The window must reach the 1st of the previous month on EVERY date.
+
+    Regression: a flat 35-day warmup only reached 22-Jul from 26-Aug, so the
+    "previous-month VWAP" was really a 22-31 Jul partial-month VWAP.
+    """
+    for d in [date(2026, 8, 1), date(2026, 8, 26), date(2026, 8, 31),
+              date(2026, 3, 31), date(2026, 1, 15), date(2026, 12, 31)]:
+        first_prev = (d.replace(day=1) - timedelta(days=1)).replace(day=1)
+        reach = d - timedelta(days=cfg_mod.warmup_days({}, d))
+        assert reach <= first_prev, f"{d}: window starts {reach}, misses {first_prev}"
+    # 35 days was NOT enough on the reported date — the bug this locks down
+    assert cfg_mod.warmup_days({}, date(2026, 8, 26)) > 35
+    # a rolling-line rule still widens the window further
+    wide = cfg_mod.warmup_days(
+        {"rules": [{"line": "roll_90d_vwap", "event": "touch",
+                    "action": "BUY_CE", "enabled": True}]}, date(2026, 8, 26))
+    assert wide >= 145
+
+
+def test_partial_month_accumulation_gives_a_different_level():
+    """Proves the truncated window actually moves the prev-month VWAP, i.e. the
+    warmup bug changed the traded level rather than being cosmetic."""
+    full, partial = [], []
+    for day_ in range(1, 32):                       # July: first half cheap, second half dear
+        px = 100.0 if day_ <= 15 else 300.0
+        bar = {"date": datetime(2026, 7, day_, 10), "high": px, "low": px,
+               "close": px, "volume": 10}
+        full.append(bar)
+        if day_ >= 22:                              # what a 35-day window actually saw
+            partial.append(bar)
+    aug = {"date": datetime(2026, 8, 3, 10), "high": 250.0, "low": 250.0,
+           "close": 250.0, "volume": 10}
+    full_v = vwap.build_series(full + [aug], "futures")[-1]["prev_month_vwap"]
+    part_v = vwap.build_series(partial + [aug], "futures")[-1]["prev_month_vwap"]
+    assert part_v == 300.0                          # only the dear second half
+    assert abs(full_v - 203.23) < 0.05              # the true full-July VWAP
+    assert abs(full_v - part_v) > 90                # ~97 points of error
+
+
+def test_daily_seed_is_an_approximation_not_an_identity():
+    """A daily candle contributes HLC3*volume, which does NOT equal the sum of
+    that session's intraday price*volume. Seeded rolling lines are therefore
+    approximate and must be labelled as such."""
+    intraday = [(24000.0, 1000), (24050.0, 2000), (24120.0, 5000),
+                (24200.0, 9000), (24260.0, 12000)]
+    true_vwap = sum(p * v for p, v in intraday) / sum(v for _, v in intraday)
+    hi = max(p for p, _ in intraday); lo = min(p for p, _ in intraday)
+    daily_proxy = (hi + lo + intraday[-1][0]) / 3
+    assert abs(daily_proxy - true_vwap) > 5         # ~20 pts apart on a trending day
+    assert daily_proxy != true_vwap
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

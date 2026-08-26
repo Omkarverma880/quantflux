@@ -19,7 +19,8 @@ from research.prev_period_vwap import _candle_dt
 from research.vwap_options import signals as sig_mod
 from research.vwap_options import simulate as sim_mod
 from research.vwap_options.chain import NiftyChain, ladder, offset_for, strike_for_offset
-from research.vwap_options.config import ROLLING_DAYS, VWAP_LINES, lines_for, sanitize
+from research.vwap_options.config import (ROLLING_DAYS, VWAP_LINES, lines_for,
+                                          sanitize, warmup_days)
 from research.vwap_options.pricing import PremiumSource
 from research.vwap_options.vwap_engine import build_series
 
@@ -120,21 +121,15 @@ class VwapOptionsService:
         self._bar_cache[key] = out
         return out
 
-    def _warmup_days(self, cfg: dict) -> int:
-        """Calendar days of history needed before the window so every enabled
-        VWAP line is warm (rolling lines need N completed sessions)."""
-        need = 35                                    # covers prev-day / week / month
-        for r in cfg.get("rules") or []:
-            n = ROLLING_DAYS.get(r.get("line"))
-            if r.get("enabled") and n:
-                need = max(need, int(n * 1.5) + 10)  # trading→calendar days
-        return need
+    def _warmup_days(self, cfg: dict, start: Optional[date] = None) -> int:
+        """Delegates to the pure rule in config (unit-tested there)."""
+        return warmup_days(cfg, start)
 
     def underlying_bars(self, start: date, end: date, cfg: dict,
                         tf: Optional[str] = None, warm: Optional[int] = None) -> tuple[list[dict], dict]:
         """(bars, meta). Futures path (real volume) or index path (HLC3 average)."""
         tf = tf or cfg["timeframe"]
-        warm = self._warmup_days(cfg) if warm is None else int(warm)
+        warm = self._warmup_days(cfg, start) if warm is None else int(warm)
         frm = datetime.combine(start - timedelta(days=warm), MKT_OPEN)
         to = min(datetime.combine(end, MKT_CLOSE), datetime.now())
         if cfg.get("vwap_source") == "index":
@@ -278,6 +273,20 @@ class VwapOptionsService:
             "index_has_volume": bool(iv > 0),
         }
 
+
+    @staticmethod
+    def _approx_lines(bars: list, day: date) -> list:
+        """Rolling lines whose window is longer than the intraday history we hold.
+
+        Those fall back to a DAILY-candle seed, where a session contributes
+        HLC3*volume instead of the true sum of its intraday price*volume — close,
+        but not equal. They are flagged so an approximate level is never read as
+        an exact one.
+        """
+        sessions = {b["_dt"].date() for b in bars if b["_dt"].date() < day}
+        have = len(sessions)
+        return [k for k, n in ROLLING_DAYS.items() if n > have]
+
     # ── chart payload (candles + every VWAP line + rule hits) ──
     def chart(self, cfg: dict, day: Optional[str] = None) -> dict:
         with self._lock:
@@ -309,7 +318,7 @@ class VwapOptionsService:
                     # Fetch the SAME warmup window as the futures path, otherwise
                     # previous-day / week / month and rolling lines have no prior
                     # period to accumulate from and would render empty.
-                    warm = self._warmup_days(cfg)
+                    warm = self._warmup_days(cfg, d)
                     all_ib = self._fetch(tok, datetime.combine(d - timedelta(days=warm), MKT_OPEN),
                                          min(datetime.combine(d, MKT_CLOSE), datetime.now()),
                                          cfg["timeframe"])
@@ -329,6 +338,7 @@ class VwapOptionsService:
                 "status": "ok", "date": d.isoformat(), "meta": meta,
                 "quality": self.audit_bars(bars[lo:hi], cfg["timeframe"]),
                 "volume_info": self._volume_info(bars[lo:hi], cfg["vwap_source"], idx_bars_day),
+                "approx_lines": self._approx_lines(bars, d),
                 "seed_info": {"needed": (max(ROLLING_DAYS.values()) if ROLLING_DAYS else 0),
                               "futures_sessions": len(seed), "index_sessions": len(idx_seed_pairs)},
                 "index_candles": idx_candles, "index_series": idx_series, "basis": basis,
