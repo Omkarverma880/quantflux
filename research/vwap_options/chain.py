@@ -34,6 +34,37 @@ def strike_for_offset(spot: float, offset_steps: int, step: int = STRIKE_STEP) -
     return None if atm is None else atm + int(offset_steps) * step
 
 
+def offset_for(cfg: dict, opt_type: str, step: int = STRIKE_STEP) -> int:
+    """Strike offset in steps for THIS option type.
+
+    ``fixed`` mode uses the signed offset as-is. ``auto`` mode expresses the
+    strike as *moneyness* instead, which is the only way one setting can mean the
+    same thing for both sides: a +100 offset is OTM for a CALL but ITM for a PUT,
+    so the sign is flipped per option type.
+
+        OTM 100  ->  CE = ATM+100,  PE = ATM-100
+        ITM 100  ->  CE = ATM-100,  PE = ATM+100
+        ATM      ->  0
+    """
+    if cfg.get("strike_mode") != "auto":
+        return int(cfg.get("strike_offset_steps", 0) or 0)
+    steps = int(round(float(cfg.get("auto_points", 0) or 0) / step))
+    money = cfg.get("auto_moneyness", "OTM")
+    if steps == 0 or money == "ATM":
+        return 0
+    if money == "OTM":
+        return steps if opt_type == "CE" else -steps
+    return -steps if opt_type == "CE" else steps          # ITM
+
+
+def describe_strike(cfg: dict, opt_type: str, step: int = STRIKE_STEP) -> str:
+    """Human label for the resolved selection (shown in logs and the UI)."""
+    off = offset_for(cfg, opt_type, step)
+    if off == 0:
+        return "ATM"
+    return f"ATM{'+' if off > 0 else '-'}{abs(off) * step}"
+
+
 def ladder(spot: float, steps: int = LADDER_STEPS, step: int = STRIKE_STEP) -> list[dict]:
     """The 50-strike selection ladder, expressed as ATM-relative offsets so a
     choice stays meaningful on every date of a range."""

@@ -23,7 +23,7 @@ from core.logger import get_logger
 from core.models import VWAPOptionsPosition
 from research.vwap_options import signals as sig_mod
 from research.vwap_options import simulate as sim_mod
-from research.vwap_options.chain import NiftyChain
+from research.vwap_options.chain import NiftyChain, offset_for
 from research.vwap_options.config import sanitize
 from research.vwap_options.vwap_engine import build_series
 
@@ -146,7 +146,8 @@ class VwapOptionsStrategy:
 
     def _enter(self, s, now):
         spot = s["index_price"]
-        contract, reason = self.chain.resolve(spot, self.cfg["strike_offset_steps"], s["opt_type"],
+        offset = offset_for(self.cfg, s["opt_type"])      # moneyness-aware in auto mode
+        contract, reason = self.chain.resolve(spot, offset, s["opt_type"],
                                               self.cfg["expiry_type"], now.date(),
                                               self.cfg["min_days_to_expiry"])
         if not contract:
@@ -167,7 +168,7 @@ class VwapOptionsStrategy:
                 user_id=self.user_id, trade_date=now.date(), rule=s["rule"], line=s["line"],
                 event=s["event"], opt_type=s["opt_type"], symbol=contract["tradingsymbol"],
                 strike=contract["strike"], expiry=contract["expiry"].isoformat(),
-                offset_steps=int(self.cfg["strike_offset_steps"]),
+                offset_steps=int(offset),
                 token=int(contract["token"]) if contract.get("token") else None,
                 qty=qty, lot=lot, index_price=spot, vwap_level=s["level"],
                 entry_price=entry, entry_time=now.strftime("%H:%M:%S"),

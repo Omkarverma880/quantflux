@@ -57,7 +57,11 @@ DEFAULT_CONFIG: dict = {
     # ── contract selection ──
     "expiry_type": "weekly",          # weekly | monthly
     "min_days_to_expiry": 0,
+    "strike_mode": "fixed",           # fixed = use strike_offset_steps as-is
+                                      # auto  = derive per option type from moneyness
     "strike_offset_steps": 0,         # 0 = ATM, +2 = ATM+100, -2 = ATM-100
+    "auto_moneyness": "OTM",          # OTM | ATM | ITM  (auto mode)
+    "auto_points": 100,               # distance from ATM in index points (auto mode)
     "lots": 1,
     # ── exits ──
     "target_mode": "percent",         # percent | points
@@ -86,7 +90,8 @@ DEFAULT_CONFIG: dict = {
     "telegram_bot": "a",
 }
 
-_INT = {"min_days_to_expiry", "strike_offset_steps", "lots", "max_trades_per_day", "max_positions"}
+_INT = {"min_days_to_expiry", "strike_offset_steps", "lots", "max_trades_per_day",
+        "max_positions", "auto_points"}
 _FLT = {"touch_buffer_pts", "target_value", "sl_value", "slippage_bps",
         "brokerage_per_order", "charges_pct", "iv_fixed_pct", "risk_free_pct"}
 
@@ -130,6 +135,11 @@ def sanitize(cfg: dict) -> dict:
         out["iv_source"] = "vix"
     rules = [sanitize_rule(r) for r in (out.get("rules") or [])]
     out["rules"] = [r for r in rules if r] or [dict(r) for r in DEFAULT_RULES]
+    if out["strike_mode"] not in ("fixed", "auto"):
+        out["strike_mode"] = "fixed"
+    if out["auto_moneyness"] not in ("OTM", "ATM", "ITM"):
+        out["auto_moneyness"] = "OTM"
+    out["auto_points"] = max(0, min(LADDER_STEPS * STRIKE_STEP, out["auto_points"]))
     out["strike_offset_steps"] = max(-LADDER_STEPS, min(LADDER_STEPS, out["strike_offset_steps"]))
     out["lots"] = max(1, out["lots"])
     out["max_trades_per_day"] = max(1, min(50, out["max_trades_per_day"]))

@@ -18,7 +18,7 @@ from core.logger import get_logger
 from research.prev_period_vwap import _candle_dt
 from research.vwap_options import signals as sig_mod
 from research.vwap_options import simulate as sim_mod
-from research.vwap_options.chain import NiftyChain, ladder, strike_for_offset
+from research.vwap_options.chain import NiftyChain, ladder, offset_for, strike_for_offset
 from research.vwap_options.config import ROLLING_DAYS, VWAP_LINES, sanitize
 from research.vwap_options.pricing import PremiumSource
 from research.vwap_options.vwap_engine import build_series
@@ -209,10 +209,11 @@ class VwapOptionsService:
         """(trade, skip). Exactly one of the two is populated."""
         d = s["date"]
         spot = s["index_price"]
-        contract, reason = self.chain.resolve(spot, cfg["strike_offset_steps"], s["opt_type"],
+        offset = offset_for(cfg, s["opt_type"])          # moneyness-aware in auto mode
+        contract, reason = self.chain.resolve(spot, offset, s["opt_type"],
                                               cfg["expiry_type"], d, cfg["min_days_to_expiry"])
         if not contract:
-            contract = self.chain.synthetic_contract(spot, cfg["strike_offset_steps"], s["opt_type"],
+            contract = self.chain.synthetic_contract(spot, offset, s["opt_type"],
                                                      cfg["expiry_type"], d, cfg["min_days_to_expiry"])
             if not contract:
                 return None, {**_sig_brief(s), "reason": reason or "contract could not be derived"}
@@ -236,7 +237,8 @@ class VwapOptionsService:
             "date": d.isoformat(), "signal_time": s["time"], "rule": s["rule"],
             "line": s["line"], "event": s["event"], "action": s["action"],
             "index_price": spot, "vwap_level": s["level"],
-            "opt_type": s["opt_type"], "offset_steps": cfg["strike_offset_steps"],
+            "opt_type": s["opt_type"], "offset_steps": offset,
+            "strike_mode": cfg.get("strike_mode", "fixed"),
             "strike": contract["strike"], "symbol": contract["tradingsymbol"],
             "expiry": contract["expiry"].isoformat(), "premium_source": source,
             "source_note": note, "fill_basis": fill["basis"],

@@ -84,6 +84,54 @@ export default function VwapOptions() {
   );
 }
 
+/* ── strike picker: manual ladder, or auto-pick by moneyness ── */
+function StrikePicker({ cfg, patch, ladder }) {
+  const auto = cfg.strike_mode === 'auto';
+  const preview = (side) => {
+    if (!auto) return null;
+    const steps = Math.round((Number(cfg.auto_points) || 0) / 50);
+    if (!steps || cfg.auto_moneyness === 'ATM') return 'ATM';
+    const sign = cfg.auto_moneyness === 'OTM' ? (side === 'CE' ? 1 : -1) : (side === 'CE' ? -1 : 1);
+    const off = sign * steps * 50;
+    return `ATM${off > 0 ? '+' : '-'}${Math.abs(off)}`;
+  };
+  return (
+    <div className="col-span-2">
+      <div className="flex items-center justify-between mb-1">
+        <label className={`${lbl} !mb-0`}>Strike</label>
+        <label className="flex items-center gap-1.5 text-[11px] text-gray-400 cursor-pointer"
+          title="Auto-pick resolves the strike per option type by moneyness, so one setting means the same thing for CALLs and PUTs.">
+          <input type="checkbox" checked={auto} onChange={(e) => patch('strike_mode', e.target.checked ? 'auto' : 'fixed')} className="accent-brand-500" />
+          Auto-pick
+        </label>
+      </div>
+      {!auto ? (
+        <select value={cfg.strike_offset_steps} onChange={(e) => patch('strike_offset_steps', Number(e.target.value))} className={`w-full ${sel}`}>
+          {(ladder?.strikes || []).map((k) => <option key={k.offset_steps} value={k.offset_steps}>{k.label}{ladder?.spot ? ` (${k.strike})` : ''}</option>)}
+          {!ladder && Array.from({ length: 51 }, (_, i) => i - 25).map((i) => (
+            <option key={i} value={i}>{i === 0 ? 'ATM' : `ATM${i > 0 ? '+' : '-'}${Math.abs(i) * 50}`}</option>
+          ))}
+        </select>
+      ) : (
+        <div className="flex gap-2">
+          <select value={cfg.auto_moneyness} onChange={(e) => patch('auto_moneyness', e.target.value)} className={`flex-1 ${sel}`}>
+            <option value="OTM">OTM</option><option value="ATM">ATM</option><option value="ITM">ITM</option>
+          </select>
+          <select value={cfg.auto_points} onChange={(e) => patch('auto_points', Number(e.target.value))} className={`flex-1 ${sel}`} disabled={cfg.auto_moneyness === 'ATM'}>
+            {[0, 50, 100, 150, 200, 250, 300, 400, 500].map((v) => <option key={v} value={v}>{v === 0 ? 'ATM' : `${v} pts`}</option>)}
+          </select>
+        </div>
+      )}
+      {auto && (
+        <div className="text-[10px] text-gray-500 mt-1">
+          CALL → <span className="text-emerald-400">{preview('CE')}</span> · PUT → <span className="text-red-400">{preview('PE')}</span>
+          {ladder?.spot ? ` (spot ${ladder.spot})` : ''}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── rule builder shared by Backtest + Settings ── */
 function RuleBuilder({ cfg, setCfg, meta }) {
   const rules = cfg.rules || [];
@@ -257,11 +305,7 @@ function BacktestTab({ cfg, setCfg, meta, showErr, flash, saveCfg }) {
             <select value={cfg.expiry_type} onChange={(e) => patch('expiry_type', e.target.value)} className={`w-full ${sel}`}>
               <option value="weekly">Weekly</option><option value="monthly">Monthly</option>
             </select></div>
-          <div><label className={lbl}>Strike</label>
-            <select value={cfg.strike_offset_steps} onChange={(e) => patch('strike_offset_steps', Number(e.target.value))} className={`w-full ${sel}`}>
-              {(ladder?.strikes || []).map((k) => <option key={k.offset_steps} value={k.offset_steps}>{k.label}{ladder?.spot ? ` (${k.strike})` : ''}</option>)}
-              {!ladder && <option value={0}>ATM</option>}
-            </select></div>
+          <StrikePicker cfg={cfg} patch={patch} ladder={ladder} />
           <div><label className={lbl}>Lots</label>{num('lots')}</div>
           <div><label className={lbl}>Touch buffer (pts)</label>{num('touch_buffer_pts', 0.5)}</div>
           <div><label className={lbl}>Target {cfg.target_mode === 'points' ? '(pts)' : '%'}</label>{num('target_value', 1)}</div>
@@ -483,7 +527,7 @@ function SettingsTab({ cfg, patch, setCfg, meta, saveCfg }) {
           <div><label className={lbl}>Expiry</label>
             <select value={cfg.expiry_type} onChange={(e) => patch('expiry_type', e.target.value)} className={`w-full ${sel}`}><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
           <div><label className={lbl}>Min days to expiry</label>{num('min_days_to_expiry')}</div>
-          <div><label className={lbl}>Strike offset (steps × 50)</label>{num('strike_offset_steps')}</div>
+          <StrikePicker cfg={cfg} patch={patch} ladder={null} />
           <div><label className={lbl}>Lots</label>{num('lots')}</div>
         </div>
         <p className="text-[11px] text-gray-500 mt-2">

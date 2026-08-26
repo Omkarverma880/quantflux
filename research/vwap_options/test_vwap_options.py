@@ -49,9 +49,11 @@ cfg_mod = _load("research.vwap_options.config", os.path.join(_HERE, "config.py")
 vwap = _load("research.vwap_options.vwap_engine", os.path.join(_HERE, "vwap_engine.py"))
 sig = _load("research.vwap_options.signals", os.path.join(_HERE, "signals.py"))
 sim = _load("research.vwap_options.simulate", os.path.join(_HERE, "simulate.py"))
-chain = types.ModuleType("chain_stub")
-_chain_src = _load.__doc__  # placeholder; chain tested via pure helpers below
-_chain_py = os.path.join(_HERE, "chain.py")
+# chain.py imports OptionChain (app dep) — stub it, then load the real module
+oc = types.ModuleType("research.option_chain")
+oc.OptionChain = object
+sys.modules["research.option_chain"] = oc
+chain = _load("research.vwap_options.chain", os.path.join(_HERE, "chain.py"))
 
 CFG = cfg_mod.sanitize({})
 
@@ -209,6 +211,36 @@ def test_lookahead_invariance():
     early2 = tampered[:cutoff_i + 1]
     b_ = sig.find_signals(early2, vwap.build_series(early2, "futures"), c, day=day2)
     assert a == b_, "future data leaked into an earlier signal"
+
+
+def test_auto_strike_is_moneyness_aware():
+    """A signed offset means OTM for a CALL but ITM for a PUT — auto mode must
+    flip the sign per option type so one setting means the same thing for both."""
+    otm = cfg_mod.sanitize({**CFG, "strike_mode": "auto", "auto_moneyness": "OTM",
+                            "auto_points": 100})
+    assert chain.offset_for(otm, "CE") == 2        # ATM+100
+    assert chain.offset_for(otm, "PE") == -2       # ATM-100  (also OTM for a put)
+    assert chain.describe_strike(otm, "CE") == "ATM+100"
+    assert chain.describe_strike(otm, "PE") == "ATM-100"
+
+    itm = cfg_mod.sanitize({**otm, "auto_moneyness": "ITM", "auto_points": 200})
+    assert chain.offset_for(itm, "CE") == -4       # ATM-200
+    assert chain.offset_for(itm, "PE") == 4        # ATM+200
+
+    atm = cfg_mod.sanitize({**otm, "auto_moneyness": "ATM"})
+    assert chain.offset_for(atm, "CE") == 0 and chain.offset_for(atm, "PE") == 0
+
+    # fixed mode must keep using the signed offset unchanged for both sides
+    fixed = cfg_mod.sanitize({**CFG, "strike_mode": "fixed", "strike_offset_steps": 3})
+    assert chain.offset_for(fixed, "CE") == 3 and chain.offset_for(fixed, "PE") == 3
+
+
+def test_strike_resolution_travels_across_dates():
+    """The same offset must resolve to different absolute strikes as ATM moves."""
+    assert chain.strike_for_offset(24312, 2) == 24400.0    # ATM 24300 + 100
+    assert chain.strike_for_offset(24788, 2) == 24900.0    # ATM 24800 + 100
+    assert chain.atm_strike(24324) == 24300.0
+    assert chain.strike_for_offset(0, 2) is None           # no spot -> no strike
 
 
 def _run():
