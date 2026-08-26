@@ -84,6 +84,15 @@ export default function VwapOptions() {
   );
 }
 
+/* last non-null value in a VWAP series */
+const lastVal = (rows, key) => {
+  for (let i = (rows || []).length - 1; i >= 0; i -= 1) {
+    const v = rows[i]?.[key];
+    if (v != null) return v;
+  }
+  return null;
+};
+
 /* ── strike picker: manual ladder, or auto-pick by moneyness ── */
 function StrikePicker({ cfg, patch, ladder }) {
   const auto = cfg.strike_mode === 'auto';
@@ -255,6 +264,56 @@ function ChartTab({ cfg, meta, showErr }) {
             </label>
           ))}
         </div>
+        {data && (() => {
+          const fut = data.candles?.length ? data.candles[data.candles.length - 1].close : null;
+          const idx = data.index_candles?.length ? data.index_candles[data.index_candles.length - 1].close : null;
+          const on = Object.keys(meta.lines || {}).filter((k) => shown[k]);
+          return (
+            <div className="pt-2 border-t border-surface-3 space-y-1.5">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+                <span className="text-gray-400">NIFTY {data.meta?.source === 'futures' ? 'FUT' : 'INDEX'} <strong className="text-gray-100 text-sm">{NUM(fut)}</strong></span>
+                {idx != null && <span className="text-gray-400">INDEX <strong className="text-gray-100 text-sm">{NUM(idx)}</strong></span>}
+                {data.basis != null && (
+                  <span className="text-gray-400">Basis <strong className={data.basis >= 0 ? 'text-emerald-400' : 'text-red-400'}>{data.basis >= 0 ? '+' : ''}{NUM(data.basis, 1)}</strong></span>
+                )}
+              </div>
+              {!!on.length && (
+                <div className="overflow-x-auto">
+                  <table className="text-[11px] whitespace-nowrap">
+                    <thead className="text-gray-500">
+                      <tr>
+                        <th className="pr-4 py-0.5 text-left font-medium">VWAP line</th>
+                        <th className="pr-4 py-0.5 text-right font-medium">Futures</th>
+                        <th className="pr-4 py-0.5 text-right font-medium">Index</th>
+                        <th className="pr-4 py-0.5 text-right font-medium">Fut vs line</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {on.map((k) => {
+                        const fv = lastVal(data.series, k);
+                        const iv = lastVal(data.index_series, k);
+                        const diff = (fut != null && fv != null) ? fut - fv : null;
+                        return (
+                          <tr key={k}>
+                            <td className="pr-4 py-0.5 text-gray-300">
+                              <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle" style={{ background: LINE_COLORS[k] }} />
+                              {meta.lines[k]}
+                            </td>
+                            <td className="pr-4 py-0.5 text-right text-gray-200">{fv == null ? <span className="text-gray-600">warming up</span> : NUM(fv)}</td>
+                            <td className="pr-4 py-0.5 text-right text-gray-200">{iv == null ? <span className="text-gray-600">—</span> : NUM(iv)}</td>
+                            <td className={`pr-4 py-0.5 text-right ${diff == null ? 'text-gray-600' : diff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                              {diff == null ? '—' : `${diff >= 0 ? '+' : ''}${NUM(diff, 1)}`}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {data?.meta?.note && <div className="text-[11px] text-amber-300/80">{data.meta.note}</div>}
       </div>
 

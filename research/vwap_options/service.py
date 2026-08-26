@@ -219,9 +219,11 @@ class VwapOptionsService:
         if dupes:
             warnings.append(f"{len(dupes)} duplicate timestamp(s) ({', '.join(dupes[:5])}).")
         if jumps:
+            # build the sample outside the f-string: nested same-quote f-strings
+            # are Python 3.12+ only (PEP 701) and the deploy image runs 3.11
+            sample = ", ".join("{}@{}".format(j["t"], j["close"]) for j in jumps[:5])
             warnings.append(f"{len(jumps)} candle(s) >2% away from the session median "
-                            f"({', '.join(f"{j['t']}@{j['close']}" for j in jumps[:5])}) — "
-                            "check for a spliced contract or a bad tick.")
+                            f"({sample}) — check for a spliced contract or a bad tick.")
         return {"ok": not warnings, "warnings": warnings,
                 "off_grid": off_grid[:20], "duplicates": dupes[:20], "outliers": jumps[:20]}
 
