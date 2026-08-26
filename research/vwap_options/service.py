@@ -19,7 +19,7 @@ from research.prev_period_vwap import _candle_dt
 from research.vwap_options import signals as sig_mod
 from research.vwap_options import simulate as sim_mod
 from research.vwap_options.chain import NiftyChain, ladder, offset_for, strike_for_offset
-from research.vwap_options.config import ROLLING_DAYS, VWAP_LINES, sanitize
+from research.vwap_options.config import ROLLING_DAYS, VWAP_LINES, lines_for, sanitize
 from research.vwap_options.pricing import PremiumSource
 from research.vwap_options.vwap_engine import build_series
 
@@ -259,6 +259,25 @@ class VwapOptionsService:
         return {"ok": not warnings, "warnings": warnings,
                 "off_grid": off_grid[:20], "duplicates": dupes[:20], "outliers": jumps[:20]}
 
+
+    @staticmethod
+    def _volume_info(bars: list, source: str, idx_bars: list) -> dict:
+        """Measure whether the fetched candles actually carry traded volume.
+
+        This is the single fact that decides whether a line is a true VWAP or a
+        plain HLC3 average, so it is reported from the data rather than assumed.
+        """
+        def _tot(rows):
+            return sum(float(b.get("volume", 0) or 0) for b in rows or [])
+        uv, iv = _tot(bars), _tot(idx_bars)
+        return {
+            "source": source,
+            "underlying_volume": uv,
+            "index_volume": iv,
+            "true_vwap": bool(source == "futures" and uv > 0),
+            "index_has_volume": bool(iv > 0),
+        }
+
     # ── chart payload (candles + every VWAP line + rule hits) ──
     def chart(self, cfg: dict, day: Optional[str] = None) -> dict:
         with self._lock:
@@ -272,7 +291,7 @@ class VwapOptionsService:
             # in index mode the two seeds are the same fetch — don't pay for it twice
             idx_seed_pairs = (self.rolling_seed(d, cfg, source="index")
                               if cfg.get("vwap_source") == "futures" else seed)
-            series = build_series(bars, cfg["vwap_source"], seed_days=seed)
+            series = build_series(bars, cfg["vwap_source"], seed_days=seed, cfg=cfg)
             day_idx = [i for i, b in enumerate(bars) if b["_dt"].date() == d]
             if not day_idx:
                 return {"status": "error", "message": f"No candles on {d} (market holiday?)", "meta": meta}
@@ -283,6 +302,7 @@ class VwapOptionsService:
             # signal path is futures we also return the index candles (with their
             # own HLC3 series) and the live basis between the two.
             idx_candles, idx_series, basis = [], [], None
+            idx_bars_day: list = []
             if cfg.get("vwap_source") == "futures":
                 tok = self.index_token()
                 if tok:
@@ -293,11 +313,12 @@ class VwapOptionsService:
                     all_ib = self._fetch(tok, datetime.combine(d - timedelta(days=warm), MKT_OPEN),
                                          min(datetime.combine(d, MKT_CLOSE), datetime.now()),
                                          cfg["timeframe"])
-                    full_idx = build_series(all_ib, "index", seed_days=idx_seed_pairs) if all_ib else []
+                    full_idx = build_series(all_ib, "index", seed_days=idx_seed_pairs, cfg=cfg) if all_ib else []
                     iday = [i for i, b in enumerate(all_ib) if b["_dt"].date() == d]
                     if iday:
                         ilo, ihi = iday[0], iday[-1] + 1
                         idx_series = full_idx[ilo:ihi]
+                        idx_bars_day = all_ib[ilo:ihi]
                         idx_candles = [{"t": b["_dt"].strftime("%H:%M"),
                                         "open": round(float(b["open"]), 2), "high": round(float(b["high"]), 2),
                                         "low": round(float(b["low"]), 2), "close": round(float(b["close"]), 2),
@@ -307,10 +328,11 @@ class VwapOptionsService:
             return {
                 "status": "ok", "date": d.isoformat(), "meta": meta,
                 "quality": self.audit_bars(bars[lo:hi], cfg["timeframe"]),
+                "volume_info": self._volume_info(bars[lo:hi], cfg["vwap_source"], idx_bars_day),
                 "seed_info": {"needed": (max(ROLLING_DAYS.values()) if ROLLING_DAYS else 0),
                               "futures_sessions": len(seed), "index_sessions": len(idx_seed_pairs)},
                 "index_candles": idx_candles, "index_series": idx_series, "basis": basis,
-                "timeframe": cfg["timeframe"], "lines": VWAP_LINES,
+                "timeframe": cfg["timeframe"], "lines": lines_for(cfg),
                 "candles": [{"t": b["_dt"].strftime("%H:%M"), "dt": b["_dt"].isoformat(),
                              "open": round(float(b["open"]), 2), "high": round(float(b["high"]), 2),
                              "low": round(float(b["low"]), 2), "close": round(float(b["close"]), 2),
@@ -396,7 +418,7 @@ class VwapOptionsService:
                 return {"status": "error", "message": meta.get("error") or "No underlying candles",
                         "meta": meta}
             series = build_series(bars, cfg["vwap_source"],
-                                  seed_days=self.rolling_seed(s, cfg))
+                                  seed_days=self.rolling_seed(s, cfg), cfg=cfg)
             qty = self.lot_size() * int(cfg["lots"])
 
             idx_map = self.index_map(s, e, cfg) if cfg.get("vwap_source") == "futures" else {}

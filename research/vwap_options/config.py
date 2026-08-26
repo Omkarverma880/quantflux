@@ -24,10 +24,47 @@ VWAP_LINES = {
     "prev_day_vwap": "Previous-day VWAP",
     "prev_week_vwap": "Previous-week VWAP",
     "prev_month_vwap": "Previous-month VWAP",
+    "cur_week_vwap": "Current-week VWAP",
+    "cur_month_vwap": "Current-month VWAP",
     "roll_15d_vwap": "Rolling 15-day VWAP",
     "roll_90d_vwap": "Rolling 90-day VWAP",
+    # % bands measured off the previous-month VWAP (the Pine "levels")
+    "pm_band_p1": "Prev-month VWAP +5%",
+    "pm_band_p2": "Prev-month VWAP +10%",
+    "pm_band_p3": "Prev-month VWAP +15%",
+    "pm_band_p4": "Prev-month VWAP +20%",
+    "pm_band_m1": "Prev-month VWAP -5%",
+    "pm_band_m2": "Prev-month VWAP -10%",
+    "pm_band_m3": "Prev-month VWAP -15%",
+    "pm_band_m4": "Prev-month VWAP -20%",
 }
 ROLLING_DAYS = {"roll_15d_vwap": 15, "roll_90d_vwap": 90}
+DEFAULT_BAND_PCTS = [5.0, 10.0, 15.0, 20.0]
+BAND_KEYS = [("pm_band_p%d" % i, 1) for i in range(1, 5)] +             [("pm_band_m%d" % i, -1) for i in range(1, 5)]
+
+
+def lines_for(cfg: dict | None = None) -> dict:
+    """VWAP_LINES with the band labels rewritten to the configured percentages."""
+    out = dict(VWAP_LINES)
+    pcts = band_pcts(cfg or {})
+    for i, p in enumerate(pcts, start=1):
+        txt = ("%g" % p)
+        out["pm_band_p%d" % i] = "Prev-month VWAP +%s%%" % txt
+        out["pm_band_m%d" % i] = "Prev-month VWAP -%s%%" % txt
+    return out
+
+
+def band_pcts(cfg: dict) -> list:
+    """Four positive percentages; falls back to the defaults on bad input."""
+    raw = (cfg or {}).get("pm_band_pcts") or DEFAULT_BAND_PCTS
+    out = []
+    for i in range(4):
+        try:
+            v = float(raw[i])
+        except (TypeError, ValueError, IndexError):
+            v = DEFAULT_BAND_PCTS[i]
+        out.append(v if v > 0 else DEFAULT_BAND_PCTS[i])
+    return out
 
 EVENTS = {
     "touch": "Touches the line",
@@ -46,6 +83,7 @@ DEFAULT_CONFIG: dict = {
     "engine_version": ENGINE_VERSION,
     # ── data source ──
     "vwap_source": "futures",         # futures (true volume) | index (HLC3 average)
+    "pm_band_pcts": [5.0, 10.0, 15.0, 20.0],   # % bands off the prev-month VWAP
     "timeframe": "5minute",
     # ── signal rules ──
     "rules": [dict(r) for r in DEFAULT_RULES],
@@ -145,6 +183,7 @@ def sanitize(cfg: dict) -> dict:
     out["max_trades_per_day"] = max(1, min(50, out["max_trades_per_day"]))
     out["max_positions"] = max(1, min(50, out["max_positions"]))
     out["touch_buffer_pts"] = max(0.0, out["touch_buffer_pts"])
+    out["pm_band_pcts"] = band_pcts(out)   # coerce UI strings to clean floats
     for b in ("one_signal_per_day", "hold_to_expiry", "apply_costs", "allow_modelled",
               "paper_trade", "auto_start", "telegram_alerts"):
         out[b] = bool(out[b])

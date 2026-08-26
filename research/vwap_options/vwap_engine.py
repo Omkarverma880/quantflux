@@ -24,7 +24,7 @@ from research.prev_period_vwap import (      # reuse — do not re-implement
     _PeriodVWAP, _SessionVWAP, _candle_dt, _day_key, _hlc3, _month_key, _week_key,
     crossed_up,
 )
-from research.vwap_options.config import ROLLING_DAYS, VWAP_LINES
+from research.vwap_options.config import BAND_KEYS, ROLLING_DAYS, VWAP_LINES, band_pcts
 
 __all__ = ["build_series", "crossed_up", "crossed_down", "touched", "event_fired",
            "_RollingVWAP"]
@@ -90,7 +90,7 @@ def _r(v: Optional[float]) -> Optional[float]:
 
 
 def build_series(candles: list[dict], vwap_source: str = "futures",
-                 seed_days=None) -> list[dict]:
+                 seed_days=None, cfg: dict | None = None) -> list[dict]:
     """Per-bar dict of every selectable VWAP line, aligned 1:1 with ``candles``.
 
     ``candles`` must be chronological and carry high/low/close/volume + a datetime.
@@ -106,6 +106,7 @@ def build_series(candles: list[dict], vwap_source: str = "futures",
         for roller in rollers.values():
             roller.seed(seed_days)
     use_volume = vwap_source == "futures"
+    pcts = band_pcts(cfg or {})
 
     out: list[dict] = []
     for c in candles:
@@ -117,12 +118,19 @@ def build_series(candles: list[dict], vwap_source: str = "futures",
         vol = float(c.get("volume", 0) or 0) if use_volume else 1.0
         if use_volume and vol <= 0:
             vol = 1.0                       # degenerate bar — keep the series continuous
+        prev_month = month.update(dt, hlc3, vol)
         row = {
             "day_vwap": _r(session.update(dt, hlc3, vol)),
             "prev_day_vwap": _r(day.update(dt, hlc3, vol)),
             "prev_week_vwap": _r(week.update(dt, hlc3, vol)),
-            "prev_month_vwap": _r(month.update(dt, hlc3, vol)),
+            "prev_month_vwap": _r(prev_month),
+            # running (incomplete) periods — Pine's currentMonthVWAP
+            "cur_week_vwap": _r(week.current()),
+            "cur_month_vwap": _r(month.current()),
         }
+        # % bands off the previous-month VWAP (Pine's pmVWAP_Plus/Minus levels)
+        for (key, sign), pct in zip(BAND_KEYS, pcts + pcts):
+            row[key] = _r(prev_month * (1 + sign * pct / 100.0)) if prev_month else None
         for k, roller in rollers.items():
             row[k] = _r(roller.update(dt, hlc3, vol))
         out.append(row)

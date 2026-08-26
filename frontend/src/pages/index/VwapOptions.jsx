@@ -15,6 +15,10 @@ const pc = (v) => (v == null ? 'text-gray-500' : v >= 0 ? 'text-emerald-400' : '
 const LINE_COLORS = {
   day_vwap: '#38bdf8', prev_day_vwap: '#f59e0b', prev_week_vwap: '#a78bfa',
   prev_month_vwap: '#ec4899', roll_15d_vwap: '#22d3ee', roll_90d_vwap: '#84cc16',
+  cur_week_vwap: '#c084fc', cur_month_vwap: '#fb923c',
+  // % bands off the previous-month VWAP: upside red-ish, downside cyan-ish
+  pm_band_p1: '#f87171', pm_band_p2: '#ef4444', pm_band_p3: '#dc2626', pm_band_p4: '#b91c1c',
+  pm_band_m1: '#67e8f9', pm_band_m2: '#22d3ee', pm_band_m3: '#06b6d4', pm_band_m4: '#0891b2',
 };
 const srcBadge = (s) => (s === 'REAL'
   ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
@@ -348,6 +352,15 @@ function ChartTab({ cfg, patch, meta, showErr }) {
             </div>
           );
         })()}
+        {data?.volume_info && (
+          <div className="text-[11px] text-gray-400">
+            {data.volume_info.true_vwap
+              ? <span className="text-emerald-300/90">True volume-weighted VWAP — {Math.round(data.volume_info.underlying_volume).toLocaleString('en-IN')} contracts traded in these candles.</span>
+              : <span className="text-amber-300/90">Not a true VWAP — these candles carry no volume, so every line is an HLC3 <em>average</em>. Switch VWAP source to NIFTY Futures for volume weighting.</span>}
+            {data.volume_info.index_has_volume === false && data.volume_info.source === 'futures'
+              && <span className="text-gray-500"> Index candles from Kite report zero volume, which is why the index panel is an average.</span>}
+          </div>
+        )}
         {data?.meta?.note && <div className="text-[11px] text-amber-300/80">{data.meta.note}</div>}
       </div>
 
@@ -701,6 +714,24 @@ function SettingsTab({ cfg, patch, setCfg, meta, saveCfg }) {
             ? 'Index mode has no traded volume — the line is an HLC3 average price, not a true VWAP.'
             : 'Futures mode uses real contract volume; monthly contract rolls are stitched automatically.'}
         </p>
+        <div className="mt-3 pt-3 border-t border-surface-3">
+          <label className={lbl}>Previous-month VWAP bands (%)</label>
+          <div className="flex flex-wrap gap-2 mt-1">
+            {[0, 1, 2, 3].map((i) => (
+              <input key={i} type="number" step="0.1" className={`${sel} w-24`}
+                value={(cfg.pm_band_pcts || [5, 10, 15, 20])[i] ?? ''}
+                onChange={(e) => {
+                  const next = [...(cfg.pm_band_pcts || [5, 10, 15, 20])];
+                  next[i] = e.target.value;
+                  patch('pm_band_pcts', next);
+                }} />
+            ))}
+          </div>
+          <p className="text-[11px] text-gray-500 mt-1">
+            Plotted as prev-month VWAP &times; (1 &plusmn; %). Each band is selectable on the chart
+            and usable as a rule target, exactly like any other VWAP line.
+          </p>
+        </div>
       </div>
 
       <div className="bg-surface-2 border border-surface-3 rounded-xl p-4">

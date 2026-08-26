@@ -261,6 +261,57 @@ def test_strike_resolution_travels_across_dates():
     assert chain.strike_for_offset(0, 2) is None           # no spot -> no strike
 
 
+def test_current_period_vwap_matches_pine_accumulator():
+    """cur_month/cur_week must equal the running period VWAP, exactly as Pine's
+    `currentMonthVWAP = monthPV / monthVol` does, and must NOT equal prev-month."""
+    bars = []
+    # July: two sessions at 100 and 200 (vol 10 each) -> July VWAP = 150
+    for d, px in [(datetime(2026, 7, 1, 10), 100.0), (datetime(2026, 7, 2, 10), 200.0)]:
+        bars.append({"date": d, "high": px, "low": px, "close": px, "volume": 10})
+    # August: 300 then 500 (vol 10 each) -> running Aug VWAP = 300 then 400
+    for d, px in [(datetime(2026, 8, 3, 10), 300.0), (datetime(2026, 8, 4, 10), 500.0)]:
+        bars.append({"date": d, "high": px, "low": px, "close": px, "volume": 10})
+    s_ = vwap.build_series(bars, "futures")
+    assert s_[2]["prev_month_vwap"] == 150.0 and s_[3]["prev_month_vwap"] == 150.0
+    assert s_[2]["cur_month_vwap"] == 300.0          # only the first Aug bar so far
+    assert s_[3]["cur_month_vwap"] == 400.0          # (300+500)/2 volume-weighted
+    assert s_[0]["prev_month_vwap"] is None          # na until a month completes
+    assert s_[0]["cur_month_vwap"] == 100.0          # but the running one exists
+
+
+def test_prev_month_bands_track_configured_percentages():
+    """Bands are prev-month VWAP * (1 +/- pct/100) and are `na` while prev is na."""
+    bars = []
+    for d, px in [(datetime(2026, 7, 1, 10), 100.0), (datetime(2026, 7, 2, 10), 300.0),
+                  (datetime(2026, 8, 3, 10), 250.0)]:
+        bars.append({"date": d, "high": px, "low": px, "close": px, "volume": 10})
+    s_ = vwap.build_series(bars, "futures")          # July VWAP = 200
+    last = s_[-1]
+    assert last["prev_month_vwap"] == 200.0
+    assert last["pm_band_p1"] == 210.0 and last["pm_band_m1"] == 190.0     # +/-5%
+    assert last["pm_band_p4"] == 240.0 and last["pm_band_m4"] == 160.0     # +/-20%
+    assert s_[0]["pm_band_p1"] is None               # no completed month yet
+
+    custom = vwap.build_series(bars, "futures", cfg={"pm_band_pcts": [1, 2, 3, 4]})[-1]
+    assert custom["pm_band_p1"] == 202.0 and custom["pm_band_m2"] == 196.0
+    assert cfg_mod.lines_for({"pm_band_pcts": [1, 2, 3, 4]})["pm_band_p1"].endswith("+1%")
+
+
+def test_volume_is_what_separates_vwap_from_average():
+    """Same prices, different volumes -> a true VWAP must move; the index-mode
+    HLC3 average must not. This is the whole futures-vs-index distinction."""
+    prices = [100.0, 200.0]
+    flat = [{"date": datetime(2026, 8, 3, 9 + i), "high": p, "low": p, "close": p,
+             "volume": 10} for i, p in enumerate(prices)]
+    skew = [{"date": datetime(2026, 8, 3, 9 + i), "high": p, "low": p, "close": p,
+             "volume": v} for i, (p, v) in enumerate(zip(prices, [1, 99]))]
+    assert vwap.build_series(flat, "futures")[-1]["day_vwap"] == 150.0
+    assert vwap.build_series(skew, "futures")[-1]["day_vwap"] == 199.0   # volume-weighted
+    # index mode ignores volume entirely -> both collapse to the same average
+    assert vwap.build_series(flat, "index")[-1]["day_vwap"] == 150.0
+    assert vwap.build_series(skew, "index")[-1]["day_vwap"] == 150.0
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

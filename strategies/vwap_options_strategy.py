@@ -131,7 +131,7 @@ class VwapOptionsStrategy:
         bars = self._today_bars(now)
         if len(bars) < 2:
             return
-        series = build_series(bars, self.cfg["vwap_source"])
+        series = build_series(bars, self.cfg["vwap_source"], cfg=self.cfg)
         for s in sig_mod.find_signals(bars, series, self.cfg, day=now.date()):
             key = (s["line"], s["event"], s["action"], s["time"])
             if key in self._fired_today:

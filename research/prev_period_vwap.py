@@ -93,6 +93,14 @@ class _PeriodVWAP:
             self.vol += vol
         return self.prev
 
+    def current(self) -> Optional[float]:
+        """VWAP of the period still in progress (Pine's ``currentMonthVWAP``).
+
+        The accumulator already carries pv/vol for the running period; this only
+        exposes it. ``update()`` behaviour is unchanged.
+        """
+        return (self.pv / self.vol) if self.vol > 0 else None
+
 
 class _SessionVWAP:
     """Current-day session-anchored VWAP (``ta.vwap`` — resets each new day)."""

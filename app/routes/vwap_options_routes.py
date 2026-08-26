@@ -177,8 +177,10 @@ def backtest_get(run_id: int, user_id: int = Depends(login_required), db: Sessio
 # ── config / meta ──
 @router.get("/config")
 def get_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
-    return {"status": "ok", "config": vo_config.load_config(db),
-            "lines": vo_config.VWAP_LINES, "events": vo_config.EVENTS,
+    _cfg = vo_config.load_config(db)
+    return {"status": "ok", "config": _cfg,
+            # band labels follow the saved percentages
+            "lines": vo_config.lines_for(_cfg), "events": vo_config.EVENTS,
             "actions": vo_config.ACTIONS, "timeframes": vo_config.TIMEFRAMES}
 
 
