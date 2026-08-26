@@ -195,8 +195,28 @@ class VwapOptionsService:
                 return {"status": "error", "message": f"No candles on {d} (market holiday?)", "meta": meta}
             lo, hi = day_idx[0], day_idx[-1] + 1
             hits = sig_mod.find_signals(bars, series, cfg, day=d)
+
+            # Companion INDEX panel: options are struck on the index, so when the
+            # signal path is futures we also return the index candles (with their
+            # own HLC3 series) and the live basis between the two.
+            idx_candles, idx_series, basis = [], [], None
+            if cfg.get("vwap_source") == "futures":
+                tok = self.index_token()
+                if tok:
+                    ib = [b for b in self._fetch(tok, datetime.combine(d, MKT_OPEN),
+                                                 min(datetime.combine(d, MKT_CLOSE), datetime.now()),
+                                                 cfg["timeframe"]) if b["_dt"].date() == d]
+                    if ib:
+                        idx_series = build_series(ib, "index")
+                        idx_candles = [{"t": b["_dt"].strftime("%H:%M"),
+                                        "open": round(float(b["open"]), 2), "high": round(float(b["high"]), 2),
+                                        "low": round(float(b["low"]), 2), "close": round(float(b["close"]), 2),
+                                        "volume": 0} for b in ib]
+                        basis = round(float(bars[hi - 1]["close"]) - float(ib[-1]["close"]), 2)
+
             return {
                 "status": "ok", "date": d.isoformat(), "meta": meta,
+                "index_candles": idx_candles, "index_series": idx_series, "basis": basis,
                 "timeframe": cfg["timeframe"], "lines": VWAP_LINES,
                 "candles": [{"t": b["_dt"].strftime("%H:%M"), "dt": b["_dt"].isoformat(),
                              "open": round(float(b["open"]), 2), "high": round(float(b["high"]), 2),

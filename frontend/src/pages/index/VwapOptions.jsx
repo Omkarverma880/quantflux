@@ -176,6 +176,7 @@ function ChartTab({ cfg, meta, showErr }) {
   const [loading, setLoading] = useState(false);
   const [shown, setShown] = useState(() => Object.keys(LINE_COLORS).reduce((a, k) => ({ ...a, [k]: k === 'day_vwap' || k === 'prev_day_vwap' }), {}));
   const [auto, setAuto] = useState(true);
+  const [showIndex, setShowIndex] = useState(true);
   const [lastAt, setLastAt] = useState(null);
   const abortRef = useRef(null);
   const inFlight = useRef(false);
@@ -211,6 +212,11 @@ function ChartTab({ cfg, meta, showErr }) {
     .filter((k) => shown[k])
     .map((k) => ({ key: k, label: meta.lines[k], color: LINE_COLORS[k] || '#888',
       values: (data?.series || []).map((s) => s[k]) })), [data, shown, meta]);
+
+  const idxOverlays = useMemo(() => Object.keys(meta.lines || {})
+    .filter((k) => shown[k])
+    .map((k) => ({ key: `i_${k}`, label: meta.lines[k], color: LINE_COLORS[k] || '#888',
+      values: (data?.index_series || []).map((x) => x[k]) })), [data, shown, meta]);
 
   const markers = useMemo(() => (data?.signals || []).map((s) => ({
     index: (data.candles || []).findIndex((c) => c.t === s.time),
@@ -266,6 +272,27 @@ function ChartTab({ cfg, meta, showErr }) {
             <div className="text-[11px] text-gray-500">{(data.signals || []).length} rule hit(s) · {data.candles.length} candles</div>
           </div>
           <CandleChart candles={data.candles} overlays={overlays} markers={markers} />
+        </div>
+      )}
+
+      {data && showIndex && !!(data.index_candles || []).length && (
+        <div className="bg-surface-2 border border-surface-3 rounded-xl p-3">
+          <div className="flex items-center justify-between mb-2 px-1">
+            <div className="text-sm font-semibold text-gray-200">
+              NIFTY INDEX · {data.timeframe} · {data.date}
+              <span className="ml-2 text-[10px] font-normal text-gray-500">
+                spot — strikes are struck here · HLC3 average (index has no volume)
+              </span>
+            </div>
+            {data.basis != null && (
+              <div className="text-[11px] text-gray-400">
+                Basis <strong className={data.basis >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                  {data.basis >= 0 ? '+' : ''}{NUM(data.basis, 1)}
+                </strong> <span className="text-gray-600">(futures − index)</span>
+              </div>
+            )}
+          </div>
+          <CandleChart candles={data.index_candles} overlays={idxOverlays} markers={markers} height={240} />
         </div>
       )}
 
