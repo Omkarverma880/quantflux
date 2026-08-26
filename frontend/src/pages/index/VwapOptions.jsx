@@ -75,7 +75,7 @@ export default function VwapOptions() {
       {err && <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{err}</div>}
       {msg && <div className="text-sm text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">{msg}</div>}
 
-      {tab === 'chart' && <ChartTab cfg={cfg} meta={meta} showErr={showErr} />}
+      {tab === 'chart' && <ChartTab cfg={cfg} patch={patch} meta={meta} showErr={showErr} />}
       {tab === 'backtest' && <BacktestTab cfg={cfg} setCfg={setCfg} meta={meta} showErr={showErr} flash={flash} saveCfg={saveCfg} />}
       {tab === 'positions' && <PositionsTab cfg={cfg} patch={patch} saveCfg={saveCfg} showErr={showErr} flash={flash} />}
       {tab === 'settings' && <SettingsTab cfg={cfg} patch={patch} setCfg={setCfg} meta={meta} saveCfg={saveCfg} showErr={showErr} />}
@@ -91,6 +91,33 @@ const lastVal = (rows, key) => {
     if (v != null) return v;
   }
   return null;
+};
+
+/* A rolling N-day VWAP needs N *completed* sessions before it means anything.
+   When one is blank, say how short it is rather than a bare "warming up" — a
+   short window must never be shown as if it were the real line. */
+const rollDays = (key) => {
+  const m = /^roll_(\d+)d_vwap$/.exec(key || '');
+  return m ? Number(m[1]) : null;
+};
+const seedHave = (info, key, side) => {
+  const need = rollDays(key);
+  if (!info || need == null) return null;
+  const have = side === 'index' ? info.index_sessions : info.futures_sessions;
+  return (have == null) ? null : { have, need };
+};
+const seedShort = (info, key, side) => {
+  const s = seedHave(info, key, side);
+  if (!s) return '—';
+  return `${s.have}/${s.need} sessions`;
+};
+const seedNote = (info, key, side) => {
+  const s = seedHave(info, key, side);
+  if (!s) return 'No value for this bar.';
+  return `Needs ${s.need} completed sessions; only ${s.have} of history are available`
+    + (side === 'futures'
+      ? '. NIFTY futures contracts are listed for ~3 months, so futures history cannot reach far back — switch VWAP source to Index for the longer windows.'
+      : '.');
 };
 
 /* ── strike picker: manual ladder, or auto-pick by moneyness ── */
@@ -179,7 +206,7 @@ function RuleBuilder({ cfg, setCfg, meta }) {
   );
 }
 
-function ChartTab({ cfg, meta, showErr }) {
+function ChartTab({ cfg, patch, meta, showErr }) {
   const [day, setDay] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -206,7 +233,7 @@ function ChartTab({ cfg, meta, showErr }) {
     } catch (e) { if (e.name !== 'AbortError' && !silent) showErr(e.message); }
     finally { inFlight.current = false; if (!silent) setLoading(false); }
   }, [cfg]); // eslint-disable-line
-  useEffect(() => { if (day) load(day); }, [day]); // eslint-disable-line
+  useEffect(() => { if (day) load(day); }, [day, cfg.timeframe, cfg.vwap_source]); // eslint-disable-line
 
   // Live auto-refresh — only meaningful for today; polls each bar bucket.
   useEffect(() => {
@@ -238,8 +265,15 @@ function ChartTab({ cfg, meta, showErr }) {
       <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 space-y-3">
         <div className="flex flex-wrap items-end gap-3">
           <div><label className={lbl}>Date</label><input type="date" value={day} onChange={(e) => setDay(e.target.value)} className={sel} /></div>
-          <div><label className={lbl}>Timeframe</label><span className={`${sel} inline-block`}>{cfg.timeframe}</span></div>
-          <div><label className={lbl}>VWAP source</label><span className={`${sel} inline-block`}>{cfg.vwap_source === 'futures' ? 'NIFTY Futures (true VWAP)' : 'Index (HLC3 average)'}</span></div>
+          <div><label className={lbl}>Timeframe</label>
+            <select value={cfg.timeframe} onChange={(e) => patch('timeframe', e.target.value)} className={sel}>
+              {(meta.timeframes || []).map((t) => <option key={t} value={t}>{t}</option>)}
+            </select></div>
+          <div><label className={lbl}>VWAP source</label>
+            <select value={cfg.vwap_source} onChange={(e) => patch('vwap_source', e.target.value)} className={sel}>
+              <option value="futures">NIFTY Futures (true VWAP)</option>
+              <option value="index">Index (HLC3 average)</option>
+            </select></div>
           <button onClick={() => load(day)} disabled={loading} className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Load
           </button>
@@ -299,8 +333,8 @@ function ChartTab({ cfg, meta, showErr }) {
                               <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle" style={{ background: LINE_COLORS[k] }} />
                               {meta.lines[k]}
                             </td>
-                            <td className="pr-4 py-0.5 text-right text-gray-200">{fv == null ? <span className="text-gray-600">warming up</span> : NUM(fv)}</td>
-                            <td className="pr-4 py-0.5 text-right text-gray-200">{iv == null ? <span className="text-gray-600">—</span> : NUM(iv)}</td>
+                            <td className="pr-4 py-0.5 text-right text-gray-200">{fv == null ? <span className="text-gray-600" title={seedNote(data.seed_info, k, 'futures')}>{seedShort(data.seed_info, k, 'futures')}</span> : NUM(fv)}</td>
+                            <td className="pr-4 py-0.5 text-right text-gray-200">{iv == null ? <span className="text-gray-600" title={seedNote(data.seed_info, k, 'index')}>{seedShort(data.seed_info, k, 'index')}</span> : NUM(iv)}</td>
                             <td className={`pr-4 py-0.5 text-right ${diff == null ? 'text-gray-600' : diff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                               {diff == null ? '—' : `${diff >= 0 ? '+' : ''}${NUM(diff, 1)}`}
                             </td>

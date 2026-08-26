@@ -269,6 +269,9 @@ class VwapOptionsService:
                 return {"status": "error", "message": meta.get("error") or f"No candles for {d}",
                         "meta": meta}
             seed = self.rolling_seed(d, cfg)
+            # in index mode the two seeds are the same fetch — don't pay for it twice
+            idx_seed_pairs = (self.rolling_seed(d, cfg, source="index")
+                              if cfg.get("vwap_source") == "futures" else seed)
             series = build_series(bars, cfg["vwap_source"], seed_days=seed)
             day_idx = [i for i, b in enumerate(bars) if b["_dt"].date() == d]
             if not day_idx:
@@ -290,8 +293,7 @@ class VwapOptionsService:
                     all_ib = self._fetch(tok, datetime.combine(d - timedelta(days=warm), MKT_OPEN),
                                          min(datetime.combine(d, MKT_CLOSE), datetime.now()),
                                          cfg["timeframe"])
-                    idx_seed = self.rolling_seed(d, cfg, source="index")
-                    full_idx = build_series(all_ib, "index", seed_days=idx_seed) if all_ib else []
+                    full_idx = build_series(all_ib, "index", seed_days=idx_seed_pairs) if all_ib else []
                     iday = [i for i, b in enumerate(all_ib) if b["_dt"].date() == d]
                     if iday:
                         ilo, ihi = iday[0], iday[-1] + 1
@@ -305,6 +307,8 @@ class VwapOptionsService:
             return {
                 "status": "ok", "date": d.isoformat(), "meta": meta,
                 "quality": self.audit_bars(bars[lo:hi], cfg["timeframe"]),
+                "seed_info": {"needed": (max(ROLLING_DAYS.values()) if ROLLING_DAYS else 0),
+                              "futures_sessions": len(seed), "index_sessions": len(idx_seed_pairs)},
                 "index_candles": idx_candles, "index_series": idx_series, "basis": basis,
                 "timeframe": cfg["timeframe"], "lines": VWAP_LINES,
                 "candles": [{"t": b["_dt"].strftime("%H:%M"), "dt": b["_dt"].isoformat(),
