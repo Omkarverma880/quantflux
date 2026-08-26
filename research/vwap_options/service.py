@@ -130,10 +130,11 @@ class VwapOptionsService:
                 need = max(need, int(n * 1.5) + 10)  # trading→calendar days
         return need
 
-    def underlying_bars(self, start: date, end: date, cfg: dict) -> tuple[list[dict], dict]:
+    def underlying_bars(self, start: date, end: date, cfg: dict,
+                        tf: Optional[str] = None, warm: Optional[int] = None) -> tuple[list[dict], dict]:
         """(bars, meta). Futures path (real volume) or index path (HLC3 average)."""
-        tf = cfg["timeframe"]
-        warm = self._warmup_days(cfg)
+        tf = tf or cfg["timeframe"]
+        warm = self._warmup_days(cfg) if warm is None else int(warm)
         frm = datetime.combine(start - timedelta(days=warm), MKT_OPEN)
         to = min(datetime.combine(end, MKT_CLOSE), datetime.now())
         if cfg.get("vwap_source") == "index":
@@ -171,6 +172,37 @@ class VwapOptionsService:
                 break
         return bars, {"source": "futures", "volume": True, "rolls": rolls,
                       "note": "True volume-weighted VWAP from NIFTY futures; contract rolls are stitched."}
+
+    def rolling_seed(self, start: date, cfg: dict, source: Optional[str] = None) -> list:
+        """Completed sessions BEFORE ``start`` as (price*vol, vol) pairs.
+
+        A 90-day rolling VWAP needs 90 completed sessions. Fetching that many days
+        of intraday bars just to warm the line is wasteful, so the window is primed
+        from DAILY candles (one cheap request per contract) — mathematically the
+        same accumulation, since a session only contributes its Σprice*vol and Σvol.
+        """
+        src = source or cfg.get("vwap_source", "futures")
+        need = max(ROLLING_DAYS.values()) if ROLLING_DAYS else 90
+        back = int(need * 1.7) + 20                       # trading → calendar days
+        try:
+            bars, _meta = self.underlying_bars(start - timedelta(days=back),
+                                               start - timedelta(days=1),
+                                               {**cfg, "vwap_source": src}, tf="day", warm=0)
+        except Exception as exc:
+            logger.debug("rolling seed failed: %s", exc)
+            return []
+        use_vol = src == "futures"
+        pairs = []
+        for b in bars:
+            d = b["_dt"].date()
+            if d >= start:                                # never overlap the live window
+                continue
+            typ = (float(b["high"]) + float(b["low"]) + float(b["close"])) / 3.0
+            vol = float(b.get("volume", 0) or 0) if use_vol else 1.0
+            if use_vol and vol <= 0:
+                vol = 1.0
+            pairs.append((typ * vol, vol))
+        return pairs
 
     def index_map(self, start: date, end: date, cfg: dict) -> dict:
         """{bar datetime -> NIFTY index close} for the window.
@@ -236,7 +268,8 @@ class VwapOptionsService:
             if not bars:
                 return {"status": "error", "message": meta.get("error") or f"No candles for {d}",
                         "meta": meta}
-            series = build_series(bars, cfg["vwap_source"])
+            seed = self.rolling_seed(d, cfg)
+            series = build_series(bars, cfg["vwap_source"], seed_days=seed)
             day_idx = [i for i, b in enumerate(bars) if b["_dt"].date() == d]
             if not day_idx:
                 return {"status": "error", "message": f"No candles on {d} (market holiday?)", "meta": meta}
@@ -257,7 +290,8 @@ class VwapOptionsService:
                     all_ib = self._fetch(tok, datetime.combine(d - timedelta(days=warm), MKT_OPEN),
                                          min(datetime.combine(d, MKT_CLOSE), datetime.now()),
                                          cfg["timeframe"])
-                    full_idx = build_series(all_ib, "index") if all_ib else []
+                    idx_seed = self.rolling_seed(d, cfg, source="index")
+                    full_idx = build_series(all_ib, "index", seed_days=idx_seed) if all_ib else []
                     iday = [i for i, b in enumerate(all_ib) if b["_dt"].date() == d]
                     if iday:
                         ilo, ihi = iday[0], iday[-1] + 1
@@ -357,7 +391,8 @@ class VwapOptionsService:
             if not bars:
                 return {"status": "error", "message": meta.get("error") or "No underlying candles",
                         "meta": meta}
-            series = build_series(bars, cfg["vwap_source"])
+            series = build_series(bars, cfg["vwap_source"],
+                                  seed_days=self.rolling_seed(s, cfg))
             qty = self.lot_size() * int(cfg["lots"])
 
             idx_map = self.index_map(s, e, cfg) if cfg.get("vwap_source") == "futures" else {}

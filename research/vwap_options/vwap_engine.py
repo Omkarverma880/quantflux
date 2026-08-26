@@ -48,6 +48,21 @@ class _RollingVWAP:
         self.sum_pv = 0.0
         self.sum_vol = 0.0
 
+    def seed(self, pairs) -> None:
+        """Prefill with completed sessions as (price*vol, vol) pairs, oldest first.
+
+        Lets a long window (15/90-day) be primed from cheap DAILY candles instead
+        of fetching months of intraday bars just to warm the line up.
+        """
+        for pv, vol in list(pairs)[-self.n:]:
+            self.hist.append((float(pv), float(vol)))
+            self.sum_pv += float(pv)
+            self.sum_vol += float(vol)
+        while len(self.hist) > self.n:
+            p, v = self.hist.popleft()
+            self.sum_pv -= p
+            self.sum_vol -= v
+
     def update(self, dt, hlc3: float, vol: float) -> Optional[float]:
         key = _day_key(dt)
         if key != self.cur_key:
@@ -74,16 +89,22 @@ def _r(v: Optional[float]) -> Optional[float]:
     return round(v, 2) if v is not None else None
 
 
-def build_series(candles: list[dict], vwap_source: str = "futures") -> list[dict]:
+def build_series(candles: list[dict], vwap_source: str = "futures",
+                 seed_days=None) -> list[dict]:
     """Per-bar dict of every selectable VWAP line, aligned 1:1 with ``candles``.
 
     ``candles`` must be chronological and carry high/low/close/volume + a datetime.
+    ``seed_days`` primes the rolling lines with completed sessions BEFORE the first
+    candle, as (price*vol, vol) pairs oldest-first — must not overlap ``candles``.
     """
     session = _SessionVWAP()
     day = _PeriodVWAP(_day_key)
     week = _PeriodVWAP(_week_key)
     month = _PeriodVWAP(_month_key)
     rollers = {k: _RollingVWAP(n) for k, n in ROLLING_DAYS.items()}
+    if seed_days:
+        for roller in rollers.values():
+            roller.seed(seed_days)
     use_volume = vwap_source == "futures"
 
     out: list[dict] = []

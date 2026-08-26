@@ -110,6 +110,24 @@ def test_rolling_vwap_warmup_and_value():
     assert v is not None and abs(v - 200.0) < 1e-6       # (100+200+300)/3
 
 
+def test_rolling_seed_fills_long_windows():
+    """A 90-day line cannot warm up from a day of intraday bars; seeding it from
+    completed DAILY sessions must make it render immediately."""
+    bars = session(0, n=8)
+    unseeded = vwap.build_series(bars, "futures")[-1]
+    assert unseeded["roll_15d_vwap"] is None and unseeded["roll_90d_vwap"] is None
+
+    seed = [(24000.0 * 1000, 1000.0)] * 90            # 90 completed sessions
+    seeded = vwap.build_series(bars, "futures", seed_days=seed)[-1]
+    assert seeded["roll_90d_vwap"] is not None, "90-day line must render once seeded"
+    assert seeded["roll_15d_vwap"] is not None
+    assert 23900 < seeded["roll_90d_vwap"] < 24100     # dominated by the seeded history
+
+    # a short seed must NOT fake a full window
+    short = vwap.build_series(bars, "futures", seed_days=[(24000.0, 1.0)] * 20)[-1]
+    assert short["roll_15d_vwap"] is not None and short["roll_90d_vwap"] is None
+
+
 def test_index_mode_is_hlc3_average():
     """With no volume the series must reduce to an HLC3 average, not crash."""
     bars = [bar(D0 + timedelta(minutes=5 * i), 100, 102, 98, 100, v=0) for i in range(4)]
