@@ -28,7 +28,7 @@ from research.prev_period_vwap import _candle_dt
 from research.pmvwap_straddle.universe import Universe
 from research.hammer_breakout import calculations as calc
 from research.hammer_breakout.config import sanitize, TIMEFRAME
-from research.hammer_breakout.service import warmup_days
+from research.hammer_breakout.service import warmup_days, format_today_message
 
 logger = get_logger("strategy.hammer_breakout")
 
@@ -50,6 +50,7 @@ class HammerBreakoutStrategy:
         self._entered_today: set = set()
         self._auto_started_date = None
         self._manual_stop_date = None
+        self._armed_notified_date = None
         self._load_runtime()
 
     # ── config / control ──
@@ -139,6 +140,23 @@ class HammerBreakoutStrategy:
             except Exception as exc:
                 logger.debug("hammer arm %s failed: %s", sym, exc)
         self._setups = armed or {"__none__": {}}    # sentinel: computed, nothing armed
+        self._notify_today_list(armed, today)
+
+    def _notify_today_list(self, armed: dict, today):
+        """Once a day, push the freshly armed list to Telegram."""
+        stamp = today.isoformat()
+        if self._armed_notified_date == stamp:
+            return
+        self._armed_notified_date = stamp
+        self._save_runtime()
+        if not armed or not self.cfg.get("telegram_alerts"):
+            return
+        rows = [{"underlying": k, "trigger": v["trigger"], "sig_low": v["sig_low"],
+                 "signal_date": v["signal_date"].isoformat(), "broke": False,
+                 "ltp": None, "to_trigger_pct": None}
+                for k, v in sorted(armed.items())]
+        self._notify(format_today_message(
+            {"date": stamp, "scanned": len(self.cfg.get("symbols", [])), "setups": rows}, self.cfg))
 
     def _armed(self) -> dict:
         return {k: v for k, v in self._setups.items() if k != "__none__"}
@@ -386,7 +404,8 @@ class HammerBreakoutStrategy:
             _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             _STATE_FILE.write_text(json.dumps({
                 "is_active": self.is_active, "auto_started_date": self._auto_started_date,
-                "manual_stop_date": self._manual_stop_date}))
+                "manual_stop_date": self._manual_stop_date,
+                "armed_notified_date": self._armed_notified_date}))
         except Exception as exc:
             logger.debug("hammer runtime save failed: %s", exc)
 
@@ -397,5 +416,6 @@ class HammerBreakoutStrategy:
                 self.is_active = bool(st.get("is_active"))
                 self._auto_started_date = st.get("auto_started_date")
                 self._manual_stop_date = st.get("manual_stop_date")
+                self._armed_notified_date = st.get("armed_notified_date")
         except Exception as exc:
             logger.debug("hammer runtime load failed: %s", exc)

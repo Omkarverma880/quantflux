@@ -598,6 +598,7 @@ export const api = {
   hbBacktest: (body) => request('/equity-strategy/hammer-breakout/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
   hbSimulate: (body) => request('/equity-strategy/hammer-breakout/simulate', { method: 'POST', body: JSON.stringify(body) }),
   hbScan: (body) => request('/equity-strategy/hammer-breakout/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
+  hbTodayTelegram: (body) => request('/equity-strategy/hammer-breakout/today/telegram', { method: 'POST', body: JSON.stringify(body || {}) }),
   hbConfig: () => request('/equity-strategy/hammer-breakout/config'),
   hbConfigSave: (partial) => request('/equity-strategy/hammer-breakout/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
   hbStatus: () => request('/equity-strategy/hammer-breakout/status'),

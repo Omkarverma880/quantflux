@@ -18,6 +18,7 @@ from core.broker import Broker, get_user_broker
 from core.logger import get_logger
 from research.hammer_breakout import HammerBreakoutResearch
 from research.hammer_breakout.config import load_config, save_config
+from research.hammer_breakout.service import format_today_message
 from strategies.hammer_breakout_strategy import HammerBreakoutStrategy
 
 router = APIRouter()
@@ -126,9 +127,35 @@ def scan(payload: ScanReq | None = None, user_id: int = Depends(login_required),
     if not syms:
         return {"status": "ok", "setups": [], "message": "No stocks in the watchlist"}
     try:
-        return {"status": "ok", "setups": _get_research(broker, user_id).scan(syms, p.overrides)}
+        return {"status": "ok", **_get_research(broker, user_id).scan(syms, p.overrides)}
     except Exception as exc:
         logger.error("hammer scan failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/today/telegram")
+def today_telegram(payload: ScanReq | None = None, user_id: int = Depends(login_required),
+                   db: Session = Depends(get_db)):
+    """Push today's qualifying stocks to Telegram on demand."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    p = payload or ScanReq()
+    cfg = {**load_config(), **(p.overrides or {})}
+    syms = p.symbols if p.symbols is not None else cfg.get("symbols", [])
+    if not syms:
+        return {"status": "error", "message": "No stocks in the watchlist"}
+    bot = cfg.get("telegram_bot", "a")
+    try:
+        from core import notify
+        if not notify.enabled(bot):
+            return {"status": "error",
+                    "message": f"Telegram bot {bot.upper()} is not configured — set it up in Settings"}
+        result = _get_research(broker, user_id).scan(syms, p.overrides)
+        notify.send(format_today_message(result, result.get("config", cfg)), bot=bot)
+        return {"status": "ok", "sent": len(result.get("setups") or []), **result}
+    except Exception as exc:
+        logger.error("hammer today telegram failed: %s", exc)
         return {"status": "error", "message": str(exc)}
 
 

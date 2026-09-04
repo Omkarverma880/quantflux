@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Hammer, Play, Loader2, AlertCircle, Download, Info, TrendingUp, Check, X,
-  FlaskConical, Wallet, Radio, RefreshCw, Save, Search,
+  FlaskConical, Wallet, Radio, RefreshCw, Save, Search, Send, Target,
 } from 'lucide-react';
 import { api } from '../../api';
 import WatchlistBar from '../../components/WatchlistBar';
@@ -77,9 +77,18 @@ export default function HammerBreakout() {
   const [status, setStatus] = useState(null);
   const [symbolsText, setSymbolsText] = useState('');
   const [positions, setPositions] = useState([]);
-  const [setups, setSetups] = useState(null); const [scanning, setScanning] = useState(false);
   const [savedWls, setSavedWls] = useState([]);
   const pollRef = useRef(null);
+
+  // ── Today tab: live setup list ──
+  const [today, setToday] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [autoTick, setAutoTick] = useState(true);
+  const [useStratList, setUseStratList] = useState(true);
+  const [todaySel, setTodaySel] = useState({ mode: 'all', symbol: null, symbols: null });
+  const [todaySort, setTodaySort] = useState({ key: null, dir: 'desc' });
+  const ltpRef = useRef(null);
 
   const symList = () => symbolsText.split(/[\s,;\n]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
   const applySymbols = (syms, append) => setSymbolsText((prev) => {
@@ -124,12 +133,67 @@ export default function HammerBreakout() {
     } catch (e) { showErr(e.message); } finally { setSimLoading(false); }
   };
 
-  const runScan = async () => {
+  const todaySymbols = useCallback(() => {
+    if (useStratList) return symList();
+    if (todaySel.mode === 'single') return todaySel.symbol ? [todaySel.symbol] : [];
+    if (todaySel.mode === 'watchlist') return todaySel.symbols || [];
+    return universe.map((u) => (typeof u === 'string' ? u : u.name)).filter(Boolean);
+  }, [useStratList, todaySel, universe, symbolsText]);
+
+  const runScan = useCallback(async () => {
+    const syms = todaySymbols();
+    if (!syms.length) { showErr('No stocks to scan — add some to the watchlist'); return; }
     setScanning(true); setErr('');
     try {
-      const r = await api.hbScan({ symbols: symList(), overrides: cfg });
-      if (r.status === 'ok') setSetups(r.setups || []); else showErr(r.message || 'Scan failed');
+      const r = await api.hbScan({ symbols: syms, overrides: cfg });
+      if (r.status === 'ok') setToday(r); else showErr(r.message || 'Scan failed');
     } catch (e) { showErr(e.message); } finally { setScanning(false); }
+  }, [cfg, todaySymbols]);
+
+  // Hammers only change at the day boundary — re-price the found setups instead
+  // of re-scanning, so the list stays live without hammering the history API.
+  const refreshLtps = useCallback(async () => {
+    const rows = today?.setups || [];
+    if (!rows.length) return;
+    const keys = rows.slice(0, 200).map((r) => `${r.exchange || 'NSE'}:${r.underlying}`);
+    try {
+      const r = await api.getLtp(keys.join(','));
+      const px = r?.prices || {};
+      setToday((t) => (!t ? t : {
+        ...t,
+        setups: t.setups.map((s) => {
+          const v = Number(px[`${s.exchange || 'NSE'}:${s.underlying}`]);
+          if (!v) return s;
+          const broke = s.broke || v > s.trigger;
+          return { ...s, ltp: v, broke, status: broke ? 'BREAKOUT' : 'ARMED',
+            to_trigger_pct: Math.round(((s.trigger - v) / v) * 10000) / 100 };
+        }),
+        priced_at: new Date().toLocaleTimeString('en-IN', { hour12: false }),
+      }));
+    } catch { /* keep the last good prices */ }
+  }, [today?.setups?.length]);
+
+  useEffect(() => {
+    if (tab !== 'today' || !autoTick) return undefined;
+    ltpRef.current = setInterval(refreshLtps, 15000);
+    return () => clearInterval(ltpRef.current);
+  }, [tab, autoTick, refreshLtps]);
+
+  // first visit to the tab → scan once, so the list is there without a click
+  const firstScan = useRef(false);
+  useEffect(() => {
+    if (tab === 'today' && cfg && !firstScan.current) { firstScan.current = true; runScan(); }
+  }, [tab, cfg, runScan]);
+
+  const sendTelegram = async () => {
+    const syms = todaySymbols();
+    if (!syms.length) { showErr('No stocks to scan'); return; }
+    setSending(true); setErr('');
+    try {
+      const r = await api.hbTodayTelegram({ symbols: syms, overrides: cfg });
+      if (r.status === 'ok') { setToday(r); flash(`Sent ${r.sent} setup(s) to Telegram`); }
+      else showErr(r.message || 'Telegram send failed');
+    } catch (e) { showErr(e.message); } finally { setSending(false); }
   };
 
   const saveCfg = async () => {
@@ -234,7 +298,7 @@ export default function HammerBreakout() {
       </div>
 
       <div className="flex gap-1 border-b border-surface-3">
-        {[['backtest', 'Backtest', FlaskConical], ['simulate', 'Simulate', Hammer], ['positions', 'Positions', Wallet], ['info', 'Info', Info]].map(([id, label, Icon]) => (
+        {[['backtest', 'Backtest', FlaskConical], ['simulate', 'Simulate', Hammer], ['positions', 'Positions', Wallet], ['today', "Today's Stocks", Target], ['info', 'Info', Info]].map(([id, label, Icon]) => (
           <button key={id} onClick={() => setTab(id)} className={`flex items-center gap-1.5 px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition ${tab === id ? 'border-brand-500 text-brand-400' : 'border-transparent text-gray-400 hover:text-gray-200'}`}><Icon className="w-4 h-4" /> {label}</button>
         ))}
       </div>
@@ -384,36 +448,6 @@ export default function HammerBreakout() {
             {!cfg.paper_trade && <p className="text-[11px] text-amber-400">⚠ REAL mode also needs global PAPER_TRADE=False + TRADING_ENABLED=True. Orders are {cfg.product} BUY on the breakout, sold back on target / SL / max-hold.</p>}
           </div>
 
-          {/* today's armed hammers */}
-          <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 border-b border-surface-3 flex items-center justify-between">
-              <span className="text-sm font-semibold text-gray-200">Armed today <span className="text-gray-500">(hammers on the last completed daily candle)</span></span>
-              <button onClick={runScan} disabled={scanning} className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg border bg-surface-3 text-gray-300 border-surface-4 hover:text-white disabled:opacity-40">{scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />} Scan watchlist</button>
-            </div>
-            {(() => {
-              const live = status?.armed || [];
-              const list = setups && setups.length ? setups : live;
-              if (!list.length) return <div className="px-4 py-6 text-center text-gray-500 text-sm">{setups ? 'No hammer setups in the watchlist right now.' : 'Run a scan (or start the strategy) to see which stocks are armed for a breakout today.'}</div>;
-              return (
-                <div className="overflow-x-auto"><table className="w-full text-xs whitespace-nowrap">
-                  <thead className="bg-surface-3 text-gray-300"><tr>{['Stock', 'Hammer On', 'Trigger (buy above)', 'Hammer Low', 'Wick %', 'Body %', 'Up Wick %', ''].map((h, i) => <th key={i} className={`px-2.5 py-2 font-semibold ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>)}</tr></thead>
-                  <tbody>{list.map((s, i) => (
-                    <tr key={i} className="border-t border-surface-3/40">
-                      <td className="px-2.5 py-1.5 text-left text-brand-300 font-semibold">{s.underlying}</td>
-                      <td className="px-2.5 py-1.5 text-right text-gray-500">{s.signal_date}</td>
-                      <td className="px-2.5 py-1.5 text-right text-gray-100 font-medium">₹{NUM(s.trigger)}</td>
-                      <td className="px-2.5 py-1.5 text-right text-red-400">₹{NUM(s.sig_low)}</td>
-                      <td className="px-2.5 py-1.5 text-right text-emerald-400">{s.lower_wick_pct == null ? '—' : NUM(s.lower_wick_pct)}</td>
-                      <td className="px-2.5 py-1.5 text-right text-gray-400">{s.body_pct == null ? '—' : NUM(s.body_pct)}</td>
-                      <td className="px-2.5 py-1.5 text-right text-gray-400">{s.upper_wick_pct == null ? '—' : NUM(s.upper_wick_pct)}</td>
-                      <td className="px-2.5 py-1.5 text-right">{s.entered ? <span className="text-emerald-400">entered</span> : <span className="text-gray-600">waiting</span>}</td>
-                    </tr>
-                  ))}</tbody>
-                </table></div>
-              );
-            })()}
-          </div>
-
           {positions.length > 0 && (() => {
             const s = positions.reduce((a, p) => { a.mtm += p.mtm || 0; a.mfe += p.mfe || 0; a.mae += p.mae || 0; if (p.status === 'OPEN') a.open += 1; else { a.closed += 1; a.realized += p.mtm || 0; } return a; }, { mtm: 0, mfe: 0, mae: 0, open: 0, closed: 0, realized: 0 });
             return (
@@ -459,6 +493,89 @@ export default function HammerBreakout() {
         </div>
       )}
 
+      {tab === 'today' && (() => {
+        const rows = today?.setups || [];
+        const broke = rows.filter((r) => r.broke);
+        const downloadTodayCSV = () => {
+          if (!rows.length) return;
+          const cols = ['underlying', 'signal_date', 'trigger', 'ltp', 'to_trigger_pct', 'day_open', 'day_high',
+            'sig_low', 'prev_close', 'lower_wick_pct', 'body_pct', 'upper_wick_pct', 'lowest_low', 'status'];
+          const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+          const lines = [cols.join(',')].concat(rows.map((r) => cols.map((c) => esc(r[c])).join(',')));
+          const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+          const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+          a.download = `hammer_today_${today?.date || ''}.csv`; a.click();
+        };
+        return (
+          <div className="space-y-4">
+            <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 space-y-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <label className={lbl}>Scan</label>
+                  <div className="flex rounded-lg bg-surface-3 p-1">
+                    {[[true, `Strategy watchlist (${symList().length})`], [false, 'Pick another list']].map(([v, label]) => (
+                      <button key={String(v)} onClick={() => setUseStratList(v)} className={`px-3 py-1 text-xs rounded-md font-semibold transition ${useStratList === v ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>{label}</button>
+                    ))}
+                  </div>
+                </div>
+                {!useStratList && <div className="flex-1 min-w-[280px]"><WatchlistBar universe={universe} count={universe.length} onChange={setTodaySel} /></div>}
+                <button onClick={runScan} disabled={scanning} className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50">{scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />} Scan now</button>
+                <button onClick={sendTelegram} disabled={sending} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border bg-surface-3 text-gray-300 border-surface-4 hover:text-white disabled:opacity-50">{sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send to Telegram</button>
+                <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer" title="Re-prices the listed setups every 15 s. The hammer list itself only changes once a day.">
+                  <input type="checkbox" checked={autoTick} onChange={(e) => setAutoTick(e.target.checked)} className="accent-brand-500" /> Auto-refresh prices (15s)
+                </label>
+                <button onClick={refreshLtps} disabled={!rows.length} className="text-gray-400 hover:text-white disabled:opacity-40"><RefreshCw className="w-4 h-4" /></button>
+              </div>
+              <p className="text-[11px] text-gray-600">
+                Yesterday's candle is the signal; these stocks are one print above the trigger away from a BUY.
+                {today && <> Scanned {today.scanned} stocks at {today.generated_at?.slice(-8)}{today.priced_at ? ` · prices ${today.priced_at}` : ''}.</>}
+                {' '}The live engine also pushes this list to Telegram once a day when Telegram alerts are on.
+              </p>
+            </div>
+
+            {today && (
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm bg-surface-2 border border-surface-3 rounded-xl px-4 py-2.5">
+                <span className="text-gray-400">Setups today <strong className="text-gray-100">{rows.length}</strong></span>
+                <span className="text-gray-400">Broken out <strong className="text-emerald-400">{broke.length}</strong></span>
+                <span className="text-gray-400">Waiting <strong className="text-amber-400">{rows.length - broke.length}</strong></span>
+                <span className="text-gray-500 text-xs">{today.date} · {today.scanned} scanned</span>
+                <button onClick={downloadTodayCSV} disabled={!rows.length} className="ml-auto flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg border bg-surface-3 text-gray-300 border-surface-4 hover:text-white disabled:opacity-40"><Download className="w-3.5 h-3.5" /> CSV</button>
+              </div>
+            )}
+
+            <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
+              {!rows.length ? (
+                <div className="px-4 py-10 text-center text-gray-500 text-sm">{scanning ? <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Scanning…</span> : today ? 'No stock qualifies today — no hammer at the lookback low on yesterday’s candle.' : 'Run a scan to see today’s qualifying stocks.'}</div>
+              ) : (
+                <div className="overflow-x-auto"><table className="w-full text-xs whitespace-nowrap">
+                  <thead className="bg-surface-3 text-gray-300"><tr>{[['Stock', 'underlying', 'l'], ['Hammer On', 'signal_date', 'l'], ['Trigger (buy above)', 'trigger', 'r'],
+                    ['LTP', 'ltp', 'r'], ['% to Trigger', 'to_trigger_pct', 'r'], ['Day High', 'day_high', 'r'], ['Hammer Low (SL)', 'sig_low', 'r'],
+                    ['Wick %', 'lower_wick_pct', 'r'], ['Body %', 'body_pct', 'r'], ['Up Wick %', 'upper_wick_pct', 'r'], ['Status', 'status', 'r']]
+                    .map(([label, k, a]) => <SortTh key={k} label={label} k={k} align={a} sort={todaySort} onSort={(kk) => setTodaySort((s) => nextSort(s, kk))} />)}</tr></thead>
+                  <tbody>{sortRows(rows, todaySort).map((r, i) => (
+                    <tr key={i} className={`border-t border-surface-3/40 ${r.broke ? 'bg-emerald-500/5' : 'hover:bg-surface-3/10'}`}>
+                      <td className="px-2.5 py-1.5 text-left text-brand-300 font-semibold">{r.underlying}</td>
+                      <td className="px-2.5 py-1.5 text-left text-gray-500">{r.signal_date}</td>
+                      <td className="px-2.5 py-1.5 text-right text-gray-100 font-medium">₹{NUM(r.trigger)}</td>
+                      <td className="px-2.5 py-1.5 text-right text-gray-200">{r.ltp == null ? '—' : `₹${NUM(r.ltp)}`}</td>
+                      <td className={`px-2.5 py-1.5 text-right font-semibold ${r.to_trigger_pct == null ? 'text-gray-500' : r.to_trigger_pct <= 0 ? 'text-emerald-400' : r.to_trigger_pct < 1 ? 'text-amber-400' : 'text-gray-400'}`}>{r.to_trigger_pct == null ? '—' : `${NUM(r.to_trigger_pct)}%`}</td>
+                      <td className="px-2.5 py-1.5 text-right text-gray-400">{r.day_high == null ? '—' : NUM(r.day_high)}</td>
+                      <td className="px-2.5 py-1.5 text-right text-red-400">₹{NUM(r.sig_low)}</td>
+                      <td className="px-2.5 py-1.5 text-right text-emerald-400">{NUM(r.lower_wick_pct)}</td>
+                      <td className="px-2.5 py-1.5 text-right text-gray-400">{NUM(r.body_pct)}</td>
+                      <td className="px-2.5 py-1.5 text-right text-gray-400">{NUM(r.upper_wick_pct)}</td>
+                      <td className="px-2.5 py-1.5 text-right">{r.broke
+                        ? <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold"><TrendingUp className="w-3.5 h-3.5" />BREAKOUT</span>
+                        : <span className="text-amber-400/80">ARMED</span>}</td>
+                    </tr>
+                  ))}</tbody>
+                </table></div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {tab === 'info' && (
         <div className="bg-surface-2 border border-surface-3 rounded-xl p-5 space-y-3 text-sm text-gray-300 max-w-3xl">
           <h3 className="font-semibold text-gray-100">How the Hammer-at-3/6-Month-Low Breakout works</h3>
@@ -473,6 +590,7 @@ export default function HammerBreakout() {
           <p><strong className="text-emerald-400">Trigger:</strong> the current day trades <strong>above the signal candle's high</strong> → <strong>BUY</strong> (long only — the study has no short leg). A gap-up fills at the open.</p>
           <p><strong>Exit:</strong> target {cfg.target_mode === 'points' ? `${cfg.target_value} pts` : `${cfg.target_value}%`} above entry; stop {cfg.sl_mode === 'signal_low' ? 'at the hammer’s own low' : cfg.sl_mode === 'points' ? `${cfg.sl_value} pts below entry` : `${cfg.sl_value}% below entry`}; otherwise squared off after {cfg.max_hold_days} days at {cfg.square_off}. Sized by capital-per-trade or a fixed quantity, capped by Max Positions.</p>
           <p className="text-[12px] text-gray-500">Backtest note: exits are resolved on <strong>daily</strong> bars <em>after</em> the breakout day. A daily candle has no intraday path, so the breakout day itself is never used to decide target vs. stop — the day's low may well have printed before the trigger. Max profit / max loss come from the daily highs and lows over the hold.</p>
+          <p><strong className="text-gray-100">Today's Stocks</strong> lists every stock whose <em>yesterday</em> candle qualifies, with the trigger, the live LTP and how far it still is from the break — prices refresh every 15 s, and a stock flips to <strong className="text-emerald-400">BREAKOUT</strong> the moment it trades above the trigger. Send that list to Telegram on demand, and the live engine pushes it once a day when Telegram alerts are on.</p>
           <p className="text-[12px] text-gray-500">Backtest &amp; Simulate are read-only. Positions run <strong>paper</strong> by default; real orders need paper mode off plus the global trading gate on.</p>
         </div>
       )}

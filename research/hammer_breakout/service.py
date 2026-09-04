@@ -39,6 +39,47 @@ def warmup_days(cfg: dict) -> int:
     return int(bars * 1.55) + 15
 
 
+NL = "\n"          # Telegram line break — kept as a constant for readability
+
+
+def format_today_message(result: dict, cfg: dict) -> str:
+    """Telegram summary of today's qualifying stocks (HTML parse-mode)."""
+    rows = result.get("setups") or []
+    d = result.get("date") or date.today().isoformat()
+    lines = ["🔨 <b>HAMMER BREAKOUT — TODAY'S LIST</b>",
+             f"{d}  ·  {result.get('scanned', 0)} stocks scanned",
+             f"Hammer at a {cfg.get('low_lookback')}-bar low after "
+             f"{cfg.get('red_before')} red candles"]
+    if not rows:
+        lines.append("")
+        lines.append("No stock qualifies today.")
+        return NL.join(lines)
+
+    def _one(r: dict) -> str:
+        ltp = f"  ·  LTP ₹{r['ltp']}" if r.get("ltp") else ""
+        away = (f"  ·  {r['to_trigger_pct']}% away"
+                if r.get("to_trigger_pct") is not None and not r.get("broke") else "")
+        return (f"• <b>{r['underlying']}</b>  buy &gt; ₹{r['trigger']}{ltp}{away}"
+                f"  ·  SL ₹{r['sig_low']}")
+
+    broke = [r for r in rows if r.get("broke")]
+    armed = [r for r in rows if not r.get("broke")]
+    lines.append("")
+    lines.append(f"<b>{len(rows)} setup(s)</b> · {len(broke)} already broken out")
+    if broke:
+        lines.append("")
+        lines.append("🚀 <b>BROKEN OUT (entry triggered)</b>")
+        lines.extend(_one(r) for r in broke[:30])
+    if armed:
+        lines.append("")
+        lines.append("⏳ <b>ARMED (waiting for the break)</b>")
+        lines.extend(_one(r) for r in armed[:30])
+    if len(rows) > 60:
+        lines.append("")
+        lines.append(f"… and {len(rows) - 60} more — see the Today tab.")
+    return NL.join(lines)
+
+
 class HammerBreakoutResearch:
     def __init__(self, broker: Broker, user_id: Optional[int] = None):
         self.broker = broker
@@ -288,33 +329,75 @@ class HammerBreakoutResearch:
                 "timeline": timeline, "trade": row}
 
     # ── live scan: the setups armed for today across a watchlist ──
-    def scan(self, symbols: list[str], overrides=None, day: Optional[date] = None) -> list[dict]:
-        """Signal candles that qualify for a breakout on ``day`` (default today).
-        Read-only — used by the Positions tab to preview what is armed."""
+    def scan(self, symbols: list[str], overrides=None, day: Optional[date] = None,
+             with_ltp: bool = True) -> dict:
+        """Today's stock list: signal candles that qualify for a breakout on ``day``
+        (default today), enriched with the live LTP and today's running high so a
+        break of the trigger is visible the moment it happens. Read-only."""
         cfg = sanitize({**self.load_config(), **(overrides or {})})
         d = day or date.today()
-        out = []
+        rows, scanned = [], 0
         for name in symbols:
             name = (name or "").strip().upper()
             if not name:
                 continue
+            scanned += 1
             try:
-                token, _exch = self.universe.resolve_equity_token(name)
+                token, exch = self.universe.resolve_equity_token(name)
                 if not token:
                     continue
-                candles = [c for c in self._daily(token, d - timedelta(days=warmup_days(cfg)), d)
-                           if c["_d"] < d]                      # completed days only
-                if len(candles) < 2:
+                candles = self._daily(token, d - timedelta(days=warmup_days(cfg)), d)
+                today_bar = next((c for c in candles if c["_d"] == d), None)
+                completed = [c for c in candles if c["_d"] < d]
+                if len(completed) < 2:
                     continue
-                setup = calc.hammer_at(candles, len(candles) - 1, cfg)
-                if setup and setup["ok"]:
-                    out.append({"underlying": name, "signal_date": candles[-1]["_d"].isoformat(),
-                                "trigger": round(setup["high"], 2), "sig_low": round(setup["low"], 2),
-                                "lower_wick_pct": setup["lower_wick_pct"], "body_pct": setup["body_pct"],
-                                "upper_wick_pct": setup["upper_wick_pct"],
-                                "lowest_low": setup["lowest_low"]})
+                setup = calc.hammer_at(completed, len(completed) - 1, cfg)
+                if not (setup and setup["ok"]):
+                    continue
+                trigger = round(setup["high"], 2)
+                row = {"underlying": name, "exchange": exch,
+                       "signal_date": completed[-1]["_d"].isoformat(),
+                       "trigger": trigger, "sig_low": round(setup["low"], 2),
+                       "lower_wick_pct": setup["lower_wick_pct"], "body_pct": setup["body_pct"],
+                       "upper_wick_pct": setup["upper_wick_pct"],
+                       "lowest_low": setup["lowest_low"], "prev_close": round(setup["close"], 2),
+                       "ltp": None, "day_high": None, "day_open": None, "broke": False,
+                       "to_trigger_pct": None, "status": "ARMED"}
+                if today_bar:
+                    row["day_open"] = round(float(today_bar["open"]), 2)
+                    row["day_high"] = round(float(today_bar["high"]), 2)
+                    row["broke"] = float(today_bar["high"]) > setup["high"]
+                rows.append(row)
             except Exception as exc:
                 logger.debug("hammer scan %s failed: %s", name, exc)
+
+        if with_ltp and rows:
+            prices = self._ltp_map(rows)
+            for r in rows:
+                ltp = prices.get(f"{r['exchange']}:{r['underlying']}")
+                if ltp:
+                    r["ltp"] = round(float(ltp), 2)
+                    r["to_trigger_pct"] = round((r["trigger"] - ltp) / ltp * 100.0, 2)
+                    if ltp > r["trigger"]:
+                        r["broke"] = True
+                r["status"] = "BREAKOUT" if r["broke"] else "ARMED"
+
+        rows.sort(key=lambda r: (not r["broke"],
+                                 r["to_trigger_pct"] if r["to_trigger_pct"] is not None else 9e9,
+                                 r["underlying"]))
+        return {"date": d.isoformat(), "scanned": scanned, "setups": rows,
+                "armed": len(rows), "broken": sum(1 for r in rows if r["broke"]),
+                "config": cfg, "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+    def _ltp_map(self, rows: list[dict]) -> dict:
+        """One batched quote call for every scanned symbol (chunked for the API)."""
+        keys = [f"{r['exchange']}:{r['underlying']}" for r in rows]
+        out: dict = {}
+        for i in range(0, len(keys), 200):
+            try:
+                out.update(self.broker.get_ltp(keys[i:i + 200]) or {})
+            except Exception as exc:
+                logger.debug("hammer scan LTP chunk failed: %s", exc)
         return out
 
     # ── helpers ──
