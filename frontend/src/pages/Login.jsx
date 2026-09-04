@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { useToast } from '../ToastContext';
-import { Lock, User, Eye, EyeOff, Loader2, ArrowRight, Mail, UserPlus } from 'lucide-react';
+import { Lock, User, Eye, EyeOff, Loader2, ArrowRight, Mail, UserPlus, X } from 'lucide-react';
 import { LogoIcon } from '../components/QuantFluxLogo';
 
 export default function Login() {
@@ -17,6 +17,7 @@ export default function Login() {
   const [resetToken, setResetToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showJanmashtami, setShowJanmashtami] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -166,15 +167,14 @@ export default function Login() {
               <span className="text-amber-300/80 text-sm">✦</span>
               <span className="h-px w-14 bg-gradient-to-l from-transparent to-amber-400/50" />
             </div>
-            <a
-              href="/happy-janmashtami.html"
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
+              onClick={() => setShowJanmashtami(true)}
               className="inline-flex items-center gap-2 mt-4 px-4 py-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 text-amber-200 text-sm font-medium hover:bg-amber-400/20 hover:border-amber-300/60 hover:text-amber-100 transition-colors"
             >
               <span aria-hidden="true">🪈</span>
               Happy Janmashtami
-            </a>
+            </button>
           </div>
 
           {/* Illustration — flexes to fill remaining height so the page never scrolls */}
@@ -308,15 +308,14 @@ export default function Login() {
               <span className="text-amber-300/80 text-sm">✦</span>
               <span className="h-px w-10 bg-gradient-to-l from-transparent to-amber-400/50" />
             </div>
-            <a
-              href="/happy-janmashtami.html"
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
+              onClick={() => setShowJanmashtami(true)}
               className="inline-flex items-center gap-2 mt-3 px-3.5 py-1 rounded-full border border-amber-400/30 bg-amber-400/10 text-amber-200 text-xs font-medium hover:bg-amber-400/20 hover:border-amber-300/60 hover:text-amber-100 transition-colors"
             >
               <span aria-hidden="true">🪈</span>
               Happy Janmashtami
-            </a>
+            </button>
           </div>
 
           {/* Brand — sits atop the sign-in panel */}
@@ -635,6 +634,33 @@ export default function Login() {
         </p>
         </div>
       </div>
+
+      {/* Janmashtami greeting — plays in-page, no navigation */}
+      {showJanmashtami && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setShowJanmashtami(false)}
+        >
+          <div
+            className="relative w-full max-w-[420px] h-[88vh] rounded-2xl overflow-hidden border border-amber-400/30 shadow-2xl shadow-amber-500/10 bg-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setShowJanmashtami(false)}
+              aria-label="Close greeting"
+              className="absolute top-2 right-2 z-10 p-1.5 rounded-full bg-black/50 text-white/80 hover:bg-black/70 hover:text-white transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <iframe
+              src="/happy-janmashtami.html"
+              title="Happy Janmashtami"
+              className="w-full h-full border-0"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
