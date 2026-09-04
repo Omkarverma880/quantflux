@@ -26,6 +26,8 @@ from research.fourth_candle.calculations import analyze_day, day_candles, find_b
 from research.hammer_breakout import calculations as hammer_calc
 from research.prev_period_vwap import compute_prev_period_vwaps
 from research.equity_workspace import indicators as ind
+from research.wyckoff import core as wyckoff_core
+from research.wyckoff.config import sanitize as wyckoff_sanitize
 
 # ── strategy catalogue ────────────────────────────────────────────────
 # key, name, one-line rule (the legend the UI shows), data it needs, and
@@ -54,6 +56,9 @@ STRATEGIES: list[dict] = [
     {"key": "cv_vwap_ema_adx", "name": "CV+VWAP+EMA+ADX", "short": "CVX",
      "rule": "Price above both the slow EMA and VWAP, ADX at or above the threshold, and cumulative volume confirming.",
      "needs": ["tf"], "intraday_only": False, "source": "Strategy 3"},
+    {"key": "wyckoff", "name": "Wyckoff Phase", "short": "WYK",
+     "rule": "Wyckoff structure is complete — a Phase C spring confirmed by its test, or a Phase D sign of strength with the last point of support (mirrored for distribution).",
+     "needs": ["tf"], "intraday_only": False, "source": "Wyckoff Method"},
     {"key": "first_hour_breakout", "name": "First-Hour Breakout", "short": "FHB",
      "rule": "Price is above the highest first-hour (9:15–10:15) high of the last N days, with today's volume above that window's average.",
      "needs": ["hour"], "intraday_only": False, "source": "Strategy 10"},
@@ -267,6 +272,32 @@ def eval_first_hour_breakout(ctx: dict) -> dict:
     return _yes("BUY", f"above {level} ({len(firsts)}-day first-hour high) on {vol:,.0f} volume")
 
 
+# ── 9. Wyckoff structure ─────────────────────────────────────────────
+def eval_wyckoff(ctx: dict) -> dict:
+    """Delegates to the Wyckoff engine and reports only its verdict — the full
+    read (range, events, nine tests, why-to-avoid) lives on the Wyckoff page."""
+    candles = ctx.get("tf_candles") or []
+    cfg = ctx["cfg"]
+    look = int(cfg.get("wyckoff_lookback", 120))
+    if len(candles) < 60:
+        return _na(f"needs 60 candles, has {len(candles)}")
+    wcfg = wyckoff_sanitize({"timeframe": ctx["tf"], "lookback": look,
+                             "min_tests_enter": int(cfg.get("wyckoff_min_tests", 5))})
+    read = wyckoff_core.analyze(candles, wcfg, instrument=ctx.get("symbol", ""))
+    g = read.get("guidance") or {}
+    action = g.get("action")
+    phase = read.get("phase")
+    tests = f"{g.get('tests_passed', 0)}/{g.get('tests_total', 9)}"
+    if action == "ENTER_LONG":
+        return _yes("LONG", f"Phase {phase} {read.get('bias')} · {tests} tests · {g.get('headline')}")
+    if action == "ENTER_SHORT":
+        return _yes("SHORT", f"Phase {phase} {read.get('bias')} · {tests} tests · {g.get('headline')}")
+    if read.get("phase") == "?":
+        return _na(read.get("phase_note") or "no structure")
+    return _no(f"Phase {phase} {read.get('bias')} · {tests} tests · "
+               f"{(g.get('avoid') or [g.get('headline', '')])[0]}")
+
+
 EVALUATORS = {
     "fourth_candle": eval_fourth_candle,
     "hammer_low": eval_hammer_low,
@@ -275,6 +306,7 @@ EVALUATORS = {
     "cum_volume": eval_cum_volume,
     "ema_pullback": eval_ema_pullback,
     "cv_vwap_ema_adx": eval_cv_vwap_ema_adx,
+    "wyckoff": eval_wyckoff,
     "first_hour_breakout": eval_first_hour_breakout,
 }
 

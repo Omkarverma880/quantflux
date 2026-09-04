@@ -45,6 +45,7 @@ import FourthCandle from './pages/equity/FourthCandle';
 import FourthCandleEquity from './pages/equity/FourthCandleEquity';
 import HammerBreakout from './pages/equity/HammerBreakout';
 import EquityWorkspace from './pages/equity/EquityWorkspace';
+import Wyckoff from './pages/equity/Wyckoff';
 import EquityPMVwapHolding from './pages/equity/PMVwapHolding';
 
 export default function App() {
@@ -96,6 +97,7 @@ export default function App() {
           <Route path="equity-strategy/fourth-candle-cash" element={<FourthCandleEquity />} />
           <Route path="equity-strategy/hammer-breakout" element={<HammerBreakout />} />
           <Route path="equity-strategy/workspace" element={<EquityWorkspace />} />
+          <Route path="equity-strategy/wyckoff" element={<Wyckoff />} />
           <Route path="research/market-dashboard" element={<MarketDashboard />} />
           <Route path="portfolio" element={<PortfolioAnalytics />} />
           <Route path="portfolio/analytics-world" element={<AnalyticsWorld />} />

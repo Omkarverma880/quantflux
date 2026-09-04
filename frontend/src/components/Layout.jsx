@@ -59,6 +59,7 @@ const NAV = [
     label: 'Equity Strategies', icon: Wallet,
     children: [
       { to: '/equity-strategy/workspace', label: '★ Strategy Workspace' },
+      { to: '/equity-strategy/wyckoff', label: '★ Wyckoff Method' },
       { to: '/equity-strategy/pmvwap-holding', label: '1. Prev-Month VWAP Holding' },
       { to: '/equity-strategy/fourth-candle', label: '2. 4th Candle Strategy' },
       { to: '/equity-strategy/fourth-candle-cash', label: '3. 4th Candle (Cash Equity)' },

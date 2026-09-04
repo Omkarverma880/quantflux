@@ -615,6 +615,14 @@ export const api = {
   wsConfig: () => request('/equity-strategy/workspace/config'),
   wsConfigSave: (partial) => request('/equity-strategy/workspace/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
 
+  // Wyckoff Method desk — equity · index options · equity F&O (read-only)
+  wyMeta: () => request('/wyckoff/meta'),
+  wyEquity: (body) => request('/wyckoff/equity', { method: 'POST', body: JSON.stringify(body || {}) }),
+  wyOptions: (body) => request('/wyckoff/options', { method: 'POST', body: JSON.stringify(body || {}) }),
+  wyFno: (body) => request('/wyckoff/fno', { method: 'POST', body: JSON.stringify(body || {}) }),
+  wyScan: (body) => request('/wyckoff/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
+  wyConfigSave: (partial) => request('/wyckoff/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+
   // Universal Telegram notifications (shared across the app)
   getTelegramSettings: (bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`),
   saveTelegramSettings: (cfg, bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`, { method: 'POST', body: JSON.stringify(cfg || {}) }),
