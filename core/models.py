@@ -717,6 +717,52 @@ class FourthCandleEquityPosition(Base):
     )
 
 
+class HammerBreakoutPosition(Base):
+    """Paper/live position for the Hammer-at-3/6-Month-Low Breakout Strategy
+    (Equity #4).
+
+    Daily positional swing, LONG only: the previous daily candle is a hammer at
+    a 3/6-month low and the current day trades above its high. Real orders only
+    when paper_trade is off AND the global trading gate is on. Positions carry
+    across days (CNC). Auto-created via ``create_all``.
+    """
+    __tablename__ = "hammer_breakout_positions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    trade_date = Column(Date, nullable=False)       # breakout / entry day
+    signal_date = Column(Date)                      # the hammer candle's day
+    underlying = Column(String(40))
+    direction = Column(String(5), default="LONG")
+    symbol = Column(String(60))                     # NSE tradingsymbol (same as underlying)
+    exchange = Column(String(8), default="NSE")
+    token = Column(Integer)
+    qty = Column(Integer)
+    trigger = Column(Numeric(12, 2))                # signal-candle high
+    signal_low = Column(Numeric(12, 2))             # hammer low (the natural stop)
+    entry_price = Column(Numeric(12, 2))
+    entry_time = Column(String(12))
+    target = Column(Numeric(12, 2))
+    sl = Column(Numeric(12, 2))
+    ltp = Column(Numeric(12, 2))
+    mtm = Column(Numeric(14, 2), default=0)
+    mfe = Column(Numeric(14, 2), default=0)         # max profit
+    mae = Column(Numeric(14, 2), default=0)         # max loss
+    status = Column(String(12), default="OPEN")     # OPEN | TARGET | STOP | SQUAREOFF
+    exit_price = Column(Numeric(12, 2))
+    exit_time = Column(String(12))
+    exit_date = Column(Date)
+    exit_reason = Column(String(12))
+    product = Column(String(8), default="CNC")      # CNC | MIS
+    paper = Column(Boolean, default=True)
+    hold_days = Column(Integer)
+
+    __table_args__ = (
+        Index("idx_hammer_bo_user_date", "user_id", "trade_date"),
+    )
+
+
 class QMREPaperPosition(Base):
     """Paper position for Research #13 (QMRE). SIMULATION ONLY — no real order is
     ever placed. Auto-created via ``create_all``."""

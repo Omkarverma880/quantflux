@@ -61,6 +61,7 @@ const NAV = [
       { to: '/equity-strategy/pmvwap-holding', label: '1. Prev-Month VWAP Holding' },
       { to: '/equity-strategy/fourth-candle', label: '2. 4th Candle Strategy' },
       { to: '/equity-strategy/fourth-candle-cash', label: '3. 4th Candle (Cash Equity)' },
+      { to: '/equity-strategy/hammer-breakout', label: '4. Hammer at 3/6-Month Low' },
     ],
   },
   {

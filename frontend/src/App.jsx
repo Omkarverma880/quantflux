@@ -43,6 +43,7 @@ import MarketHub from './pages/research/MarketHub';
 import VwapOptions from './pages/index/VwapOptions';
 import FourthCandle from './pages/equity/FourthCandle';
 import FourthCandleEquity from './pages/equity/FourthCandleEquity';
+import HammerBreakout from './pages/equity/HammerBreakout';
 import EquityPMVwapHolding from './pages/equity/PMVwapHolding';
 
 export default function App() {
@@ -92,6 +93,7 @@ export default function App() {
           <Route path="equity-strategy/pmvwap-holding" element={<EquityPMVwapHolding />} />
           <Route path="equity-strategy/fourth-candle" element={<FourthCandle />} />
           <Route path="equity-strategy/fourth-candle-cash" element={<FourthCandleEquity />} />
+          <Route path="equity-strategy/hammer-breakout" element={<HammerBreakout />} />
           <Route path="research/market-dashboard" element={<MarketDashboard />} />
           <Route path="portfolio" element={<PortfolioAnalytics />} />
           <Route path="portfolio/analytics-world" element={<AnalyticsWorld />} />

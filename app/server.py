@@ -39,6 +39,7 @@ from app.routes.strategy12_routes import router as s12_router
 from app.routes.equity_strategy_routes import router as equity_strategy_router
 from app.routes.fourth_candle_routes import router as fourth_candle_router
 from app.routes.fourth_candle_equity_routes import router as fourth_candle_equity_router
+from app.routes.hammer_breakout_routes import router as hammer_breakout_router
 from app.routes.vwap_options_routes import router as vwap_options_router
 from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
@@ -267,6 +268,13 @@ def _run_strategies_for_user(uid: int):
         if authenticated and (fce.is_active or fce.cfg.get("auto_start")):
             fce.check()
 
+        # Hammer at 3/6-Month Low breakout (daily swing; CNC delivery). Tick
+        # while active OR while any position is open — swings carry across days.
+        from app.routes.hammer_breakout_routes import _get_strategy as _get_hammer
+        hb = _get_hammer(broker, uid)
+        if authenticated and (hb.is_active or hb.cfg.get("auto_start") or hb.has_open_positions):
+            hb.check()
+
         # VWAP Options Engine (NIFTY index options; paper by default).
         from app.routes.vwap_options_routes import _get_strategy as _get_vwapopt
         vo = _get_vwapopt(broker, uid, db)
@@ -404,6 +412,7 @@ app.include_router(s12_router, prefix="/api/strategy12-trade", tags=["Strategy12
 app.include_router(equity_strategy_router, prefix="/api/equity-strategy/pmvwap-holding", tags=["Equity-PMVwapHolding"])
 app.include_router(fourth_candle_router, prefix="/api/equity-strategy/fourth-candle", tags=["Equity-FourthCandle"])
 app.include_router(fourth_candle_equity_router, prefix="/api/equity-strategy/fourth-candle-cash", tags=["Equity-FourthCandleCash"])
+app.include_router(hammer_breakout_router, prefix="/api/equity-strategy/hammer-breakout", tags=["Equity-HammerBreakout"])
 app.include_router(vwap_options_router, prefix="/api/index-strategy/vwap-options", tags=["Index-VWAPOptions"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])

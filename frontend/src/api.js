@@ -594,6 +594,18 @@ export const api = {
   fceUpdateConfig: (config) => request('/equity-strategy/fourth-candle-cash/config', { method: 'PUT', body: JSON.stringify({ config: config || {} }) }),
   fcePositions: (date) => request(`/equity-strategy/fourth-candle-cash/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
 
+  // Equity Strategy 4 — Hammer at 3/6-Month Low (Breakout)
+  hbBacktest: (body) => request('/equity-strategy/hammer-breakout/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
+  hbSimulate: (body) => request('/equity-strategy/hammer-breakout/simulate', { method: 'POST', body: JSON.stringify(body) }),
+  hbScan: (body) => request('/equity-strategy/hammer-breakout/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
+  hbConfig: () => request('/equity-strategy/hammer-breakout/config'),
+  hbConfigSave: (partial) => request('/equity-strategy/hammer-breakout/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+  hbStatus: () => request('/equity-strategy/hammer-breakout/status'),
+  hbStart: (config) => request('/equity-strategy/hammer-breakout/start', { method: 'POST', body: JSON.stringify({ config: config || {} }) }),
+  hbStop: () => request('/equity-strategy/hammer-breakout/stop', { method: 'POST' }),
+  hbUpdateConfig: (config) => request('/equity-strategy/hammer-breakout/config', { method: 'PUT', body: JSON.stringify({ config: config || {} }) }),
+  hbPositions: (date) => request(`/equity-strategy/hammer-breakout/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+
   // Universal Telegram notifications (shared across the app)
   getTelegramSettings: (bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`),
   saveTelegramSettings: (cfg, bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`, { method: 'POST', body: JSON.stringify(cfg || {}) }),
