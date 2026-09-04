@@ -609,6 +609,12 @@ export const api = {
   hbUpdateConfig: (config) => request('/equity-strategy/hammer-breakout/config', { method: 'PUT', body: JSON.stringify({ config: config || {} }) }),
   hbPositions: (date) => request(`/equity-strategy/hammer-breakout/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
 
+  // Equity Strategy Workspace — consolidated multi-strategy screener (read-only)
+  wsMeta: () => request('/equity-strategy/workspace/meta'),
+  wsScan: (body) => request('/equity-strategy/workspace/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
+  wsConfig: () => request('/equity-strategy/workspace/config'),
+  wsConfigSave: (partial) => request('/equity-strategy/workspace/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+
   // Universal Telegram notifications (shared across the app)
   getTelegramSettings: (bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`),
   saveTelegramSettings: (cfg, bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`, { method: 'POST', body: JSON.stringify(cfg || {}) }),
