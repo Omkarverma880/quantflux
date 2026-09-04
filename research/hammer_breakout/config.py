@@ -59,10 +59,15 @@ DEFAULT_CONFIG: dict = {
     # ── telegram ──
     "telegram_alerts": False,
     "telegram_bot": "a",
+    # ── Today's Stocks tab ──
+    "today_source": "fno",            # fno | strategy | watchlist
+    "today_watchlist_id": "",         # when today_source == "watchlist"
+    "today_refresh_secs": 15,         # live re-price cadence (5 s … 24 h)
+    "today_auto_alert": False,        # push each new breakout to Telegram as it happens
 }
 
 _INT = {"low_lookback", "red_before", "max_hold_days", "capital_per_trade", "fixed_qty",
-        "max_positions", "max_long", "max_stocks", "scan_interval"}
+        "max_positions", "max_long", "max_stocks", "scan_interval", "today_refresh_secs"}
 _FLOAT = {"lower_wick_min", "body_max", "upper_wick_max", "target_value", "sl_value",
           "slippage_bps", "brokerage_per_order", "charges_pct"}
 
@@ -102,10 +107,14 @@ def sanitize(cfg: dict) -> dict:
     out["max_long"] = max(1, min(500, out["max_long"]))
     out["max_stocks"] = max(0, out["max_stocks"])
     out["scan_interval"] = max(10, min(600, out["scan_interval"]))
-    for b in ("apply_costs", "paper_trade", "auto_start", "telegram_alerts"):
+    out["today_refresh_secs"] = max(5, min(86400, out["today_refresh_secs"]))
+    for b in ("apply_costs", "paper_trade", "auto_start", "telegram_alerts", "today_auto_alert"):
         out[b] = bool(out[b])
     if out["telegram_bot"] not in ("a", "b"):
         out["telegram_bot"] = "a"
+    if out["today_source"] not in ("fno", "strategy", "watchlist"):
+        out["today_source"] = "fno"
+    out["today_watchlist_id"] = str(out.get("today_watchlist_id") or "")
     out["symbols"] = [str(s).strip().upper() for s in (out.get("symbols") or []) if str(s).strip()]
     return out
 

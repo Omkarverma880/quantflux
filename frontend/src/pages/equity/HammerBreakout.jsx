@@ -25,6 +25,9 @@ const sortRows = (arr, s) => {
   });
 };
 const nextSort = (s, k) => (s.key === k ? { key: k, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: k, dir: 'desc' });
+const EVERY_PRESETS = [[15, '15 sec'], [30, '30 sec'], [60, '1 min'], [300, '5 min'],
+  [900, '15 min'], [1800, '30 min'], [3600, '1 hour']];
+const everyLabel = (n) => (n % 3600 === 0 ? `${n / 3600} hour` : n % 60 === 0 ? `${n / 60} min` : `${n} sec`);
 function SortTh({ label, k, align, sort, onSort }) {
   const active = sort.key === k;
   return <th onClick={() => onSort(k)} className={`px-2.5 py-2 font-semibold cursor-pointer select-none ${align === 'l' ? 'text-left' : 'text-right'} ${active ? 'text-brand-300' : ''}`}>{label}{active ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>;
@@ -85,9 +88,12 @@ export default function HammerBreakout() {
   const [scanning, setScanning] = useState(false);
   const [sending, setSending] = useState(false);
   const [autoTick, setAutoTick] = useState(true);
-  const [useStratList, setUseStratList] = useState(true);
+  const [useStratList, setUseStratList] = useState(false);   // default = the F&O universe
   const [todaySel, setTodaySel] = useState({ mode: 'all', symbol: null, symbols: null });
   const [todaySort, setTodaySort] = useState({ key: null, dir: 'desc' });
+  const [customEvery, setCustomEvery] = useState(false);
+  const [customVal, setCustomVal] = useState(2);
+  const [customUnit, setCustomUnit] = useState(60);
   const ltpRef = useRef(null);
 
   const symList = () => symbolsText.split(/[\s,;\n]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
@@ -150,34 +156,37 @@ export default function HammerBreakout() {
     } catch (e) { showErr(e.message); } finally { setScanning(false); }
   }, [cfg, todaySymbols]);
 
-  // Hammers only change at the day boundary — re-price the found setups instead
-  // of re-scanning, so the list stays live without hammering the history API.
-  const refreshLtps = useCallback(async () => {
-    const rows = today?.setups || [];
-    if (!rows.length) return;
-    const keys = rows.slice(0, 200).map((r) => `${r.exchange || 'NSE'}:${r.underlying}`);
+  // The live tick. Hammers only change at the day boundary, so the server just
+  // re-prices the cached setups (one batched quote call) — and, when Telegram
+  // alerts are on, pushes every stock that has just taken out its trigger. The
+  // dedupe ledger lives on the server, so a stock is announced exactly once a
+  // day no matter how many tabs are open.
+  const tickRef = useRef(null);
+  const runTick = useCallback(async () => {
+    const syms = todaySymbols();
+    if (!syms.length) return;
     try {
-      const r = await api.getLtp(keys.join(','));
-      const px = r?.prices || {};
-      setToday((t) => (!t ? t : {
-        ...t,
-        setups: t.setups.map((s) => {
-          const v = Number(px[`${s.exchange || 'NSE'}:${s.underlying}`]);
-          if (!v) return s;
-          const broke = s.broke || v > s.trigger;
-          return { ...s, ltp: v, broke, status: broke ? 'BREAKOUT' : 'ARMED',
-            to_trigger_pct: Math.round(((s.trigger - v) / v) * 10000) / 100 };
-        }),
-        priced_at: new Date().toLocaleTimeString('en-IN', { hour12: false }),
-      }));
-    } catch { /* keep the last good prices */ }
-  }, [today?.setups?.length]);
+      const call = cfg?.telegram_alerts ? api.hbTodayAutoAlert : api.hbTodayRefresh;
+      const r = await call({ symbols: syms, overrides: cfg });
+      if (r.status !== 'ok') return;
+      setToday(r);
+      if (r.sent) flash(`${r.sent} breakout(s) sent to Telegram: ${(r.alerted || []).join(', ')}`);
+    } catch { /* keep the last good snapshot */ }
+  }, [cfg, todaySymbols]);
+  const tickFn = useRef(runTick);
+  useEffect(() => { tickFn.current = runTick; }, [runTick]);
 
+  const everySecs = Math.max(5, Number(cfg?.today_refresh_secs) || 15);
+  const applyEvery = async (n) => {
+    const secs = Math.max(5, Math.min(86400, Math.round(Number(n) || 15)));
+    setCfg((c) => ({ ...c, today_refresh_secs: secs }));
+    try { await api.hbConfigSave({ today_refresh_secs: secs }); } catch { /* stays local */ }
+  };
   useEffect(() => {
     if (tab !== 'today' || !autoTick) return undefined;
-    ltpRef.current = setInterval(refreshLtps, 15000);
-    return () => clearInterval(ltpRef.current);
-  }, [tab, autoTick, refreshLtps]);
+    tickRef.current = setInterval(() => tickFn.current(), everySecs * 1000);
+    return () => clearInterval(tickRef.current);
+  }, [tab, autoTick, everySecs]);
 
   // first visit to the tab → scan once, so the list is there without a click
   const firstScan = useRef(false);
@@ -521,15 +530,53 @@ export default function HammerBreakout() {
                 {!useStratList && <div className="flex-1 min-w-[280px]"><WatchlistBar universe={universe} count={universe.length} onChange={setTodaySel} /></div>}
                 <button onClick={runScan} disabled={scanning} className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50">{scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />} Scan now</button>
                 <button onClick={sendTelegram} disabled={sending} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border bg-surface-3 text-gray-300 border-surface-4 hover:text-white disabled:opacity-50">{sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send to Telegram</button>
-                <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer" title="Re-prices the listed setups every 15 s. The hammer list itself only changes once a day.">
-                  <input type="checkbox" checked={autoTick} onChange={(e) => setAutoTick(e.target.checked)} className="accent-brand-500" /> Auto-refresh prices (15s)
+                <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer" title="Re-prices the listed setups on this cadence. The hammer list itself only changes once a day.">
+                  <input type="checkbox" checked={autoTick} onChange={(e) => setAutoTick(e.target.checked)} className="accent-brand-500" /> Auto-refresh
                 </label>
-                <button onClick={refreshLtps} disabled={!rows.length} className="text-gray-400 hover:text-white disabled:opacity-40"><RefreshCw className="w-4 h-4" /></button>
+                <div>
+                  <label className={lbl}>Every</label>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={customEvery ? 'custom' : String(everySecs)}
+                      onChange={(e) => {
+                        if (e.target.value === 'custom') { setCustomEvery(true); return; }
+                        setCustomEvery(false); applyEvery(e.target.value);
+                      }}
+                      className={`${sel} py-1`}
+                    >
+                      {EVERY_PRESETS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                      {!customEvery && !EVERY_PRESETS.some(([v]) => v === everySecs) && <option value={everySecs}>{everyLabel(everySecs)}</option>}
+                      <option value="custom">Custom…</option>
+                    </select>
+                    {customEvery && (
+                      <>
+                        <input
+                          type="number" min={1} value={customVal}
+                          onChange={(e) => { const n = Math.max(1, Number(e.target.value) || 1); setCustomVal(n); patch('today_refresh_secs', n * customUnit); }}
+                          onBlur={() => applyEvery(customVal * customUnit)}
+                          className={`${sel} py-1 w-20`}
+                        />
+                        <select
+                          value={customUnit}
+                          onChange={(e) => { const u = Number(e.target.value); setCustomUnit(u); applyEvery(customVal * u); }}
+                          className={`${sel} py-1`}
+                        >
+                          <option value={1}>sec</option><option value={60}>min</option><option value={3600}>hour</option>
+                        </select>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <button onClick={runTick} disabled={!rows.length} title="Refresh now" className="text-gray-400 hover:text-white disabled:opacity-40"><RefreshCw className="w-4 h-4" /></button>
               </div>
               <p className="text-[11px] text-gray-600">
                 Yesterday's candle is the signal; these stocks are one print above the trigger away from a BUY.
                 {today && <> Scanned {today.scanned} stocks at {today.generated_at?.slice(-8)}{today.priced_at ? ` · prices ${today.priced_at}` : ''}.</>}
-                {' '}The live engine also pushes this list to Telegram once a day when Telegram alerts are on.
+                {' '}
+                {cfg.telegram_alerts
+                  ? <span className="text-emerald-400/90">Auto-alert is ON — every stock that takes out its trigger is sent to Telegram once, the moment it happens (also server-side while the strategy runs).</span>
+                  : <span className="text-amber-400/80">Turn on “Telegram alerts” in Positions to have breakouts pushed automatically.</span>}
+                {today?.alerted_today?.length ? <> Already alerted today: {today.alerted_today.join(', ')}.</> : null}
               </p>
             </div>
 
@@ -590,7 +637,8 @@ export default function HammerBreakout() {
           <p><strong className="text-emerald-400">Trigger:</strong> the current day trades <strong>above the signal candle's high</strong> → <strong>BUY</strong> (long only — the study has no short leg). A gap-up fills at the open.</p>
           <p><strong>Exit:</strong> target {cfg.target_mode === 'points' ? `${cfg.target_value} pts` : `${cfg.target_value}%`} above entry; stop {cfg.sl_mode === 'signal_low' ? 'at the hammer’s own low' : cfg.sl_mode === 'points' ? `${cfg.sl_value} pts below entry` : `${cfg.sl_value}% below entry`}; otherwise squared off after {cfg.max_hold_days} days at {cfg.square_off}. Sized by capital-per-trade or a fixed quantity, capped by Max Positions.</p>
           <p className="text-[12px] text-gray-500">Backtest note: exits are resolved on <strong>daily</strong> bars <em>after</em> the breakout day. A daily candle has no intraday path, so the breakout day itself is never used to decide target vs. stop — the day's low may well have printed before the trigger. Max profit / max loss come from the daily highs and lows over the hold.</p>
-          <p><strong className="text-gray-100">Today's Stocks</strong> lists every stock whose <em>yesterday</em> candle qualifies, with the trigger, the live LTP and how far it still is from the break — prices refresh every 15 s, and a stock flips to <strong className="text-emerald-400">BREAKOUT</strong> the moment it trades above the trigger. Send that list to Telegram on demand, and the live engine pushes it once a day when Telegram alerts are on.</p>
+          <p><strong className="text-gray-100">Today's Stocks</strong> scans the F&amp;O universe by default (or any watchlist you pick) and lists every stock whose <em>yesterday</em> candle qualifies, with the trigger, the live LTP and how far it still is from the break. It re-prices on your chosen cadence — 15 s up to an hour, or a custom interval — and a stock flips to <strong className="text-emerald-400">BREAKOUT</strong> the moment it trades above the trigger.</p>
+          <p>With <strong>Telegram alerts</strong> on, each breakout is pushed <strong>automatically</strong>, once per stock per day, as it happens — from the browser tick and, so it keeps working with the tab closed, from the live engine too (it announces every trigger break, including ones it can't buy because the position cap is full or the entry cutoff has passed). The dedupe ledger is on the server, so several open tabs never double-send. The morning digest of the day's armed list is sent once when the engine arms, and the <strong>Send to Telegram</strong> button re-sends the full list on demand.</p>
           <p className="text-[12px] text-gray-500">Backtest &amp; Simulate are read-only. Positions run <strong>paper</strong> by default; real orders need paper mode off plus the global trading gate on.</p>
         </div>
       )}

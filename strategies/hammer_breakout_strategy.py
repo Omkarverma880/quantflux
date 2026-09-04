@@ -28,7 +28,9 @@ from research.prev_period_vwap import _candle_dt
 from research.pmvwap_straddle.universe import Universe
 from research.hammer_breakout import calculations as calc
 from research.hammer_breakout.config import sanitize, TIMEFRAME
-from research.hammer_breakout.service import warmup_days, format_today_message
+from research.hammer_breakout.service import (
+    warmup_days, format_today_message, format_breakout_alert, _read_ledger, _write_ledger,
+)
 
 logger = get_logger("strategy.hammer_breakout")
 
@@ -166,6 +168,11 @@ class HammerBreakoutStrategy:
         armed = self._armed()
         if not armed:
             return
+        prices = self._batch_ltp(armed)
+        # Announce every break of a trigger — even the ones no position is taken
+        # on (caps full, past the cutoff) — so nothing is missed with the browser
+        # closed. Shared ledger with the Today tab: one alert per stock per day.
+        self._alert_breakouts(armed, prices, now)
         if now.time() > calc._parse_hhmm(self.cfg["entry_cutoff"]):
             return
         opens = self._open_positions()
@@ -176,13 +183,60 @@ class HammerBreakoutStrategy:
             if len(opens) >= cap:
                 break
             try:
-                if self._maybe_enter(sym, s, now):
+                if self._maybe_enter(sym, s, now, prices.get(sym)):
                     opens = self._open_positions()
             except Exception as exc:
                 logger.debug("hammer entry %s failed: %s", sym, exc)
 
-    def _maybe_enter(self, sym, s, now) -> bool:
-        ltp = self._eq_ltp(sym, s["exchange"])
+    def _batch_ltp(self, armed: dict) -> dict:
+        """One quote call for every armed symbol → {symbol: ltp}."""
+        keys = {f"{s['exchange']}:{sym}": sym for sym, s in armed.items()}
+        out: dict = {}
+        klist = list(keys)
+        for i in range(0, len(klist), 200):
+            chunk = klist[i:i + 200]
+            try:
+                for k, v in (self.broker.get_ltp(chunk) or {}).items():
+                    if v and k in keys:
+                        out[keys[k]] = float(v)
+            except Exception as exc:
+                logger.debug("hammer batch LTP failed: %s", exc)
+        return out
+
+    def _alert_breakouts(self, armed: dict, prices: dict, now):
+        """Telegram every setup that has just taken out its trigger, once a day."""
+        if not self.cfg.get("telegram_alerts"):
+            return
+        day = now.date().isoformat()
+        key = str(self.user_id or "default")     # same key the Today tab uses — one alert per stock
+        try:
+            ledger = _read_ledger()
+            entry = ledger.get(key) or {}
+            if entry.get("date") != day:
+                entry = {"date": day, "alerted": []}
+            already = set(entry.get("alerted") or [])
+            fresh = []
+            for sym, s in sorted(armed.items()):
+                ltp = prices.get(sym)
+                if not ltp or ltp <= s["trigger"] or sym in already:
+                    continue
+                fresh.append({"underlying": sym, "trigger": s["trigger"], "sig_low": s["sig_low"],
+                              "signal_date": s["signal_date"].isoformat(), "ltp": round(ltp, 2),
+                              "broke": True})
+            if not fresh:
+                return
+            entry["alerted"] = sorted(already | {r["underlying"] for r in fresh})
+            ledger[key] = entry
+            _write_ledger(ledger)
+            rows = [{"underlying": k, "broke": prices.get(k, 0) > v["trigger"]}
+                    for k, v in armed.items()]
+            self._notify(format_breakout_alert(fresh, {"setups": rows}, self.cfg))
+            logger.info("hammer BREAKOUT alert sent for %s", ", ".join(r["underlying"] for r in fresh))
+        except Exception as exc:
+            logger.debug("hammer breakout alert failed: %s", exc)
+
+    def _maybe_enter(self, sym, s, now, ltp=None) -> bool:
+        ltp = ltp if ltp is not None else self._eq_ltp(sym, s["exchange"])
         if not ltp or ltp <= s["trigger"]:
             return False
         entry = round(ltp, 2)

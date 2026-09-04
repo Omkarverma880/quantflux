@@ -14,9 +14,12 @@ before or after the trigger). NEVER places orders.
 """
 from __future__ import annotations
 
+import json
 import threading
 from datetime import date, datetime, timedelta
 from typing import Optional
+
+from config import settings
 
 from core.broker import Broker
 from core.logger import get_logger
@@ -80,6 +83,49 @@ def format_today_message(result: dict, cfg: dict) -> str:
     return NL.join(lines)
 
 
+def format_breakout_alert(new_rows: list[dict], result: dict, cfg: dict) -> str:
+    """Telegram push for stocks that have JUST broken their trigger.
+
+    Sent by the live Today's-Stocks watcher the moment a setup flips from ARMED
+    to BREAKOUT, so each stock is announced once, when it actually happens —
+    not as part of a once-a-day digest."""
+    rows = result.get("setups") or []
+    broke = sum(1 for r in rows if r.get("broke"))
+    tgt = (f"{cfg.get('target_value')} pts" if cfg.get("target_mode") == "points"
+           else f"{cfg.get('target_value')}%")
+    head = ("🚀 <b>HAMMER BREAKOUT — TRIGGERED</b>" if len(new_rows) == 1
+            else f"🚀 <b>HAMMER BREAKOUT — {len(new_rows)} TRIGGERED</b>")
+    lines = [head, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ""]
+    for r in new_rows:
+        ltp = f"  ·  LTP ₹{r['ltp']}" if r.get("ltp") else ""
+        lines.append(f"• <b>{r['underlying']}</b>  BUY above ₹{r['trigger']}{ltp}")
+        lines.append(f"   SL ₹{r['sig_low']}  ·  target {tgt}  ·  hammer {r['signal_date']}")
+    lines.append("")
+    lines.append(f"{broke} of {len(rows)} setup(s) broken out today.")
+    return NL.join(lines)
+
+
+# ── alert ledger: which symbols were already pushed today (survives restarts) ──
+ALERT_FILE = settings.DATA_DIR / "research" / "hammer_breakout_alerts.json"
+
+
+def _read_ledger() -> dict:
+    try:
+        if ALERT_FILE.exists():
+            return json.loads(ALERT_FILE.read_text()) or {}
+    except Exception as exc:
+        logger.debug("hammer alert ledger read failed: %s", exc)
+    return {}
+
+
+def _write_ledger(data: dict) -> None:
+    try:
+        ALERT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ALERT_FILE.write_text(json.dumps(data, indent=2))
+    except Exception as exc:
+        logger.debug("hammer alert ledger write failed: %s", exc)
+
+
 class HammerBreakoutResearch:
     def __init__(self, broker: Broker, user_id: Optional[int] = None):
         self.broker = broker
@@ -87,6 +133,7 @@ class HammerBreakoutResearch:
         self.universe = Universe(broker)
         self._lock = threading.Lock()
         self._daily_cache: dict = {}
+        self._today: dict = {}          # {"date","symbols","result"} — last full scan
 
     def load_config(self):
         return load_config()
@@ -385,9 +432,92 @@ class HammerBreakoutResearch:
         rows.sort(key=lambda r: (not r["broke"],
                                  r["to_trigger_pct"] if r["to_trigger_pct"] is not None else 9e9,
                                  r["underlying"]))
-        return {"date": d.isoformat(), "scanned": scanned, "setups": rows,
-                "armed": len(rows), "broken": sum(1 for r in rows if r["broke"]),
-                "config": cfg, "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        result = {"date": d.isoformat(), "scanned": scanned, "setups": rows,
+                  "armed": len(rows), "broken": sum(1 for r in rows if r["broke"]),
+                  "config": cfg, "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        with self._lock:
+            self._today = {"date": d.isoformat(), "symbols": sorted(
+                {(x or "").strip().upper() for x in symbols if (x or "").strip()}), "result": result}
+        return result
+
+    # ── the live tick: re-price the known setups (one batched quote call) ──
+    def refresh_today(self, symbols: list[str], overrides=None) -> dict:
+        """Cheap refresh for the Today tab.
+
+        Hammers are decided on the *previous* daily candle, so the setup list can
+        only change at the day boundary — re-pricing the cached scan is enough and
+        costs one quote call instead of a history fetch per symbol. Falls back to a
+        full scan when the cache is empty, stale, or for a different symbol list.
+        """
+        cfg = sanitize({**self.load_config(), **(overrides or {})})
+        today = date.today().isoformat()
+        want = sorted({(x or "").strip().upper() for x in symbols if (x or "").strip()})
+        with self._lock:
+            cached = self._today if (self._today.get("date") == today
+                                     and self._today.get("symbols") == want) else None
+        if not cached:
+            return self.scan(symbols, overrides)
+
+        result = cached["result"]
+        rows = result.get("setups") or []
+        if rows:
+            prices = self._ltp_map(rows)
+            for r in rows:
+                ltp = prices.get(f"{r['exchange']}:{r['underlying']}")
+                if not ltp:
+                    continue
+                r["ltp"] = round(float(ltp), 2)
+                r["to_trigger_pct"] = round((r["trigger"] - ltp) / ltp * 100.0, 2)
+                if ltp > r["trigger"]:
+                    r["broke"] = True
+                r["status"] = "BREAKOUT" if r["broke"] else "ARMED"
+            rows.sort(key=lambda r: (not r["broke"],
+                                     r["to_trigger_pct"] if r["to_trigger_pct"] is not None else 9e9,
+                                     r["underlying"]))
+        result["broken"] = sum(1 for r in rows if r["broke"])
+        result["config"] = cfg
+        result["priced_at"] = datetime.now().strftime("%H:%M:%S")
+        return result
+
+    # ── auto-alert: push each stock the moment it breaks out, once per day ──
+    def auto_alert(self, symbols: list[str], overrides=None, *, bot: str = "a") -> dict:
+        """Refresh the list and Telegram any setup that has newly broken out.
+
+        A symbol is announced at most once per day — the ledger is on disk, so a
+        server restart or a second open browser tab will not re-send it."""
+        result = self.refresh_today(symbols, overrides)
+        cfg = result.get("config") or sanitize(self.load_config())
+        day = result.get("date") or date.today().isoformat()
+        key = str(self.user_id or "default")
+
+        with self._lock:
+            ledger = _read_ledger()
+            entry = ledger.get(key) or {}
+            if entry.get("date") != day:
+                entry = {"date": day, "alerted": []}
+            already = set(entry.get("alerted") or [])
+            fresh = [r for r in (result.get("setups") or [])
+                     if r.get("broke") and r["underlying"] not in already]
+            if fresh:
+                entry["alerted"] = sorted(already | {r["underlying"] for r in fresh})
+                ledger[key] = entry
+                _write_ledger(ledger)
+            else:
+                ledger[key] = entry
+
+        sent = 0
+        if fresh:
+            try:
+                from core import notify
+                if notify.enabled(bot):
+                    notify.send(format_breakout_alert(fresh, result, cfg), bot=bot)
+                    sent = len(fresh)
+                else:
+                    logger.debug("hammer auto-alert skipped — bot %s not configured", bot)
+            except Exception as exc:
+                logger.error("hammer auto-alert send failed: %s", exc)
+        return {**result, "sent": sent, "alerted": [r["underlying"] for r in fresh],
+                "alerted_today": sorted(set(_read_ledger().get(key, {}).get("alerted") or []))}
 
     def _ltp_map(self, rows: list[dict]) -> dict:
         """One batched quote call for every scanned symbol (chunked for the API)."""

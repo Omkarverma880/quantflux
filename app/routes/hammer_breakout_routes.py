@@ -133,6 +133,49 @@ def scan(payload: ScanReq | None = None, user_id: int = Depends(login_required),
         return {"status": "error", "message": str(exc)}
 
 
+@router.post("/today/refresh")
+def today_refresh(payload: ScanReq | None = None, user_id: int = Depends(login_required),
+                  db: Session = Depends(get_db)):
+    """Cheap live tick — re-prices the cached setups instead of re-scanning."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    p = payload or ScanReq()
+    syms = p.symbols if p.symbols is not None else load_config().get("symbols", [])
+    if not syms:
+        return {"status": "ok", "setups": [], "message": "No stocks in the watchlist"}
+    try:
+        return {"status": "ok", **_get_research(broker, user_id).refresh_today(syms, p.overrides)}
+    except Exception as exc:
+        logger.error("hammer today refresh failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/today/auto-alert")
+def today_auto_alert(payload: ScanReq | None = None, user_id: int = Depends(login_required),
+                     db: Session = Depends(get_db)):
+    """Live tick + Telegram push for any setup that has just broken out.
+
+    Each stock is sent once per day; the dedupe ledger lives on the server, so
+    several open tabs (or a restart) will not repeat an alert."""
+    broker = get_user_broker(db, user_id)
+    if not _is_authed(db, user_id):
+        return {"status": "error", "message": "Zerodha not authenticated"}
+    p = payload or ScanReq()
+    cfg = {**load_config(), **(p.overrides or {})}
+    syms = p.symbols if p.symbols is not None else cfg.get("symbols", [])
+    if not syms:
+        return {"status": "error", "message": "No stocks in the watchlist"}
+    bot = cfg.get("telegram_bot", "a")
+    try:
+        from core import notify
+        res = _get_research(broker, user_id).auto_alert(syms, p.overrides, bot=bot)
+        return {"status": "ok", "telegram_ready": notify.enabled(bot), **res}
+    except Exception as exc:
+        logger.error("hammer today auto-alert failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
 @router.post("/today/telegram")
 def today_telegram(payload: ScanReq | None = None, user_id: int = Depends(login_required),
                    db: Session = Depends(get_db)):
