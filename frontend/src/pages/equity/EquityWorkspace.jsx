@@ -149,7 +149,7 @@ export default function EquityWorkspace() {
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-[1800px] mx-auto">
       {/* ── header + strategy map ── */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <LayoutGrid className="w-6 h-6 text-brand-400" />
@@ -158,27 +158,34 @@ export default function EquityWorkspace() {
           </div>
           <p className="text-sm text-gray-500 mt-0.5">One run, every strategy. See which of your {(meta.strategies || []).length} equity strategies each stock satisfies right now — score, sort, decide. Screener only: no entry, no target, no orders.</p>
         </div>
-
-        <div className="bg-surface-2 border border-surface-3 rounded-xl w-full lg:w-[520px] overflow-hidden">
-          <button onClick={() => setShowLegend((v) => !v)} className="w-full px-3 py-2 flex items-center justify-between text-sm font-semibold text-gray-200 hover:text-white">
-            <span className="flex items-center gap-1.5"><BookOpen className="w-4 h-4 text-brand-400" /> Strategy map</span>
-            {showLegend ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
-          </button>
-          {showLegend && (
-            <div className="border-t border-surface-3 divide-y divide-surface-3/50 max-h-[260px] overflow-y-auto">
-              {(meta.strategies || []).map((s) => (
-                <div key={s.key} className={`px-3 py-2 flex gap-2.5 ${enabled.includes(s.key) ? '' : 'opacity-40'}`}>
-                  <span className="mt-0.5 shrink-0 w-10 text-center text-[10px] font-bold px-1 py-0.5 rounded bg-brand-500/15 text-brand-300 border border-brand-500/25">{s.short}</span>
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold text-gray-200">{s.name} <span className="text-gray-600 font-normal">· {s.source}</span>{s.intraday_only && <span className="ml-1 text-[10px] text-amber-400/80">intraday only</span>}</div>
-                    <div className="text-[11px] text-gray-500 leading-snug">{s.rule}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <button onClick={() => setShowLegend((v) => !v)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border bg-surface-3 text-gray-300 border-surface-4 hover:text-white">
+          <BookOpen className="w-4 h-4 text-brand-400" /> Strategy map
+          {showLegend ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
+        </button>
       </div>
+
+      {showLegend && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+          {(meta.strategies || []).map((s) => {
+            const on = enabled.includes(s.key);
+            return (
+              <div key={s.key}
+                className={`bg-surface-2 border rounded-xl px-3 py-2.5 flex gap-2.5 transition ${on ? 'border-surface-3' : 'border-surface-3/50 opacity-45'}`}>
+                <span className="mt-0.5 shrink-0 w-10 h-7 flex items-center justify-center text-[11px] font-bold rounded-lg bg-brand-500/15 text-brand-300 border border-brand-500/25">{s.short}</span>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-gray-200 leading-tight">
+                    {s.name}
+                    {s.intraday_only && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400/90 border border-amber-500/20 align-middle">intraday</span>}
+                  </div>
+                  <div className="text-[10px] text-gray-600 mt-0.5">{s.source}</div>
+                  <div className="text-[11px] text-gray-500 leading-snug mt-1">{s.rule}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {err && <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2 text-red-400 text-sm"><AlertCircle className="w-4 h-4" /> {err}</div>}
       {msg && <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-4 py-2 text-emerald-400 text-sm">{msg}</div>}
