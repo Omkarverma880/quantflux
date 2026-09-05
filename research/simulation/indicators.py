@@ -437,9 +437,13 @@ def compute(candles: list[dict], keys: list[str], cfg: dict) -> dict:
         out["ema_fast"] = ema(closes, int(cfg["ema_fast"]))
     if "ema_slow" in want:
         out["ema_slow"] = ema(closes, int(cfg["ema_slow"]))
-    if "fourth_candle" in want:
+    tf = cfg.get("timeframe", "")
+    intraday = tf not in ("day", "week", "month")
+    if "fourth_candle" in want and intraday:
+        # a "first three candles of the session" setup only exists intraday
         out["fourth_candle"] = fourth_candle_marks(candles)
-    if "hammer" in want:
+    if "hammer" in want and not intraday:
+        # the hammer strategy is defined on daily candles
         out["hammer"] = hammer_marks(candles, int(cfg["hammer_lookback"]),
                                      int(cfg["hammer_red_before"]))
     return out

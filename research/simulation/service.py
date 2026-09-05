@@ -137,8 +137,48 @@ class SimulationService:
                 "opt_type": rec["type"], "lot_size": rec["lot_size"],
                 "quote_key": f"NFO:{rec['tradingsymbol']}"}
 
+    # ── week / month are built from daily bars ───────────────────────
+    @staticmethod
+    def _aggregate(daily: list[dict], basis: str) -> list[dict]:
+        """Roll daily candles up into weekly or monthly ones.
+
+        The broker's historical endpoint is only dependable down to `day`, so
+        the higher timeframes are aggregated here instead of trusting it — a
+        weekly or monthly chart then works for every instrument, always."""
+        if basis == "week":
+            def key(d):
+                iso = d.isocalendar()
+                return (iso[0], iso[1])
+        else:
+            def key(d):
+                return (d.year, d.month)
+        out: list[dict] = []
+        cur = None
+        bar = None
+        for c in daily:
+            k = key(c["_dt"].date())
+            if k != cur:
+                if bar:
+                    out.append(bar)
+                cur = k
+                bar = {"date": c["_dt"], "_dt": c["_dt"], "open": float(c["open"]),
+                       "high": float(c["high"]), "low": float(c["low"]),
+                       "close": float(c["close"]), "volume": float(c.get("volume", 0) or 0),
+                       "oi": float(c.get("oi", 0) or 0)}
+            else:
+                bar["high"] = max(bar["high"], float(c["high"]))
+                bar["low"] = min(bar["low"], float(c["low"]))
+                bar["close"] = float(c["close"])
+                bar["volume"] += float(c.get("volume", 0) or 0)
+                bar["oi"] = float(c.get("oi", 0) or 0)
+        if bar:
+            out.append(bar)
+        return out
+
     # ── history (chunked + stitched) ─────────────────────────────────
     def history(self, token: int, tf: str, days: int, *, oi: bool = False) -> list[dict]:
+        if tf in ("week", "month"):
+            return self._aggregate(self.history(token, "day", days, oi=oi), tf)
         today = date.today()
         start = today - timedelta(days=days)
         window = TF_MAX_DAYS.get(tf, 90)

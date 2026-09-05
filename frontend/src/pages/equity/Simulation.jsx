@@ -5,7 +5,7 @@ import {
   Type, Move, Keyboard,
 } from 'lucide-react';
 import { api } from '../../api';
-import ChartCanvas, { DEFAULT_COLORS, fmtNum, compact } from '../../components/ChartCanvas';
+import ChartCanvas, { LINE_GROUPS, lineColor, fmtNum, compact } from '../../components/ChartCanvas';
 
 const sel = 'bg-surface-3 border border-surface-4 rounded-lg px-2.5 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60';
 const lbl = 'block text-[10px] text-gray-500 uppercase tracking-wide mb-1';
@@ -120,18 +120,23 @@ export default function Simulation() {
     return () => clearInterval(timerRef.current);
   }, [cfg?.auto_refresh, cfg?.refresh_secs, data, load]);
 
-  // indicator PARAMETERS need new maths; ticking an indicator does not (the
-  // server sends every series, the rack only decides what is drawn).
-  const paramSig = cfg ? SERVER_PARAMS.map((k) => cfg[k]).join('|') : '';
-  const firstParam = useRef(true);
+  // Indicator PARAMETERS (and the timeframe) need fresh maths; ticking an
+  // indicator does not — the server sends every series and the rack only
+  // decides what is drawn. Compare what the toolbar says against what the
+  // chart on screen was actually built with, so nothing can be missed.
+  const sig = (o) => SERVER_PARAMS.map((k) => {
+    const v = o?.[k];
+    return (typeof v === 'string' && v !== '' && !Number.isNaN(Number(v))) ? Number(v) : v;
+  }).join('|');
+  const paramSig = cfg ? sig(cfg) : '';
+  const loadedSig = data?.config ? sig(data.config) : null;
   useEffect(() => {
-    if (!data) return undefined;
-    if (firstParam.current) { firstParam.current = false; return undefined; }
+    if (!data || loadedSig === paramSig) return undefined;
     if (paramTimer.current) clearTimeout(paramTimer.current);
-    paramTimer.current = setTimeout(() => load(true), 600);
+    paramTimer.current = setTimeout(() => load(true), 450);
     return () => paramTimer.current && clearTimeout(paramTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paramSig]);
+  }, [paramSig, loadedSig]);
 
   // ── keyboard, TradingView style ──
   useEffect(() => {
@@ -351,15 +356,13 @@ export default function Simulation() {
               onAddLevel={onChartAdd} onMoveLevel={moveLevel} onCrosshair={(c) => setHover(c)}
             />
             <div className="flex flex-wrap gap-x-3 gap-y-1 px-2 pt-1 text-[10px]">
-              {(cfg.indicators || []).map((k) => {
-                const m = (meta.indicators || []).find((x) => x.key === k);
-                return (
-                  <span key={k} className="flex items-center gap-1 text-gray-500" title={m?.note}>
-                    <span className="w-2.5 h-0.5 rounded" style={{ background: (cfg.colors || {})[k] || DEFAULT_COLORS[k] || '#64748b' }} />
-                    {m?.name || k}
-                  </span>
-                );
-              })}
+              {(cfg.indicators || []).flatMap((k) => (LINE_GROUPS[k] || []).map((ln) => (
+                <span key={ln.k} className="flex items-center gap-1 text-gray-500"
+                  title={(meta.indicators || []).find((x) => x.key === k)?.note}>
+                  <span className="w-2.5 h-0.5 rounded" style={{ background: lineColor(ln, cfg.colors || {}) }} />
+                  {ln.label}
+                </span>
+              )))}
               <span className="ml-auto text-gray-600">drag to pan · wheel to zoom · drag the price axis to squeeze · double-click to fit · drag a level to move it</span>
             </div>
           </div>
@@ -376,18 +379,33 @@ export default function Simulation() {
                 {Object.entries(groups).map(([g, items]) => (
                   <div key={g} className="border-b border-surface-3/50 last:border-0">
                     <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-gray-600">{g}</div>
-                    {items.map((i) => (
-                      <div key={i.key} className="flex items-start gap-2 px-3 py-1.5 hover:bg-surface-3/20">
-                        <input type="checkbox" checked={(cfg.indicators || []).includes(i.key)} onChange={() => toggleInd(i.key)} className="accent-brand-500 mt-0.5 cursor-pointer" />
-                        <label className="min-w-0 flex-1 cursor-pointer" title={i.note} onClick={() => toggleInd(i.key)}>
-                          <span className="text-xs text-gray-200 block">{i.name}</span>
-                          <span className="block text-[10px] text-gray-600 leading-snug">{i.note}</span>
-                        </label>
-                        <input type="color" value={(cfg.colors || {})[i.key] || DEFAULT_COLORS[i.key] || '#94a3b8'}
-                          onChange={(e) => setColor(i.key, e.target.value)} title="Pick a colour"
-                          className="w-5 h-5 rounded cursor-pointer bg-transparent border-0 p-0 shrink-0" />
-                      </div>
-                    ))}
+                    {items.map((i) => {
+                      const lines = LINE_GROUPS[i.key] || [];
+                      const on = (cfg.indicators || []).includes(i.key);
+                      return (
+                        <div key={i.key} className="px-3 py-1.5 hover:bg-surface-3/20">
+                          <div className="flex items-start gap-2">
+                            <input type="checkbox" checked={on} onChange={() => toggleInd(i.key)} className="accent-brand-500 mt-0.5 cursor-pointer" />
+                            <label className="min-w-0 flex-1 cursor-pointer" title={i.note} onClick={() => toggleInd(i.key)}>
+                              <span className="text-xs text-gray-200 block">{i.name}</span>
+                              <span className="block text-[10px] text-gray-600 leading-snug">{i.note}</span>
+                            </label>
+                          </div>
+                          {on && lines.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-2 mt-1 pl-6">
+                              {lines.map((ln) => (
+                                <span key={ln.k} className="flex items-center gap-1" title={`Colour of ${ln.label}`}>
+                                  <input type="color" value={lineColor(ln, cfg.colors || {})}
+                                    onChange={(e) => setColor(ln.k, e.target.value)}
+                                    className="w-4 h-4 rounded cursor-pointer bg-transparent border-0 p-0" />
+                                  <span className="text-[9px] text-gray-500">{ln.label}</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 ))}
                 <div className="grid grid-cols-2 gap-2 p-3 border-t border-surface-3">

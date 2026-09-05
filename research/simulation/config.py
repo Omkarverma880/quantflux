@@ -27,8 +27,8 @@ TF_MAX_DAYS = {
 }
 # How far back to reach by default, per timeframe (calendar days).
 TF_DEFAULT_DAYS = {
-    "minute": 30, "3minute": 60, "5minute": 90, "10minute": 120, "15minute": 180,
-    "30minute": 365, "60minute": 730, "day": 3650, "week": 5500, "month": 7300,
+    "minute": 90, "3minute": 365, "5minute": 730, "10minute": 730, "15minute": 1095,
+    "30minute": 1460, "60minute": 1825, "day": 7300, "week": 7300, "month": 7300,
 }
 
 INDICATORS: list[dict] = [
@@ -77,7 +77,7 @@ DEFAULT_CONFIG: dict = {
     "indicators": ["volume"],          # opens simple — everything else is one tick away
     "refresh_secs": 15,
     "auto_refresh": True,
-    "bars": 3000,                     # bars sent to the chart (pan reaches all of them)
+    "bars": 5000,                     # bars sent to the chart (pan reaches all of them)
     "history_days": 0,                # 0 = the per-timeframe default
     # ── indicator parameters ──
     "volume_ma": 20,
@@ -118,7 +118,7 @@ def sanitize(cfg: dict) -> dict:
     if out["pivot_basis"] not in ("day", "week", "month"):
         out["pivot_basis"] = "day"
     out["refresh_secs"] = max(5, min(3600, out["refresh_secs"]))
-    out["bars"] = max(200, min(20000, out["bars"]))
+    out["bars"] = max(200, min(50000, out["bars"]))
     out["history_days"] = max(0, min(9000, out["history_days"]))
     out["volume_ma"] = max(2, min(200, out["volume_ma"]))
     out["ema_fast"] = max(2, min(400, out["ema_fast"]))
