@@ -763,6 +763,35 @@ class HammerBreakoutPosition(Base):
     )
 
 
+class ChartLevel(Base):
+    """A horizontal level a user drew (or typed) on the Chart Simulation desk.
+
+    Saved per user per instrument, so re-opening a symbol brings back the levels
+    that were researched earlier along with how price has behaved around them.
+    Pure annotation — no order or strategy reads this. Auto-created via
+    ``create_all``.
+    """
+    __tablename__ = "chart_levels"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+    instrument_key = Column(String(80), nullable=False)   # NSE:BSE, NFO:NIFTY26SEP24000CE
+    symbol = Column(String(60))                           # the friendly name
+    kind = Column(String(20), default="equity")           # equity | fno_option | index | index_option
+    price = Column(Numeric(14, 2), nullable=False)
+    label = Column(String(80))
+    color = Column(String(16), default="#f59e0b")
+    note = Column(String(500))
+    active = Column(Boolean, default=True)
+
+    __table_args__ = (
+        Index("idx_chart_levels_user_inst", "user_id", "instrument_key"),
+    )
+
+
 class QMREPaperPosition(Base):
     """Paper position for Research #13 (QMRE). SIMULATION ONLY — no real order is
     ever placed. Auto-created via ``create_all``."""

@@ -623,6 +623,17 @@ export const api = {
   wyScan: (body) => request('/wyckoff/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
   wyConfigSave: (partial) => request('/wyckoff/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
 
+  // Chart Simulation — single-instrument charting desk
+  simMeta: () => request('/simulation/meta'),
+  simChart: (body) => request('/simulation/chart', { method: 'POST', body: JSON.stringify(body || {}) }),
+  simChain: (name) => request(`/simulation/chain?name=${encodeURIComponent(name)}`),
+  simLevels: (key) => request(`/simulation/levels?instrument_key=${encodeURIComponent(key)}`),
+  simAllLevels: () => request('/simulation/levels/all'),
+  simAddLevel: (body) => request('/simulation/levels', { method: 'POST', body: JSON.stringify(body || {}) }),
+  simUpdateLevel: (id, body) => request(`/simulation/levels/${id}`, { method: 'PUT', body: JSON.stringify(body || {}) }),
+  simDeleteLevel: (id) => request(`/simulation/levels/${id}`, { method: 'DELETE' }),
+  simConfigSave: (partial) => request('/simulation/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+
   // Universal Telegram notifications (shared across the app)
   getTelegramSettings: (bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`),
   saveTelegramSettings: (cfg, bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`, { method: 'POST', body: JSON.stringify(cfg || {}) }),

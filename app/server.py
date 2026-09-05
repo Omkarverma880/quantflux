@@ -42,6 +42,7 @@ from app.routes.fourth_candle_equity_routes import router as fourth_candle_equit
 from app.routes.hammer_breakout_routes import router as hammer_breakout_router
 from app.routes.equity_workspace_routes import router as equity_workspace_router
 from app.routes.wyckoff_routes import router as wyckoff_router
+from app.routes.simulation_routes import router as simulation_router
 from app.routes.vwap_options_routes import router as vwap_options_router
 from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
@@ -417,6 +418,7 @@ app.include_router(fourth_candle_equity_router, prefix="/api/equity-strategy/fou
 app.include_router(hammer_breakout_router, prefix="/api/equity-strategy/hammer-breakout", tags=["Equity-HammerBreakout"])
 app.include_router(equity_workspace_router, prefix="/api/equity-strategy/workspace", tags=["Equity-Workspace"])
 app.include_router(wyckoff_router, prefix="/api/wyckoff", tags=["Wyckoff"])
+app.include_router(simulation_router, prefix="/api/simulation", tags=["ChartSimulation"])
 app.include_router(vwap_options_router, prefix="/api/index-strategy/vwap-options", tags=["Index-VWAPOptions"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
