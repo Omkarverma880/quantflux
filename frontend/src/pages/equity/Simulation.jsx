@@ -63,6 +63,7 @@ export default function Simulation() {
   const instKeyRef = useRef(null);
   const levelsRef = useRef([]);
   const colorRef = useRef(LEVEL_COLORS[0]);
+  const quickAddRef = useRef(null);
 
   const showErr = (m) => { setErr(m); setTimeout(() => setErr(''), 7000); };
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 2500); };
@@ -91,9 +92,9 @@ export default function Simulation() {
         setChain(r);
         // Index options trade weekly, stock options monthly — open on whichever
         // this underlying actually has.
-        const kind = (r.weekly || []).length ? 'weekly' : 'monthly';
-        setExpKind(kind);
-        const e = (r[kind] || r.expiries || [])[0] || '';
+        const firstKind = (r.weekly || []).length ? 'weekly' : 'monthly';
+        setExpKind(firstKind);
+        const e = (r[firstKind] || r.expiries || [])[0] || '';
         setExpiry(e);
         const ks = r.strikes?.[e] || [];
         setStrike(ks.length ? String(ks[Math.floor(ks.length / 2)]) : '');
@@ -150,15 +151,14 @@ export default function Simulation() {
   useEffect(() => {
     const onKey = (e) => {
       if (e.target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
-      if (e.altKey && e.key.toLowerCase() === 'h') { e.preventDefault(); quickAdd('line'); }
-      else if (e.altKey && e.key.toLowerCase() === 't') { e.preventDefault(); quickAdd('text'); }
+      if (e.altKey && e.key.toLowerCase() === 'h') { e.preventDefault(); quickAddRef.current?.('line'); }
+      else if (e.altKey && e.key.toLowerCase() === 't') { e.preventDefault(); quickAddRef.current?.('text'); }
       else if (e.altKey && e.key.toLowerCase() === 'f') { e.preventDefault(); chartRef.current?.fit(); }
       else if (e.key === 'Escape') { setAddMode(null); setPendingText(null); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instKey, data, newLevel.color]);
+  }, []);
 
   const toggleInd = (key) => {
     const cur = new Set(cfg.indicators || []);
@@ -192,6 +192,7 @@ export default function Simulation() {
     if (mode === 'text') setPendingText({ price: at, anchor, label: '', color: colorRef.current });
     else saveLevel({ price: at, label: `L${(levelsRef.current.length || 0) + 1}`, color: colorRef.current, type: 'line' });
   };
+  quickAddRef.current = quickAdd;          // the shortcut always calls the newest one
 
   const setLevelColor = async (id, color) => {
     try {
