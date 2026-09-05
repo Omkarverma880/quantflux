@@ -84,8 +84,18 @@ class SimulationService:
         for e in expiries:
             strikes = sorted({r["strike"] for r in opts if r["expiry"] == e})
             by_expiry[e.isoformat()] = strikes
+        # The last expiry in a calendar month is the monthly contract; the rest
+        # are weeklies — the same split every trading terminal offers.
+        by_month: dict = {}
+        for e in expiries:
+            by_month.setdefault((e.year, e.month), []).append(e)
+        monthly = {max(v) for v in by_month.values()}
+        kinds = {e.isoformat(): ("monthly" if e in monthly else "weekly") for e in expiries}
         return {"status": "ok", "name": name, "futures": futures,
                 "expiries": [e.isoformat() for e in expiries], "strikes": by_expiry,
+                "expiry_type": kinds,
+                "weekly": [e.isoformat() for e in expiries if e not in monthly],
+                "monthly": [e.isoformat() for e in expiries if e in monthly],
                 "lot_size": (futures[0]["lot_size"] if futures else
                              (opts[0]["lot_size"] if opts else 0))}
 
@@ -276,6 +286,7 @@ class SimulationService:
             lv = self._levels_status(candles, levels or [], cfg, ltp)
             return {
                 "status": "ok", "instrument": inst, "timeframe": tf,
+                "has_volume": ind.has_volume(view),
                 "candles": [{"t": c["_dt"].strftime("%Y-%m-%d %H:%M"),
                              "o": round(float(c["open"]), 2), "h": round(float(c["high"]), 2),
                              "l": round(float(c["low"]), 2), "c": round(float(c["close"]), 2),

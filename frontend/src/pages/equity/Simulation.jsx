@@ -43,6 +43,7 @@ export default function Simulation() {
   const [expiry, setExpiry] = useState('');
   const [strike, setStrike] = useState('');
   const [optType, setOptType] = useState('CE');
+  const [expKind, setExpKind] = useState('weekly');   // weekly | monthly
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(''); const [msg, setMsg] = useState('');
@@ -85,7 +86,11 @@ export default function Simulation() {
       const r = await api.simChain(name);
       if (r.status === 'ok') {
         setChain(r);
-        const e = r.expiries?.[0] || '';
+        // Index options trade weekly, stock options monthly — open on whichever
+        // this underlying actually has.
+        const kind = (r.weekly || []).length ? 'weekly' : 'monthly';
+        setExpKind(kind);
+        const e = (r[kind] || r.expiries || [])[0] || '';
         setExpiry(e);
         const ks = r.strikes?.[e] || [];
         setStrike(ks.length ? String(ks[Math.floor(ks.length / 2)]) : '');
@@ -267,9 +272,29 @@ export default function Simulation() {
             </div>
             <div>
               <label className={lbl}>Expiry</label>
-              <select value={expiry} onChange={(e) => { setExpiry(e.target.value); const ks = chain?.strikes?.[e.target.value] || []; setStrike(ks.length ? String(ks[Math.floor(ks.length / 2)]) : ''); }} className={sel}>
-                {(chain?.expiries || []).map((e) => <option key={e} value={e}>{e}</option>)}
-              </select>
+              <div className="flex items-center gap-1.5">
+                <div className="flex rounded-lg bg-surface-3 p-0.5">
+                  {['weekly', 'monthly'].map((k) => {
+                    const list = chain?.[k] || [];
+                    return (
+                      <button key={k} disabled={!list.length}
+                        onClick={() => {
+                          setExpKind(k);
+                          const e0 = list[0] || '';
+                          setExpiry(e0);
+                          const ks = chain?.strikes?.[e0] || [];
+                          setStrike(ks.length ? String(ks[Math.floor(ks.length / 2)]) : '');
+                        }}
+                        className={`px-2 py-1 text-[11px] rounded-md font-semibold capitalize transition disabled:opacity-30 ${expKind === k ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+                        {k}
+                      </button>
+                    );
+                  })}
+                </div>
+                <select value={expiry} onChange={(e) => { setExpiry(e.target.value); const ks = chain?.strikes?.[e.target.value] || []; setStrike(ks.length ? String(ks[Math.floor(ks.length / 2)]) : ''); }} className={sel}>
+                  {((chain?.[expKind]?.length ? chain[expKind] : chain?.expiries) || []).map((e) => <option key={e} value={e}>{e}</option>)}
+                </select>
+              </div>
             </div>
             {optType !== 'FUT' && (
               <div>
@@ -391,6 +416,9 @@ export default function Simulation() {
                       // OI only exists on derivatives — say so instead of
                       // letting the tick do nothing on a cash chart.
                       const noOi = i.key === 'oi' && data && !data.series?.oi;
+                      const noVol = data && data.has_volume === false
+                        && ['volume', 'volume_ma', 'cum_volume'].includes(i.key);
+                      const twap = data && data.has_volume === false && i.key.includes('vwap');
                       return (
                         <div key={i.key} className={`px-3 py-1.5 hover:bg-surface-3/20 ${noOi ? 'opacity-50' : ''}`}>
                           <div className="flex items-start gap-2">
@@ -402,9 +430,14 @@ export default function Simulation() {
                               <span className="text-xs text-gray-200 block">
                                 {i.name}
                                 {noOi && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-surface-3 text-amber-400/90 border border-surface-4 align-middle">no OI on {data.instrument?.label}</span>}
+                                {twap && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-surface-3 text-sky-400/90 border border-surface-4 align-middle">TWAP</span>}
+                                {noVol && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-surface-3 text-amber-400/90 border border-surface-4 align-middle">no volume</span>}
                               </span>
                               <span className="block text-[10px] text-gray-600 leading-snug">
-                                {noOi ? 'Cash equity and index charts have no open interest — switch to the Equity F&O or NIFTY Options tab to see it.' : i.note}
+                                {noOi ? 'Cash equity and index charts have no open interest — switch to the Equity F&O or NIFTY Options tab to see it.'
+                                  : twap ? `${data.instrument?.label} publishes no volume, so this is anchored on the typical price with every bar weighted equally (TWAP). Use the future for a true VWAP.`
+                                    : noVol ? `${data.instrument?.label} publishes no volume — nothing to plot here.`
+                                      : i.note}
                               </span>
                             </label>
                           </div>

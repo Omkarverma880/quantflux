@@ -79,20 +79,30 @@ def _month_key(dt: datetime):
 _KEYS = {"day": _day_key, "week": _week_key, "month": _month_key}
 
 
+def has_volume(candles: list[dict]) -> bool:
+    """Index spot series carry no volume — worth knowing before weighting by it."""
+    return any(_v(c) for c in candles)
+
+
 def anchored_vwap(candles: list[dict], basis: str) -> list[Optional[float]]:
-    """Running VWAP re-anchored at the start of each day / week / month."""
+    """Running VWAP re-anchored at the start of each day / week / month.
+
+    When the instrument reports no volume (index spot feeds do not), every bar
+    is weighted equally instead — an anchored average of the typical price.
+    That keeps the line meaningful on an index rather than drawing nothing; the
+    UI labels it so the difference is never hidden."""
     keyfn = _KEYS[basis]
+    weighted = has_volume(candles)
     out: list[Optional[float]] = []
     cur = None
     pv = vol = 0.0
     for c in candles:
-        dt = c["_dt"]
-        k = keyfn(dt)
+        k = keyfn(c["_dt"])
         if k != cur:
             cur, pv, vol = k, 0.0, 0.0
-        v = _v(c)
-        pv += _tp(c) * v
-        vol += v
+        w = _v(c) if weighted else 1.0
+        pv += _tp(c) * w
+        vol += w
         out.append(round(pv / vol, 2) if vol else None)
     return out
 
@@ -100,6 +110,7 @@ def anchored_vwap(candles: list[dict], basis: str) -> list[Optional[float]]:
 def previous_period_vwap(candles: list[dict], basis: str) -> list[Optional[float]]:
     """The *previous* period's final VWAP, carried forward as a flat level."""
     keyfn = _KEYS[basis]
+    weighted = has_volume(candles)
     finals: dict = {}
     order: list = []
     pv = vol = 0.0
@@ -111,9 +122,9 @@ def previous_period_vwap(candles: list[dict], basis: str) -> list[Optional[float
                 finals[cur] = round(pv / vol, 2) if vol else None
                 order.append(cur)
             cur, pv, vol = k, 0.0, 0.0
-        v = _v(c)
-        pv += _tp(c) * v
-        vol += v
+        w = _v(c) if weighted else 1.0
+        pv += _tp(c) * w
+        vol += w
     if cur is not None:
         finals[cur] = round(pv / vol, 2) if vol else None
         order.append(cur)
