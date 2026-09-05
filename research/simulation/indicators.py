@@ -213,6 +213,66 @@ def first_hour_levels(candles: list[dict], minutes: int,
     return {"fh_high": hi, "fh_low": lo}
 
 
+def _first_hour_by_day(candles: list[dict], minutes: int,
+                       session_start: dtime = dtime(9, 15)) -> dict:
+    """{session date → {high, low}} for the opening window."""
+    start_m = session_start.hour * 60 + session_start.minute
+    end_m = start_m + minutes
+    per: dict = {}
+    for c in candles:
+        dt = c["_dt"]
+        m = dt.hour * 60 + dt.minute
+        if m < start_m or m >= end_m:
+            continue
+        d = dt.date()
+        row = per.get(d)
+        if row is None:
+            per[d] = {"high": _f(c, "high"), "low": _f(c, "low")}
+        else:
+            row["high"] = max(row["high"], _f(c, "high"))
+            row["low"] = min(row["low"], _f(c, "low"))
+    return per
+
+
+def first_hour_prev(candles: list[dict], minutes: int) -> dict[str, list[Optional[float]]]:
+    """The PREVIOUS session's opening-window high/low, carried across today."""
+    per = _first_hour_by_day(candles, minutes)
+    order = sorted(per.keys())
+    prev = {d: (per[order[i - 1]] if i else None) for i, d in enumerate(order)}
+    hi, lo = [], []
+    for c in candles:
+        row = prev.get(c["_dt"].date())
+        hi.append(round(row["high"], 2) if row else None)
+        lo.append(round(row["low"], 2) if row else None)
+    return {"fhp_high": hi, "fhp_low": lo}
+
+
+def first_hour_stats(candles: list[dict], minutes: int, days: int) -> dict[str, list[Optional[float]]]:
+    """Max / min / average of the opening window over the last ``days`` COMPLETED
+    sessions, carried as flat levels through the current session."""
+    per = _first_hour_by_day(candles, minutes)
+    order = sorted(per.keys())
+    stats: dict = {}
+    for i, d in enumerate(order):
+        window = [per[x] for x in order[max(0, i - days):i]]      # strictly previous sessions
+        if not window:
+            stats[d] = None
+            continue
+        highs = [w["high"] for w in window]
+        lows = [w["low"] for w in window]
+        stats[d] = {"max_high": round(max(highs), 2), "min_low": round(min(lows), 2),
+                    "avg_high": round(sum(highs) / len(highs), 2),
+                    "avg_low": round(sum(lows) / len(lows), 2), "days": len(window)}
+    out = {k: [] for k in ("fhs_max_high", "fhs_min_low", "fhs_avg_high", "fhs_avg_low")}
+    for c in candles:
+        st = stats.get(c["_dt"].date())
+        out["fhs_max_high"].append(st["max_high"] if st else None)
+        out["fhs_min_low"].append(st["min_low"] if st else None)
+        out["fhs_avg_high"].append(st["avg_high"] if st else None)
+        out["fhs_avg_low"].append(st["avg_low"] if st else None)
+    return out
+
+
 # ── strategy overlays ────────────────────────────────────────────────
 def fourth_candle_marks(candles: list[dict]) -> dict:
     """Per session: the colours of the first three candles, the 4th candle's
@@ -368,6 +428,11 @@ def compute(candles: list[dict], keys: list[str], cfg: dict) -> dict:
         out["prev_day_hl"] = prev_day_hl(candles)
     if "first_hour" in want:
         out["first_hour"] = first_hour_levels(candles, int(cfg["first_hour_minutes"]))
+    if "first_hour_prev" in want:
+        out["first_hour_prev"] = first_hour_prev(candles, int(cfg["first_hour_minutes"]))
+    if "first_hour_stats" in want:
+        out["first_hour_stats"] = first_hour_stats(candles, int(cfg["first_hour_minutes"]),
+                                                   int(cfg.get("first_hour_days", 5)))
     if "ema_fast" in want:
         out["ema_fast"] = ema(closes, int(cfg["ema_fast"]))
     if "ema_slow" in want:

@@ -67,12 +67,15 @@ class LevelReq(BaseModel):
     label: str | None = None
     color: str | None = None
     note: str | None = None
+    type: str = "line"          # line | text
+    anchor: str | None = None   # candle timestamp a text note pins to
 
 
 def _level_dict(r: ChartLevel) -> dict:
     return {"id": r.id, "instrument_key": r.instrument_key, "symbol": r.symbol, "kind": r.kind,
             "price": float(r.price), "label": r.label, "color": r.color or "#f59e0b",
-            "note": r.note, "created_at": r.created_at.strftime("%d-%b-%Y") if r.created_at else None}
+            "note": r.note, "type": r.type or "line", "anchor": r.anchor,
+            "created_at": r.created_at.strftime("%d-%b-%Y") if r.created_at else None}
 
 
 def _levels_for(db, user_id: int, instrument_key: str) -> list[dict]:
@@ -147,7 +150,9 @@ def add_level(payload: LevelReq, user_id: int = Depends(login_required),
         row = ChartLevel(user_id=user_id, instrument_key=payload.instrument_key.strip().upper(),
                          symbol=(payload.symbol or "").strip().upper(), kind=payload.kind,
                          price=round(float(payload.price), 2), label=payload.label,
-                         color=payload.color or "#f59e0b", note=payload.note, active=True)
+                         color=payload.color or "#f59e0b", note=payload.note,
+                         type=(payload.type if payload.type in ("line", "text") else "line"),
+                         anchor=payload.anchor, active=True)
         db.add(row)
         db.commit()
         db.refresh(row)
@@ -169,9 +174,11 @@ def update_level(level_id: int, payload: dict | None = None,
     try:
         if p.get("price") is not None:
             row.price = round(float(p["price"]), 2)
-        for f in ("label", "color", "note"):
+        for f in ("label", "color", "note", "anchor"):
             if p.get(f) is not None:
                 setattr(row, f, p[f])
+        if p.get("type") in ("line", "text"):
+            row.type = p["type"]
         db.commit()
         db.refresh(row)
         return {"status": "ok", "level": _level_dict(row)}

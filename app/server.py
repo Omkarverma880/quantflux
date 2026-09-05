@@ -287,6 +287,27 @@ def _run_strategies_for_user(uid: int):
         db.close()
 
 
+def _ensure_columns(engine, table: str, columns: dict[str, str]) -> None:
+    """Add any missing columns to an existing table (no-op when they are there).
+
+    Works on Postgres and SQLite; a failure is logged, never fatal."""
+    try:
+        import sqlalchemy as sa
+        insp = sa.inspect(engine)
+        if table not in insp.get_table_names():
+            return
+        have = {c["name"] for c in insp.get_columns(table)}
+        missing = {k: v for k, v in columns.items() if k not in have}
+        if not missing:
+            return
+        with engine.begin() as conn:
+            for name, ddl in missing.items():
+                conn.execute(sa.text(f'ALTER TABLE {table} ADD COLUMN "{name}" {ddl}'))
+        print(f"[LIFESPAN] {table}: added column(s) {', '.join(missing)}.", flush=True)
+    except Exception as exc:
+        print(f"[LIFESPAN] column check on {table} failed (non-fatal): {exc}", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("[LIFESPAN] Trading server starting up …", flush=True)
@@ -317,6 +338,12 @@ async def lifespan(app: FastAPI):
         from core import models  # noqa: F401 — registers all models
         Base.metadata.create_all(bind=engine)
         print("[LIFESPAN] Database tables verified / created.", flush=True)
+        # create_all never ALTERs an existing table, so columns added to a model
+        # after its table was first created need a nudge. Idempotent and safe.
+        _ensure_columns(engine, "chart_levels", {
+            "type": "VARCHAR(10) DEFAULT 'line'",
+            "anchor": "VARCHAR(20)",
+        })
     except Exception as e:
         print(f"[LIFESPAN] DB init error (non-fatal): {e}", flush=True)
 

@@ -55,7 +55,11 @@ INDICATORS: list[dict] = [
     {"key": "pivots", "name": "Pivot · R1 R2 · S1 S2", "group": "Levels", "pane": "price",
      "note": "Classic floor pivots from the previous period's high/low/close."},
     {"key": "first_hour", "name": "First-hour high / low", "group": "Levels", "pane": "price",
-     "note": "High and low of the opening window — the range Strategy 10 breaks out of."},
+     "note": "High and low of today's opening window — the range Strategy 10 breaks out of."},
+    {"key": "first_hour_prev", "name": "Prev-day first-hour H/L", "group": "Levels", "pane": "price",
+     "note": "Yesterday's opening-window high and low, carried across today."},
+    {"key": "first_hour_stats", "name": "First-hour max / avg (N days)", "group": "Levels", "pane": "price",
+     "note": "Highest, lowest and average opening-window high/low over the last N sessions."},
     {"key": "prev_day_hl", "name": "Prev-day high / low", "group": "Levels", "pane": "price",
      "note": "Yesterday's high and low — the most-watched intraday levels."},
     {"key": "fourth_candle", "name": "4th Candle setup", "group": "Strategies", "pane": "price",
@@ -70,10 +74,10 @@ INDICATOR_KEYS = [i["key"] for i in INDICATORS]
 DEFAULT_CONFIG: dict = {
     "kind": "equity",                 # equity | fno_option | index | index_option
     "timeframe": "5minute",
-    "indicators": ["volume", "vwap_day", "pvwap_day", "pivots", "first_hour"],
+    "indicators": ["volume"],          # opens simple — everything else is one tick away
     "refresh_secs": 15,
     "auto_refresh": True,
-    "bars": 500,                      # bars kept in the viewport payload
+    "bars": 3000,                     # bars sent to the chart (pan reaches all of them)
     "history_days": 0,                # 0 = the per-timeframe default
     # ── indicator parameters ──
     "volume_ma": 20,
@@ -81,14 +85,16 @@ DEFAULT_CONFIG: dict = {
     "ema_slow": 200,
     "pivot_basis": "day",             # day | week | month
     "first_hour_minutes": 60,         # the opening window, in minutes
+    "first_hour_days": 5,             # sessions behind the first-hour max/avg stats
     "hammer_lookback": 126,
     "hammer_red_before": 3,
     "level_near_pct": 0.5,            # "approaching" when price is inside this %
     "index_name": "NIFTY",
+    "colors": {},                     # per-indicator colour overrides {key: "#rrggbb"}
 }
 
 _INT = {"refresh_secs", "bars", "history_days", "volume_ma", "ema_fast", "ema_slow",
-        "first_hour_minutes", "hammer_lookback", "hammer_red_before"}
+        "first_hour_minutes", "first_hour_days", "hammer_lookback", "hammer_red_before"}
 _FLOAT = {"level_near_pct"}
 
 
@@ -112,18 +118,22 @@ def sanitize(cfg: dict) -> dict:
     if out["pivot_basis"] not in ("day", "week", "month"):
         out["pivot_basis"] = "day"
     out["refresh_secs"] = max(5, min(3600, out["refresh_secs"]))
-    out["bars"] = max(50, min(5000, out["bars"]))
+    out["bars"] = max(200, min(20000, out["bars"]))
     out["history_days"] = max(0, min(9000, out["history_days"]))
     out["volume_ma"] = max(2, min(200, out["volume_ma"]))
     out["ema_fast"] = max(2, min(400, out["ema_fast"]))
     out["ema_slow"] = max(3, min(400, out["ema_slow"]))
     out["first_hour_minutes"] = max(5, min(375, out["first_hour_minutes"]))
+    out["first_hour_days"] = max(1, min(60, out["first_hour_days"]))
     out["hammer_lookback"] = max(2, min(750, out["hammer_lookback"]))
     out["hammer_red_before"] = max(0, min(10, out["hammer_red_before"]))
     out["level_near_pct"] = max(0.05, min(10.0, out["level_near_pct"]))
     out["auto_refresh"] = bool(out["auto_refresh"])
     keys = [k for k in (out.get("indicators") or []) if k in INDICATOR_KEYS]
     out["indicators"] = keys or list(DEFAULT_CONFIG["indicators"])
+    colors = out.get("colors") or {}
+    out["colors"] = {k: str(v) for k, v in colors.items()
+                     if k in INDICATOR_KEYS and isinstance(v, str) and v.startswith("#")}
     out["index_name"] = str(out["index_name"] or "NIFTY").strip().upper()
     return out
 

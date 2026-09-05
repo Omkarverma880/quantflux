@@ -23,7 +23,7 @@ from core.logger import get_logger
 from research.pmvwap_straddle.universe import Universe
 from research.simulation import indicators as ind
 from research.simulation.config import (
-    TF_DEFAULT_DAYS, TF_MAX_DAYS, load_config, sanitize, save_config,
+    INDICATOR_KEYS, TF_DEFAULT_DAYS, TF_MAX_DAYS, load_config, sanitize, save_config,
 )
 
 logger = get_logger("research.simulation")
@@ -201,7 +201,10 @@ class SimulationService:
                 return {"status": "error",
                         "message": f"{inst['label']}: no {tf} candles in the last {days} days"}
 
-            keys = list(cfg["indicators"])
+            # Compute EVERY indicator, not just the ticked ones: the rack then
+            # toggles instantly without a round-trip, which is what makes the
+            # chart feel like a chart instead of a form.
+            keys = list(INDICATOR_KEYS)
             series = ind.compute(candles, keys, cfg)
 
             bars = int(cfg["bars"])
@@ -239,7 +242,7 @@ class SimulationService:
                              "v": round(float(c.get("volume", 0) or 0)),
                              "oi": round(float(c.get("oi", 0) or 0)) if want_oi else None}
                             for c in view],
-                "series": shown, "indicators": keys, "levels": lv,
+                "series": shown, "indicators": cfg["indicators"], "computed": keys, "levels": lv,
                 "ltp": round(ltp, 2), "bars_total": total, "bars_shown": len(view),
                 "history_days": days, "config": cfg,
                 "first_bar": view[0]["_dt"].strftime("%Y-%m-%d %H:%M"),

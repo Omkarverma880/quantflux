@@ -785,6 +785,8 @@ class ChartLevel(Base):
     label = Column(String(80))
     color = Column(String(16), default="#f59e0b")
     note = Column(String(500))
+    type = Column(String(10), default="line")             # line | text
+    anchor = Column(String(20))                           # candle timestamp a text note pins to
     active = Column(Boolean, default=True)
 
     __table_args__ = (
