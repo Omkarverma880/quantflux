@@ -55,6 +55,17 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+async function requestBlob(path) {
+  const res = await fetch(`${BASE}${path}`, { headers: { ...getAuthHeaders() } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const type = res.headers.get('content-type') || '';
+  if (type.includes('application/json')) {
+    const j = await res.json();
+    throw new Error(j?.message || 'Download failed');
+  }
+  return res.blob();
+}
+
 async function requestUpload(path, formData) {
   // Multipart upload — do NOT set Content-Type; the browser adds the
   // multipart boundary automatically.
@@ -633,6 +644,19 @@ export const api = {
   simUpdateLevel: (id, body) => request(`/simulation/levels/${id}`, { method: 'PUT', body: JSON.stringify(body || {}) }),
   simDeleteLevel: (id) => request(`/simulation/levels/${id}`, { method: 'DELETE' }),
   simConfigSave: (partial) => request('/simulation/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+
+  // NIFTY open ±offset mean reversion — backtest + live/paper
+  norMeta: () => request('/nifty-open-reversion/meta'),
+  norBacktest: (config, write = true) => request('/nifty-open-reversion/backtest', { method: 'POST', body: JSON.stringify({ config: config || {}, write }) }),
+  norLast: () => request('/nifty-open-reversion/last'),
+  norUpload: (file) => { const fd = new FormData(); fd.append('file', file); return requestUpload('/nifty-open-reversion/upload', fd); },
+  norFile: (name) => requestBlob(`/nifty-open-reversion/file/${encodeURIComponent(name)}`),
+  norStatus: () => request('/nifty-open-reversion/status'),
+  norStart: (config) => request('/nifty-open-reversion/start', { method: 'POST', body: JSON.stringify({ config: config || {} }) }),
+  norStop: () => request('/nifty-open-reversion/stop', { method: 'POST' }),
+  norCheck: () => request('/nifty-open-reversion/check', { method: 'POST' }),
+  norPositions: (date) => request(`/nifty-open-reversion/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+  norConfigSave: (partial) => request('/nifty-open-reversion/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
 
   // Universal Telegram notifications (shared across the app)
   getTelegramSettings: (bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`),

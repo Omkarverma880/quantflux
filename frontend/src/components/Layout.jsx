@@ -71,6 +71,7 @@ const NAV = [
     label: 'Index Strategies', icon: Activity,
     children: [
       { to: '/index-strategy/vwap-options', label: '1. VWAP Options Engine' },
+      { to: '/index-strategy/open-reversion', label: '2. NIFTY Open ±50 Reversion' },
     ],
   },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },

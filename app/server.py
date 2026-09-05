@@ -43,6 +43,7 @@ from app.routes.hammer_breakout_routes import router as hammer_breakout_router
 from app.routes.equity_workspace_routes import router as equity_workspace_router
 from app.routes.wyckoff_routes import router as wyckoff_router
 from app.routes.simulation_routes import router as simulation_router
+from app.routes.nifty_open_reversion_routes import router as nifty_open_reversion_router
 from app.routes.vwap_options_routes import router as vwap_options_router
 from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
@@ -278,6 +279,12 @@ def _run_strategies_for_user(uid: int):
         if authenticated and (hb.is_active or hb.cfg.get("auto_start") or hb.has_open_positions):
             hb.check()
 
+        # NIFTY open ±offset mean reversion (index signal → spot/option legs).
+        from app.routes.nifty_open_reversion_routes import _get_strategy as _get_nor
+        nor = _get_nor(broker, uid)
+        if authenticated and (nor.is_active or nor.cfg.auto_start or nor.has_open_positions):
+            nor.check()
+
         # VWAP Options Engine (NIFTY index options; paper by default).
         from app.routes.vwap_options_routes import _get_strategy as _get_vwapopt
         vo = _get_vwapopt(broker, uid, db)
@@ -446,6 +453,7 @@ app.include_router(hammer_breakout_router, prefix="/api/equity-strategy/hammer-b
 app.include_router(equity_workspace_router, prefix="/api/equity-strategy/workspace", tags=["Equity-Workspace"])
 app.include_router(wyckoff_router, prefix="/api/wyckoff", tags=["Wyckoff"])
 app.include_router(simulation_router, prefix="/api/simulation", tags=["ChartSimulation"])
+app.include_router(nifty_open_reversion_router, prefix="/api/nifty-open-reversion", tags=["NiftyOpenReversion"])
 app.include_router(vwap_options_router, prefix="/api/index-strategy/vwap-options", tags=["Index-VWAPOptions"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])

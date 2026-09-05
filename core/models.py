@@ -794,6 +794,58 @@ class ChartLevel(Base):
     )
 
 
+class NiftyOpenReversionPosition(Base):
+    """Paper/live position for the NIFTY opening-price mean-reversion strategy.
+
+    One row per leg. ``instrument_mode`` records whether the leg was tracked on
+    the index itself (paper signal tracking) or traded as an option contract.
+    Real orders only when paper_trade is off AND the global trading gate is on.
+    Auto-created via ``create_all``.
+    """
+    __tablename__ = "nifty_open_reversion_positions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    trade_date = Column(Date, nullable=False)
+    side = Column(String(5))                        # BUY | SELL  (the index signal)
+    daily_open = Column(Numeric(12, 2))
+    trigger_level = Column(Numeric(12, 2))          # the ±offset level that fired
+    # ── the traded instrument ──
+    instrument_mode = Column(String(16), default="spot")   # spot | option_buy | option_sell
+    tradingsymbol = Column(String(60))
+    exchange = Column(String(8), default="NFO")
+    token = Column(Integer)
+    opt_type = Column(String(4))                    # CE | PE
+    strike = Column(Numeric(12, 2))
+    expiry = Column(Date)
+    action = Column(String(5))                      # BUY | SELL on the contract
+    lots = Column(Integer, default=1)
+    qty = Column(Integer)
+    # ── prices ──
+    entry_price = Column(Numeric(12, 2))            # premium, or index level for spot
+    entry_time = Column(String(12))
+    index_entry = Column(Numeric(12, 2))
+    stop_loss = Column(Numeric(12, 2))              # on the index
+    target = Column(Numeric(12, 2))
+    ltp = Column(Numeric(12, 2))
+    exit_price = Column(Numeric(12, 2))
+    exit_time = Column(String(12))
+    index_exit = Column(Numeric(12, 2))
+    exit_reason = Column(String(12))                # TARGET | SL | EOD
+    # ── result ──
+    points = Column(Numeric(12, 2))
+    mtm = Column(Numeric(14, 2), default=0)
+    mfe = Column(Numeric(14, 2), default=0)
+    mae = Column(Numeric(14, 2), default=0)
+    status = Column(String(12), default="OPEN")
+    paper = Column(Boolean, default=True)
+
+    __table_args__ = (
+        Index("idx_nor_user_date", "user_id", "trade_date"),
+    )
+
+
 class QMREPaperPosition(Base):
     """Paper position for Research #13 (QMRE). SIMULATION ONLY — no real order is
     ever placed. Auto-created via ``create_all``."""
