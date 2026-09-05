@@ -8,6 +8,8 @@ global trading gate is on.
 from __future__ import annotations
 
 import shutil
+import traceback
+from functools import wraps
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, UploadFile
@@ -28,6 +30,26 @@ from strategies.nifty_open_reversion_strategy import NiftyOpenReversionStrategy
 
 router = APIRouter()
 logger = get_logger("api.nifty_open_reversion")
+
+
+def safe(name: str):
+    """Never let a handler surface a bare HTTP 500.
+
+    A backtest touches the filesystem, pandas, matplotlib and the broker; any of
+    them can fail in a way the UI should be able to explain. This turns an
+    exception into a readable message (with the traceback in the log) so the
+    page shows what went wrong instead of "HTTP 500"."""
+    def deco(fn):
+        @wraps(fn)
+        def wrapper(*a, **k):
+            try:
+                return fn(*a, **k)
+            except Exception as exc:
+                logger.error("%s failed: %s | %s", name, exc, traceback.format_exc())
+                return {"status": "error",
+                        "message": f"{name}: {type(exc).__name__} — {exc}"[:400]}
+        return wrapper
+    return deco
 
 UPLOAD_DIR = settings.DATA_DIR / "uploads" / "nifty_open_reversion"
 _strategies: dict[int, NiftyOpenReversionStrategy] = {}
@@ -68,6 +90,7 @@ class StrategyCfg(BaseModel):
 
 
 @router.get("/meta")
+@safe("meta")
 def meta(user_id: int = Depends(login_required)):
     """Defaults, the option modes and the uploaded datasets."""
     files = []
@@ -89,6 +112,7 @@ def meta(user_id: int = Depends(login_required)):
 
 
 @router.post("/upload")
+@safe("upload")
 async def upload(file: UploadFile = File(...), user_id: int = Depends(login_required)):
     """Store a 1-minute OHLC CSV for this user and return its path."""
     if not (file.filename or "").lower().endswith(".csv"):
@@ -109,6 +133,7 @@ async def upload(file: UploadFile = File(...), user_id: int = Depends(login_requ
 
 
 @router.post("/backtest")
+@safe("backtest")
 def backtest(payload: BacktestReq | None = None, user_id: int = Depends(login_required),
              db: Session = Depends(get_db)):
     p = payload or BacktestReq()
@@ -152,17 +177,20 @@ def backtest(payload: BacktestReq | None = None, user_id: int = Depends(login_re
         "option_summary": res.get("option_summary"),
         "option_error": res.get("option_error"),
         "option_skipped": res.get("option_skipped"),
+        "charts_error": res.get("charts_error"),
     }
     _last_run[user_id] = slim
     return slim
 
 
 @router.get("/last")
+@safe("last")
 def last(user_id: int = Depends(login_required)):
     return _last_run.get(user_id) or {"status": "empty"}
 
 
 @router.get("/file/{name}")
+@safe("result_file")
 def result_file(name: str, user_id: int = Depends(login_required)):
     """Serve one artefact (CSV or PNG) from this user's results folder."""
     safe = Path(name).name
@@ -174,11 +202,13 @@ def result_file(name: str, user_id: int = Depends(login_required)):
 
 # ── live / paper ─────────────────────────────────────────────────────
 @router.get("/status")
+@safe("status")
 def status(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     return {"status": "ok", **_get_strategy(get_user_broker(db, user_id), user_id).get_status()}
 
 
 @router.post("/start")
+@safe("start")
 def start(payload: StrategyCfg | None = None, user_id: int = Depends(login_required),
           db: Session = Depends(get_db)):
     if not _is_authed(db, user_id):
@@ -194,6 +224,7 @@ def start(payload: StrategyCfg | None = None, user_id: int = Depends(login_requi
 
 
 @router.post("/stop")
+@safe("stop")
 def stop(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     strat = _get_strategy(get_user_broker(db, user_id), user_id)
     strat.stop()
@@ -202,6 +233,7 @@ def stop(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
 
 
 @router.post("/check")
+@safe("check")
 def check(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     if not _is_authed(db, user_id):
         return {"status": "error", "message": "Zerodha not authenticated"}
@@ -209,6 +241,7 @@ def check(user_id: int = Depends(login_required), db: Session = Depends(get_db))
 
 
 @router.get("/positions")
+@safe("positions")
 def positions(date: str | None = None, user_id: int = Depends(login_required),
               db: Session = Depends(get_db)):
     strat = _get_strategy(get_user_broker(db, user_id), user_id)
@@ -216,11 +249,13 @@ def positions(date: str | None = None, user_id: int = Depends(login_required),
 
 
 @router.get("/config")
+@safe("get_config")
 def get_config(user_id: int = Depends(login_required)):
     return {"status": "ok", "config": load_config().to_dict()}
 
 
 @router.post("/config")
+@safe("post_config")
 def post_config(payload: dict | None = None, user_id: int = Depends(login_required)):
     cfg = save_config(payload or {})
     for strat in _strategies.values():

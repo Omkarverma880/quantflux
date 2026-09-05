@@ -11,17 +11,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt          # noqa: E402
-import matplotlib.ticker as mticker      # noqa: E402
-import pandas as pd                      # noqa: E402
+import pandas as pd
 
-from core.logger import get_logger       # noqa: E402
-from research.nifty_open_reversion import metrics as M   # noqa: E402
-from research.nifty_open_reversion.config import Config  # noqa: E402
+from core.logger import get_logger
+from research.nifty_open_reversion import metrics as M
+from research.nifty_open_reversion.config import Config
 
 logger = get_logger("research.nifty_open_reversion.reports")
+
+# Charts are a nice-to-have: a server without matplotlib must still produce the
+# CSVs and the report rather than failing the whole run.
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as mticker
+    HAVE_MPL = True
+except Exception as _exc:                                   # pragma: no cover
+    plt = mticker = None
+    HAVE_MPL = False
+    logger.warning("matplotlib unavailable — charts will be skipped (%s)", _exc)
 
 BG = "#0b1220"; FG = "#e2e8f0"; GRID = "#1e293b"
 UP = "#26a69a"; DOWN = "#ef5350"; ACCENT = "#38bdf8"; WARN = "#f59e0b"
@@ -262,7 +271,10 @@ def write_all(res: dict, cfg: Config, out_dir: Path) -> dict:
     _csv("monthly_summary.csv", res.get("monthly_df"))
     _csv("yearly_summary.csv", res.get("yearly_df"))
 
-    if not df.empty:
+    if not df.empty and not HAVE_MPL:
+        res["charts_error"] = ("matplotlib is not installed on this server, so the PNG charts were "
+                               "skipped. The CSVs and the report are complete.")
+    if not df.empty and HAVE_MPL:
         try:
             equity_curve(df, cfg, out_dir / "equity_curve.png"); files["equity_curve.png"] = str(out_dir / "equity_curve.png")
             return_curve(df, cfg, out_dir / "return_curve.png"); files["return_curve.png"] = str(out_dir / "return_curve.png")
@@ -272,6 +284,7 @@ def write_all(res: dict, cfg: Config, out_dir: Path) -> dict:
             files["trade_pnl_distribution.png"] = str(out_dir / "trade_pnl_distribution.png")
         except Exception as exc:
             logger.error("chart generation failed: %s", exc)
+            res["charts_error"] = f"Charts could not be drawn: {exc}"[:200]
 
     report = final_report(res, cfg)
     (out_dir / "final_report.txt").write_text(report, encoding="utf-8")

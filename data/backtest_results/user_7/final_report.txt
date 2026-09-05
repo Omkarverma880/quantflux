@@ -1,0 +1,85 @@
+====================================================================
+NIFTY OPEN ±50 PROGRESSIVE SCALING BACKTEST
+====================================================================
+
+Data source:             broker NIFTY 50
+Period:                  2026-09-01 → 2026-09-04
+Bars processed:          184
+Starting Capital:        ₹250,000
+
+Strategy:
+  BUY  = Open − 50 pts
+  SELL = Open + 50 pts
+  SL   = 50 pts
+  TP   = 50 pts
+  Entry window = 09:15 → 10:30, flat by 15:30
+  Max 1 per side, 2 per day
+
+Position Scaling:
+  Fixed 1 lot(s) × 65
+
+--------------------------------------------------------------------
+PERFORMANCE
+--------------------------------------------------------------------
+
+Trading Days:            4   (traded on 0)
+Total Trades:            0
+BUY Trades:              0
+SELL Trades:             0
+Win Rate:                0.0%   (0 W / 0 L)
+Exits:                   0 target · 0 stop · 0 EOD
+
+Total NIFTY Points:      0.00
+Avg Points / Trade:      0.000
+
+Gross P&L:               ₹0
+Transaction Costs:       ₹0
+Total Profit:            ₹0
+Final Equity:            ₹250,000
+Total Return:            0.00%
+
+Maximum Drawdown:        ₹0
+Maximum Drawdown %:      0.00%
+Profit Factor:           n/a
+Average Win / Loss:      ₹0 / ₹0
+Largest Win / Loss:      ₹0 / ₹0
+Max Winning Streak:      0
+Max Losing Streak:       0
+
+--------------------------------------------------------------------
+POSITION SCALING
+--------------------------------------------------------------------
+
+--------------------------------------------------------------------
+YEAR BY YEAR (§29 — walk-forward validation)
+--------------------------------------------------------------------
+
+Year      Trades    Win%      Points         Net P&L   Return%         MaxDD
+
+--------------------------------------------------------------------
+SANITY CHECKS (§37)
+--------------------------------------------------------------------
+  PASS  equity identity: 250,000 + 0.00 = 250,000.00 vs final 250,000.00
+  PASS  return %: 0.0000% computed vs 0% recorded
+  PASS  no overnight positions: 0 trade(s) span a date boundary
+  PASS  per-day trade caps: 0 day(s) exceed 1/side, 2/day
+  PASS  entry cutoff: 0 entry/entries after 10:30
+  PASS  position size never decreases: sizes seen: -
+  PASS  no look-ahead in sizing: 0 trade(s) sized from anything other than prior realised profit
+  PASS  chronological sequencing: trades are ordered by entry timestamp
+  FAIL  09:15 open used: 0/4 sessions had an exact 09:15 candle
+
+--------------------------------------------------------------------
+WARNING
+--------------------------------------------------------------------
+THIS IS A SPOT / INDEX BACKTEST.
+P&L is NIFTY points x quantity. It does NOT model option premium, delta,
+gamma, theta, implied volatility, bid/ask spread, strike selection, expiry
+or option slippage. Do not read these numbers as option returns.
+
+Costs and slippage are ZERO in this run — this is the pure theoretical
+point result. Switch the cost knobs on for a realistic figure.
+
+====================================================================
+Generated 2026-09-05 07:19:19
+====================================================================

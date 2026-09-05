@@ -1,0 +1,5 @@
+date,daily_open,buy_triggered,sell_triggered,both_side_day,buy_pnl,sell_pnl,daily_pnl,cumulative_profit,equity,return_pct,lots_used,bars,exact_open
+2026-09-01,24000.0,False,False,False,0.0,0.0,0.0,0.0,250000.0,0.0,,46,False
+2026-09-02,24075.0,False,False,False,0.0,0.0,0.0,0.0,250000.0,0.0,,46,False
+2026-09-03,24150.0,False,False,False,0.0,0.0,0.0,0.0,250000.0,0.0,,46,False
+2026-09-04,24225.0,False,False,False,0.0,0.0,0.0,0.0,250000.0,0.0,,46,False

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Target, Play, Loader2, AlertCircle, Upload, Download, Save, RefreshCw, Radio,
-  Check, X, FlaskConical, Wallet, FileText, SlidersHorizontal, TrendingUp, TrendingDown,
+  Check, X, FlaskConical, Wallet, FileText, SlidersHorizontal, TrendingUp, TrendingDown, Info,
 } from 'lucide-react';
 import { api } from '../../api';
+import NiftyOpenReversionInfo from './NiftyOpenReversionInfo';
 
 const sel = 'bg-surface-3 border border-surface-4 rounded-lg px-2.5 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-brand-500/60';
 const lbl = 'block text-[10px] text-gray-500 uppercase tracking-wide mb-1';
@@ -176,7 +177,7 @@ export default function NiftyOpenReversion() {
       </div>
 
       <div className="flex gap-1 border-b border-surface-3">
-        {[['backtest', 'Backtest', FlaskConical], ['live', 'Live / Paper', Wallet], ['report', 'Report', FileText]].map(([id, label, Icon]) => (
+        {[['backtest', 'Backtest', FlaskConical], ['live', 'Live / Paper', Wallet], ['report', 'Report', FileText], ['info', 'How it works', Info]].map(([id, label, Icon]) => (
           <button key={id} onClick={() => setTab(id)} className={`flex items-center gap-1.5 px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition ${tab === id ? 'border-brand-500 text-brand-400' : 'border-transparent text-gray-400 hover:text-gray-200'}`}>
             <Icon className="w-4 h-4" /> {label}
           </button>
@@ -187,7 +188,7 @@ export default function NiftyOpenReversion() {
       {msg && <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-4 py-2 text-emerald-400 text-sm">{msg}</div>}
 
       {/* ── parameters, shared by both tabs ── */}
-      {tab !== 'report' && (
+      {(tab === 'backtest' || tab === 'live') && (
         <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 space-y-3">
           {tab === 'backtest' && (
             <div className="flex flex-wrap items-end gap-2.5 pb-3 border-b border-surface-3">
@@ -371,6 +372,7 @@ export default function NiftyOpenReversion() {
             </div>
           )}
           {res.option_error && <div className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">{res.option_error}</div>}
+          {res.charts_error && <div className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">{res.charts_error}</div>}
 
           <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
             <div className="px-3 py-2 border-b border-surface-3 flex items-center justify-between">
@@ -490,6 +492,8 @@ export default function NiftyOpenReversion() {
           </div>
         </div>
       )}
+
+      {tab === 'info' && <NiftyOpenReversionInfo cfg={cfg} />}
 
       {/* ── report ── */}
       {tab === 'report' && (
