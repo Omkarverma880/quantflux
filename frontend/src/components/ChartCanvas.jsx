@@ -505,8 +505,10 @@ const ChartCanvas = forwardRef(function ChartCanvas({
       });
       // Vertical drag moves the price scale too — no modifier key, the way a
       // chart should feel. Double-click (or Fit) snaps back to auto.
+      // Drag DOWN (dy > 0) must raise the price window so the candles follow the
+      // cursor downward — hence +, not −.
       const dy = e.clientY - d.y;
-      if (Math.abs(dy) > 1) setYz((z) => ({ ...z, shift: d.shift - (dy / priceH) }));
+      if (Math.abs(dy) > 1) setYz((z) => ({ ...z, shift: d.shift + (dy / priceH) }));
     }
   };
   const finish = () => {
