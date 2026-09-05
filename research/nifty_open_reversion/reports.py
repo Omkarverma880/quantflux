@@ -203,7 +203,9 @@ def final_report(res: dict, cfg: Config) -> str:
     add("")
     add(f"Maximum Drawdown:        {_fmt(s['max_drawdown'])}")
     add(f"Maximum Drawdown %:      {s['max_drawdown_pct']:,.2f}%")
-    add(f"Profit Factor:           {_fmt(s['profit_factor'], money=False)}")
+    pf = (f"{s['profit_factor']}" if s.get("profit_factor") is not None
+          else ("no losing trades" if s.get("winning_trades") and not s.get("losing_trades") else "n/a"))
+    add(f"Profit Factor:           {pf}")
     add(f"Average Win / Loss:      {_fmt(s['avg_win'])} / {_fmt(s['avg_loss'])}")
     add(f"Largest Win / Loss:      {_fmt(s['largest_win'])} / {_fmt(s['largest_loss'])}")
     add(f"Max Winning Streak:      {s['max_win_streak']}")

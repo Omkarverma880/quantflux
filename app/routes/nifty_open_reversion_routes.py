@@ -7,6 +7,7 @@ global trading gate is on.
 """
 from __future__ import annotations
 
+import math
 import shutil
 import traceback
 from functools import wraps
@@ -32,6 +33,22 @@ router = APIRouter()
 logger = get_logger("api.nifty_open_reversion")
 
 
+def json_safe(o):
+    """Strip anything JSON cannot carry.
+
+    Starlette serialises with ``allow_nan=False``, and that happens AFTER the
+    handler returns — so a NaN or an infinity produced anywhere in pandas
+    becomes an un-catchable HTTP 500. This scrubs them to null on the way out.
+    """
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [json_safe(v) for v in o]
+    return o
+
+
 def safe(name: str):
     """Never let a handler surface a bare HTTP 500.
 
@@ -43,7 +60,8 @@ def safe(name: str):
         @wraps(fn)
         def wrapper(*a, **k):
             try:
-                return fn(*a, **k)
+                out = fn(*a, **k)
+                return json_safe(out) if isinstance(out, (dict, list)) else out
             except Exception as exc:
                 logger.error("%s failed: %s | %s", name, exc, traceback.format_exc())
                 return {"status": "error",

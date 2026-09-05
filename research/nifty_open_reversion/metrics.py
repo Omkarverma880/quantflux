@@ -6,6 +6,7 @@ truth, so the headline numbers and the CSVs can never disagree.
 """
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 import pandas as pd
@@ -45,11 +46,27 @@ def streaks(pnl: list[float]) -> tuple[int, int]:
 
 
 def profit_factor(pnl: pd.Series) -> Optional[float]:
-    gains = pnl[pnl > 0].sum()
-    losses = -pnl[pnl < 0].sum()
+    """Gross wins / gross losses.
+
+    Returns None when there are no losing trades: the ratio is undefined, and
+    ``inf`` is not JSON — a value that cannot cross the API is not a value.
+    Callers show "no losing trades" for the None case instead.
+    """
+    gains = float(pnl[pnl > 0].sum())
+    losses = float(-pnl[pnl < 0].sum())
     if losses <= 0:
-        return None if gains <= 0 else float("inf")
-    return round(float(gains / losses), 3)
+        return None
+    pf = gains / losses
+    return round(pf, 3) if math.isfinite(pf) else None
+
+
+def _finite(v, default: float = 0.0) -> float:
+    """NaN and ±inf must never reach the API — JSON has no way to carry them."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    return f if math.isfinite(f) else default
 
 
 def max_drawdown(equity: pd.Series) -> tuple[float, float]:
@@ -59,7 +76,7 @@ def max_drawdown(equity: pd.Series) -> tuple[float, float]:
     peak = equity.cummax()
     dd = equity - peak
     dd_pct = (dd / peak.replace(0, pd.NA)) * 100.0
-    return round(float(dd.min()), 2), round(float(dd_pct.min() or 0), 2)
+    return round(_finite(dd.min()), 2), round(_finite(dd_pct.min()), 2)
 
 
 def summary(trades: list[dict], days: list, cfg: Config) -> dict:
