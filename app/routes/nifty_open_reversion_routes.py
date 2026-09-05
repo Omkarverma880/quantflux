@@ -121,11 +121,17 @@ def meta(user_id: int = Depends(login_required)):
     return {"status": "ok", "config": load_config().to_dict(), "datasets": files,
             "instrument_modes": [
                 {"key": "spot", "name": "Index points (spot)",
-                 "note": "NIFTY points × quantity. The honest baseline — no option premium is modelled."},
-                {"key": "option_buy", "name": "Option buying",
-                 "note": "BUY signal → buy CALL · SELL signal → buy PUT."},
-                {"key": "option_sell", "name": "Option selling",
-                 "note": "BUY signal → sell PUT · SELL signal → sell CALL."}],
+                 "note": "NIFTY points × quantity. A study of the rule itself — nobody can "
+                         "buy or sell the index, so this is research, not a tradeable result."},
+                {"key": "option_buy", "name": "Option buying (premium)",
+                 "note": "BUY signal → buy CALL · SELL signal → buy PUT. Backtested on the "
+                         "contract's own premium candles from Zerodha."},
+                {"key": "option_sell", "name": "Option selling (premium)",
+                 "note": "BUY signal → sell PUT · SELL signal → sell CALL. Backtested on the "
+                         "contract's own premium candles from Zerodha."}],
+            "strike_offsets": [
+                {"value": v, "label": ("ATM" if v == 0 else f"{abs(v)} {'OTM' if v > 0 else 'ITM'}")}
+                for v in (-200, -150, -100, -50, 0, 50, 100, 150, 200)],
             "results": sorted(p.name for p in _results_dir(user_id).glob("*")) if _results_dir(user_id).exists() else []}
 
 
@@ -192,9 +198,10 @@ def backtest(payload: BacktestReq | None = None, user_id: int = Depends(login_re
                           "drawdown": t["drawdown"], "lots": t["lots"],
                           "return_pct": t["return_pct"]} for t in trades],
         "files": {k: Path(v).name for k, v in (res.get("files") or {}).items()},
-        "option_summary": res.get("option_summary"),
-        "option_error": res.get("option_error"),
-        "option_skipped": res.get("option_skipped"),
+        "mode": res.get("mode", "spot"),
+        "coverage": res.get("coverage"),
+        "index_summary": res.get("index_summary"),
+        "contract_example": res.get("contract_example"),
         "charts_error": res.get("charts_error"),
     }
     _last_run[user_id] = slim

@@ -92,7 +92,10 @@ class Config:
 
     # ── instrument (§39) ──
     instrument_mode: str = "spot"       # spot | option_buy | option_sell
-    strike_offset: int = 0              # points from ATM: 0, 50, 100, …
+    # Signed distance from ATM in points: negative = ITM, 0 = ATM, positive = OTM.
+    # The direction is resolved per option type, so −100 is ITM for a CE and for
+    # a PE alike.
+    strike_offset: int = 0
     expiry_type: str = "weekly"         # weekly | monthly
     option_sl_mode: str = "underlying"  # underlying | premium_points | premium_pct
     option_sl_value: float = 50.0
@@ -142,7 +145,7 @@ class Config:
         c.max_per_side_per_day = max(1, int(c.max_per_side_per_day))
         c.starting_capital = max(1.0, float(c.starting_capital))
         c.instrument_mode = c.instrument_mode if c.instrument_mode in INSTRUMENT_MODES else "spot"
-        c.strike_offset = max(0, int(c.strike_offset))
+        c.strike_offset = max(-2000, min(2000, int(c.strike_offset)))
         c.expiry_type = c.expiry_type if c.expiry_type in ("weekly", "monthly") else "weekly"
         if c.option_sl_mode not in ("underlying", "premium_points", "premium_pct"):
             c.option_sl_mode = "underlying"

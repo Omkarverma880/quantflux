@@ -11,6 +11,17 @@ const lbl = 'block text-[10px] text-gray-500 uppercase tracking-wide mb-1';
 const NUM = (v, d = 2) => (v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d }));
 const INR = (v, d = 0) => (v == null ? '—' : `₹${Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d })}`);
 const PCT = (v) => (v == null ? '—' : `${Number(v).toFixed(2)}%`);
+// Signed distance from ATM: negative is in-the-money, positive out-of-the-money.
+const STRIKES = [-200, -150, -100, -50, 0, 50, 100, 150, 200];
+const MONEY = (v) => (Number(v) === 0 ? 'ATM' : `${Math.abs(v)} ${v < 0 ? 'ITM' : 'OTM'}`);
+const IS_OPT = (m) => !!m && m !== 'spot';
+// What a spot signal actually becomes once an option mode is on.
+const LEG = (mode, side) => {
+  if (mode === 'option_buy') return side === 'BUY' ? 'BUY CALL' : 'BUY PUT';
+  if (mode === 'option_sell') return side === 'BUY' ? 'SELL PUT' : 'SELL CALL';
+  return side;
+};
+
 const ARTEFACTS = ['trade_log.csv', 'daily_summary.csv', 'monthly_summary.csv', 'yearly_summary.csv',
   'equity_curve.png', 'return_curve.png', 'drawdown_curve.png', 'lot_scaling.png',
   'trade_pnl_distribution.png', 'final_report.txt'];
@@ -152,6 +163,8 @@ export default function NiftyOpenReversion() {
     <input type="number" step={step} min={min} value={cfg[k] ?? ''} onChange={(e) => patch(k, e.target.value)} className={`w-full ${sel}`} />
   );
   const s = res?.summary;
+  const isOpt = IS_OPT(res?.mode);
+  const ptsLabel = isOpt ? 'Premium points' : 'NIFTY points';
   const unit = cfg.level_mode === 'percent' ? '%' : 'pts';
 
   return (
@@ -234,11 +247,11 @@ export default function NiftyOpenReversion() {
                 {(meta.instrument_modes || []).map((m) => <option key={m.key} value={m.key}>{m.name}</option>)}
               </select>
             </div>
-            {cfg.instrument_mode !== 'spot' && (
+            {IS_OPT(cfg.instrument_mode) && (
               <>
                 <div><label className={lbl}>Strike from ATM</label>
                   <select value={cfg.strike_offset} onChange={(e) => patch('strike_offset', Number(e.target.value))} className={`w-full ${sel}`}>
-                    {[0, 50, 100, 150, 200].map((v) => <option key={v} value={v}>{v === 0 ? 'ATM' : `${v} OTM`}</option>)}
+                    {STRIKES.map((v) => <option key={v} value={v}>{MONEY(v)}</option>)}
                   </select>
                 </div>
                 <div><label className={lbl}>Expiry</label>
@@ -247,6 +260,18 @@ export default function NiftyOpenReversion() {
                   </select>
                 </div>
               </>
+            )}
+            {IS_OPT(cfg.instrument_mode) && (
+              <div className="col-span-2 sm:col-span-4 lg:col-span-6 text-[11px] text-brand-200/80 bg-brand-500/5 border border-brand-500/20 rounded-lg px-3 py-2 leading-relaxed">
+                The index only fires the signal — every rupee of P&L below comes from the
+                contract's own premium candles, pulled live from Zerodha.
+                <span className="block mt-1 text-gray-400">
+                  BUY signal → <span className="text-emerald-300">{LEG(cfg.instrument_mode, 'BUY')}</span>,
+                  SELL signal → <span className="text-red-300">{LEG(cfg.instrument_mode, 'SELL')}</span>,
+                  strike <span className="text-gray-200">{MONEY(cfg.strike_offset)}</span> on the {cfg.expiry_type} expiry.
+                  Stop and target still trigger on the index; the option is closed at that timestamp.
+                </span>
+              </div>
             )}
             <div><label className={lbl}>Capital ₹</label>{num('starting_capital', 50000)}</div>
             <div><label className={lbl}>Lot size</label>{num('lot_size', 5, 1)}</div>
@@ -286,10 +311,40 @@ export default function NiftyOpenReversion() {
             {res.duplicates_removed ? ` · ${res.duplicates_removed} duplicates removed` : ''}
           </div>
 
+          {/* what these numbers are made of — index points, or real premium */}
+          <div className={`rounded-xl px-3 py-2 text-[11px] leading-relaxed border ${isOpt ? 'bg-brand-500/5 border-brand-500/25 text-brand-100/90' : 'bg-surface-2 border-surface-3 text-gray-400'}`}>
+            {isOpt ? (
+              <>
+                <span className="font-semibold text-brand-200">Priced on option premium.</span>{' '}
+                Every P&L number below is (premium out − premium in) × quantity on the
+                {' '}{MONEY(res.config?.strike_offset)} {res.config?.expiry_type} contract
+                {res.contract_example ? <> — e.g. <span className="text-gray-200 font-mono">{res.contract_example}</span></> : null}.
+                The index is the signal generator only.
+                {res.coverage && (
+                  <span className="block mt-1 text-gray-400">
+                    Contract coverage: <span className={res.coverage.pct >= 95 ? 'text-emerald-300' : 'text-amber-300'}>{res.coverage.priced}/{res.coverage.signals} signals priced ({res.coverage.pct}%)</span>
+                    {res.coverage.skipped ? <> · {res.coverage.skipped} skipped — e.g. {res.coverage.reasons?.[0]?.reason}</> : null}
+                  </span>
+                )}
+                {res.index_summary && (
+                  <span className="block mt-1 text-gray-500">
+                    Signal reference (index only, not traded): {NUM(res.index_summary.total_points, 0)} pts,
+                    {' '}{INR(res.index_summary.total_pnl)} · win rate {PCT(res.index_summary.win_rate)}
+                  </span>
+                )}
+              </>
+            ) : (
+              <><span className="font-semibold text-gray-300">Priced on the index itself.</span>{' '}
+                NIFTY points × quantity — the honest study of the rule. Nobody can trade the index:
+                switch the instrument to option buying or selling to see what the same signal
+                does on real premium.</>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
             <Stat label="Trades" value={s.total_trades.toLocaleString('en-IN')} />
             <Stat label="Win rate" value={PCT(s.win_rate)} tone={s.win_rate >= 50 ? 'text-emerald-400' : 'text-amber-400'} />
-            <Stat label="NIFTY points" value={NUM(s.total_points, 0)} tone={s.total_points >= 0 ? 'text-emerald-400' : 'text-red-400'} />
+            <Stat label={ptsLabel} value={NUM(s.total_points, 0)} tone={s.total_points >= 0 ? 'text-emerald-400' : 'text-red-400'} />
             <Stat label="Net P&L" value={INR(s.total_pnl)} tone={s.total_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'} />
             <Stat label="Final equity" value={INR(s.final_equity)} />
             <Stat label="Return" value={PCT(s.total_return_pct)} tone={s.total_return_pct >= 0 ? 'text-emerald-400' : 'text-red-400'} />
@@ -328,7 +383,7 @@ export default function NiftyOpenReversion() {
             <div className="bg-surface-2 border border-surface-3 rounded-xl p-4">
               <div className="text-sm font-semibold text-gray-200 mb-2">Year by year</div>
               <table className="w-full text-xs">
-                <thead className="text-gray-400"><tr><th className="text-left py-1">Year</th><th className="text-right">Trades</th><th className="text-right">Win%</th><th className="text-right">Points</th><th className="text-right">Net P&L</th><th className="text-right">Max DD</th></tr></thead>
+                <thead className="text-gray-400"><tr><th className="text-left py-1">Year</th><th className="text-right">Trades</th><th className="text-right">Win%</th><th className="text-right">{isOpt ? 'Prem pts' : 'Points'}</th><th className="text-right">Net P&L</th><th className="text-right">Max DD</th></tr></thead>
                 <tbody>{(res.yearly || []).map((y) => (
                   <tr key={y.year} className="border-t border-surface-3/40">
                     <td className="py-1 text-gray-200">{y.year}</td>
@@ -355,23 +410,6 @@ export default function NiftyOpenReversion() {
             </div>
           </div>
 
-          {res.option_summary && (
-            <div className="bg-surface-2 border border-surface-3 rounded-xl p-4">
-              <div className="text-sm font-semibold text-gray-200 mb-1">Option overlay — real premium in / out</div>
-              <p className="text-[11px] text-gray-500 mb-2">{res.option_summary.note}</p>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                <Stat label="Legs priced" value={res.option_summary.trades} />
-                <Stat label="Win rate" value={PCT(res.option_summary.win_rate)} />
-                <Stat label="Premium points" value={NUM(res.option_summary.total_premium_points, 0)} />
-                <Stat label="Net P&L" value={INR(res.option_summary.net_pnl)} tone={res.option_summary.net_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'} />
-                <Stat label="Return" value={PCT(res.option_summary.return_pct)} />
-              </div>
-              {res.option_skipped?.length > 0 && (
-                <div className="text-[11px] text-amber-400/80 mt-2">{res.option_skipped.length} leg(s) could not be priced — e.g. {res.option_skipped[0].reason}</div>
-              )}
-            </div>
-          )}
-          {res.option_error && <div className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">{res.option_error}</div>}
           {res.charts_error && <div className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">{res.charts_error}</div>}
 
           <div className="bg-surface-2 border border-surface-3 rounded-xl overflow-hidden">
@@ -382,22 +420,43 @@ export default function NiftyOpenReversion() {
             <div className="overflow-x-auto max-h-[420px]">
               <table className="w-full text-xs whitespace-nowrap">
                 <thead className="bg-surface-3 text-gray-300 sticky top-0"><tr>
-                  {['#', 'Date', 'Side', 'Open', 'Entry@', 'Entry', 'SL', 'TP', 'Exit@', 'Exit', 'Why', 'Points', 'Lots', 'Qty', 'Net ₹', 'Cum ₹', 'Equity', 'DD'].map((h) => <th key={h} className="px-2 py-1.5 text-right first:text-left font-semibold">{h}</th>)}
+                  {(isOpt
+                    ? ['#', 'Date', 'Signal', 'Contract', 'Action', 'Strike', 'Entry@', 'Premium in', 'Exit@', 'Premium out', 'Why', 'Prem pts', 'Index in→out', 'Idx SL/TP', 'Lots', 'Qty', 'Net ₹', 'Cum ₹', 'Equity', 'DD']
+                    : ['#', 'Date', 'Side', 'Open', 'Entry@', 'Entry', 'SL', 'TP', 'Exit@', 'Exit', 'Why', 'Points', 'Lots', 'Qty', 'Net ₹', 'Cum ₹', 'Equity', 'DD']
+                  ).map((h) => <th key={h} className="px-2 py-1.5 text-right first:text-left font-semibold">{h}</th>)}
                 </tr></thead>
                 <tbody>{(res.trades || []).slice().reverse().map((t) => (
                   <tr key={t.trade_no} className="border-t border-surface-3/40">
                     <td className="px-2 py-1 text-left text-gray-500">{t.trade_no}</td>
                     <td className="px-2 py-1 text-right text-gray-400">{t.date}</td>
                     <td className={`px-2 py-1 text-right font-semibold ${t.side === 'BUY' ? 'text-emerald-400' : 'text-red-400'}`}>{t.side}</td>
-                    <td className="px-2 py-1 text-right text-gray-400">{NUM(t.daily_open, 0)}</td>
-                    <td className="px-2 py-1 text-right text-gray-500">{t.entry_time.slice(11)}</td>
-                    <td className="px-2 py-1 text-right text-gray-300">{NUM(t.entry_price, 0)}</td>
-                    <td className="px-2 py-1 text-right text-red-400/80">{NUM(t.stop_loss, 0)}</td>
-                    <td className="px-2 py-1 text-right text-emerald-400/80">{NUM(t.target, 0)}</td>
-                    <td className="px-2 py-1 text-right text-gray-500">{t.exit_time.slice(11)}</td>
-                    <td className="px-2 py-1 text-right text-gray-300">{NUM(t.exit_price, 0)}</td>
-                    <td className={`px-2 py-1 text-right ${t.exit_reason === 'TARGET' ? 'text-emerald-400' : t.exit_reason === 'SL' ? 'text-red-400' : 'text-gray-400'}`}>{t.exit_reason}</td>
-                    <td className={`px-2 py-1 text-right ${t.nifty_points >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{NUM(t.nifty_points, 1)}</td>
+                    {isOpt ? (
+                      <>
+                        <td className="px-2 py-1 text-right text-gray-200 font-mono text-[11px]">{t.instrument}</td>
+                        <td className={`px-2 py-1 text-right font-semibold ${t.action === 'BUY' ? 'text-emerald-400' : 'text-amber-400'}`}>{t.action} {t.opt_type}</td>
+                        <td className="px-2 py-1 text-right text-gray-300">{NUM(t.strike, 0)} <span className="text-gray-500">{t.moneyness}</span></td>
+                        <td className="px-2 py-1 text-right text-gray-500">{t.entry_time.slice(11)}</td>
+                        <td className="px-2 py-1 text-right text-gray-200">{NUM(t.entry_price, 2)}</td>
+                        <td className="px-2 py-1 text-right text-gray-500">{t.exit_time.slice(11)}</td>
+                        <td className="px-2 py-1 text-right text-gray-200">{NUM(t.exit_price, 2)}</td>
+                        <td className={`px-2 py-1 text-right ${t.exit_reason === 'TARGET' ? 'text-emerald-400' : t.exit_reason === 'SL' ? 'text-red-400' : 'text-gray-400'}`}>{t.exit_reason}</td>
+                        <td className={`px-2 py-1 text-right font-semibold ${t.nifty_points >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{NUM(t.nifty_points, 1)}</td>
+                        <td className="px-2 py-1 text-right text-gray-500">{NUM(t.index_entry, 0)} → {NUM(t.index_exit, 0)}</td>
+                        <td className="px-2 py-1 text-right text-gray-600">{NUM(t.stop_loss, 0)} / {NUM(t.target, 0)}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="px-2 py-1 text-right text-gray-400">{NUM(t.daily_open, 0)}</td>
+                        <td className="px-2 py-1 text-right text-gray-500">{t.entry_time.slice(11)}</td>
+                        <td className="px-2 py-1 text-right text-gray-300">{NUM(t.entry_price, 0)}</td>
+                        <td className="px-2 py-1 text-right text-red-400/80">{NUM(t.stop_loss, 0)}</td>
+                        <td className="px-2 py-1 text-right text-emerald-400/80">{NUM(t.target, 0)}</td>
+                        <td className="px-2 py-1 text-right text-gray-500">{t.exit_time.slice(11)}</td>
+                        <td className="px-2 py-1 text-right text-gray-300">{NUM(t.exit_price, 0)}</td>
+                        <td className={`px-2 py-1 text-right ${t.exit_reason === 'TARGET' ? 'text-emerald-400' : t.exit_reason === 'SL' ? 'text-red-400' : 'text-gray-400'}`}>{t.exit_reason}</td>
+                        <td className={`px-2 py-1 text-right ${t.nifty_points >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{NUM(t.nifty_points, 1)}</td>
+                      </>
+                    )}
                     <td className="px-2 py-1 text-right text-brand-300">{t.lots}</td>
                     <td className="px-2 py-1 text-right text-gray-500">{t.quantity}</td>
                     <td className={`px-2 py-1 text-right font-semibold ${t.net_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{NUM(t.net_pnl, 0)}</td>

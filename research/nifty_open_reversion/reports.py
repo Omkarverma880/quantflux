@@ -16,6 +16,7 @@ import pandas as pd
 from core.logger import get_logger
 from research.nifty_open_reversion import metrics as M
 from research.nifty_open_reversion.config import Config
+from research.nifty_open_reversion.options import moneyness as O_MONEY
 
 logger = get_logger("research.nifty_open_reversion.reports")
 
@@ -35,11 +36,21 @@ except Exception as _exc:                                   # pragma: no cover
 BG = "#0b1220"; FG = "#e2e8f0"; GRID = "#1e293b"
 UP = "#26a69a"; DOWN = "#ef5350"; ACCENT = "#38bdf8"; WARN = "#f59e0b"
 
-OPTION_WARNING = (
+SPOT_WARNING = (
     "THIS IS A SPOT / INDEX BACKTEST.\n"
     "P&L is NIFTY points x quantity. It does NOT model option premium, delta,\n"
-    "gamma, theta, implied volatility, bid/ask spread, strike selection, expiry\n"
-    "or option slippage. Do not read these numbers as option returns."
+    "gamma, theta, implied volatility, bid/ask spread, strike selection or\n"
+    "expiry. Nobody trades the index itself — use this to judge the SIGNAL,\n"
+    "then run an option mode to see what the trade would actually have paid."
+)
+
+OPTION_WARNING = (
+    "THIS IS AN OPTION BACKTEST ON REAL PREMIUM.\n"
+    "Every P&L figure is premium paid vs premium received on the actual contract\n"
+    "pulled from the broker — no delta, no Black-Scholes, no synthetic pricing.\n"
+    "What it does NOT model: the bid/ask spread you would really cross, market\n"
+    "impact, and any day whose contract history the broker could not serve —\n"
+    "those are reported as skipped, never silently replaced with index points."
 )
 
 
@@ -163,7 +174,21 @@ def final_report(res: dict, cfg: Config) -> str:
     add(f"Bars processed:          {res.get('bars', 0):,}")
     add(f"Starting Capital:        ₹{cfg.starting_capital:,.0f}")
     add("")
-    add("Strategy:")
+    mode = res.get("mode", "spot")
+    add("Instrument tested:")
+    if mode == "spot":
+        add("  NIFTY index points — a signal study (the index cannot be traded)")
+    else:
+        act = "BUY" if mode == "option_buy" else "SELL"
+        add(f"  NIFTY options — {act} the contract, {O_MONEY(cfg.strike_offset)}, "
+            f"{cfg.expiry_type} expiry")
+        add("  P&L is real premium in / premium out on the actual contract")
+        cov = res.get("coverage") or {}
+        if cov:
+            add(f"  Coverage: {cov.get('priced', 0)} of {cov.get('signals', 0)} signals priced "
+                f"({cov.get('pct', 0)}%), {cov.get('skipped', 0)} skipped")
+    add("")
+    add("Signal rules (always generated on the INDEX):")
     unit = "%" if cfg.level_mode == "percent" else " pts"
     add(f"  BUY  = Open − {cfg.entry_offset:g}{unit}")
     add(f"  SELL = Open + {cfg.entry_offset:g}{unit}")
@@ -192,7 +217,8 @@ def final_report(res: dict, cfg: Config) -> str:
     add(f"Win Rate:                {s['win_rate']}%   ({s['winning_trades']:,} W / {s['losing_trades']:,} L)")
     add(f"Exits:                   {s['target_exits']:,} target · {s['sl_exits']:,} stop · {s['eod_exits']:,} EOD")
     add("")
-    add(f"Total NIFTY Points:      {s['total_points']:,.2f}")
+    plabel = "Premium Points" if res.get("mode", "spot") != "spot" else "NIFTY Points"
+    add(f"Total {plabel}:{' ' * max(1, 19 - len(plabel))}{s['total_points']:,.2f}")
     add(f"Avg Points / Trade:      {s['avg_points']:,.3f}")
     add("")
     add(f"Gross P&L:               {_fmt(s['gross_pnl'])}")
@@ -241,7 +267,7 @@ def final_report(res: dict, cfg: Config) -> str:
     add("-" * 68)
     add("WARNING")
     add("-" * 68)
-    add(OPTION_WARNING)
+    add(OPTION_WARNING if res.get("mode", "spot") != "spot" else SPOT_WARNING)
     if not cfg.costs.any_on:
         add("")
         add("Costs and slippage are ZERO in this run — this is the pure theoretical")

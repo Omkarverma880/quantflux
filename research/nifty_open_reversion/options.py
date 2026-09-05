@@ -41,11 +41,21 @@ def atm_strike(spot: float, step: int) -> float:
 
 
 def strike_for(spot: float, opt_type: str, offset: int, step: int) -> float:
-    """``offset`` moves the strike out-of-the-money by that many points."""
+    """Strike ``offset`` points from ATM, signed: negative = ITM, positive = OTM.
+
+    A call goes out-of-the-money as the strike rises, a put as it falls — so the
+    same signed offset means the same moneyness for both.
+    """
     atm = atm_strike(spot, step)
     if not offset:
         return atm
     return atm + offset if opt_type == "CE" else atm - offset
+
+
+def moneyness(offset: int) -> str:
+    if offset == 0:
+        return "ATM"
+    return f"{abs(offset)} {'OTM' if offset > 0 else 'ITM'}"
 
 
 def describe(cfg: Config, side: str, spot: float, index: str = "NIFTY") -> dict:
@@ -53,7 +63,8 @@ def describe(cfg: Config, side: str, spot: float, index: str = "NIFTY") -> dict:
     step = STRIKE_STEP.get(index, 50)
     return {"opt_type": opt_type, "action": action,
             "strike": strike_for(spot, opt_type, cfg.strike_offset, step),
-            "atm": atm_strike(spot, step), "step": step}
+            "atm": atm_strike(spot, step), "step": step,
+            "moneyness": moneyness(cfg.strike_offset)}
 
 
 class OptionResolver:
@@ -144,11 +155,14 @@ def apply(raws: list, cfg: Config, resolver: OptionResolver) -> tuple[list, list
             pts = (exit_ - entry) if action == "BUY" else (entry - exit_)
             out.append({
                 "day": t.day, "side": t.side, "action": action, "opt_type": opt_type,
-                "strike": strike, "tradingsymbol": rec["tradingsymbol"],
+                "strike": strike, "moneyness": moneyness(cfg.strike_offset),
+                "tradingsymbol": rec["tradingsymbol"],
                 "expiry": rec["expiry"].isoformat() if rec.get("expiry") else "",
                 "entry_time": t.entry_time, "exit_time": t.exit_time,
                 "entry_premium": round(entry, 2), "exit_premium": round(exit_, 2),
                 "points": round(float(pts), 2), "underlying_points": t.points,
+                "index_entry": t.entry_price, "index_exit": t.exit_price,
+                "index_sl": t.stop_loss, "index_target": t.target,
                 "exit_reason": t.exit_reason, "daily_open": t.daily_open,
             })
         except Exception as exc:

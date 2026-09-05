@@ -90,6 +90,61 @@ def checks(res: dict, cfg: Config, df: pd.DataFrame) -> dict:
     return out
 
 
+def account_option_legs(legs: list[dict], cfg: Config) -> list[dict]:
+    """Size and account option legs exactly like spot trades.
+
+    Same ladder, same equity walk, same column names — so every summary, check
+    and report downstream works on an option run without knowing it is one. The
+    only difference is what a "point" means: here it is one rupee of premium.
+    """
+    rows: list[dict] = []
+    equity = float(cfg.starting_capital)
+    peak = equity
+    ratchet = cfg.base_lots
+    for k, leg in enumerate(sorted(legs, key=lambda x: x["entry_time"]), start=1):
+        cum_before = equity - cfg.starting_capital
+        lots = max(E.lots_for(cum_before, cfg), ratchet)
+        ratchet = lots
+        qty = lots * cfg.lot_size
+
+        pts = leg["points"] - 2.0 * cfg.costs.slippage_points
+        gross = pts * qty
+        cost = E.trade_cost(leg["entry_premium"], leg["exit_premium"], qty, cfg)
+        net = gross - cost
+        equity += net
+        peak = max(peak, equity)
+        cum = equity - cfg.starting_capital
+        day = leg["day"]
+        rows.append({
+            "trade_no": k,
+            "date": day.isoformat(), "year": day.year, "month": day.month,
+            "side": leg["side"],
+            "daily_open": leg["daily_open"],
+            # the traded contract
+            "instrument": leg["tradingsymbol"], "action": leg["action"],
+            "opt_type": leg["opt_type"], "strike": leg["strike"],
+            "moneyness": leg["moneyness"], "expiry": leg["expiry"],
+            # premium in / premium out — this is what the P&L is made of
+            "entry_time": leg["entry_time"].strftime("%Y-%m-%d %H:%M"),
+            "entry_price": leg["entry_premium"],
+            "exit_time": leg["exit_time"].strftime("%Y-%m-%d %H:%M"),
+            "exit_price": leg["exit_premium"],
+            "exit_reason": leg["exit_reason"],
+            "nifty_points": round(pts, 2),            # premium points, drives P&L
+            # the index levels that generated and closed the trade
+            "stop_loss": leg["index_sl"], "target": leg["index_target"],
+            "index_entry": leg["index_entry"], "index_exit": leg["index_exit"],
+            "index_points": leg["underlying_points"],
+            "lots": lots, "quantity": qty,
+            "gross_pnl": round(gross, 2), "transaction_cost": round(cost, 2),
+            "net_pnl": round(net, 2),
+            "cumulative_profit": round(cum, 2), "equity": round(equity, 2),
+            "return_pct": round(cum / cfg.starting_capital * 100.0, 4),
+            "peak_equity": round(peak, 2), "drawdown": round(equity - peak, 2),
+        })
+    return rows
+
+
 # ── the run ──────────────────────────────────────────────────────────
 def load_data(cfg: Config, broker=None, token: Optional[int] = None) -> tuple[pd.DataFrame, str]:
     if cfg.csv_path:
@@ -114,12 +169,43 @@ def run(cfg: Config, *, df: Optional[pd.DataFrame] = None, broker=None,
 
     res = E.run(df, cfg)
     res["status"] = "ok"
+    res["mode"] = cfg.instrument_mode
     res["source"] = source
     res["bars"] = int(len(df))
     res["first_day"] = str(df.index[0].date())
     res["last_day"] = str(df.index[-1].date())
     res["rows_dropped"] = int(df.attrs.get("rows_dropped", 0))
     res["duplicates_removed"] = int(df.attrs.get("duplicates_removed", 0))
+
+    # ── option mode: the option legs ARE the backtest ──────────────────
+    # The index only generates the signal. Nobody can buy or sell the index, so
+    # when an option mode is chosen every number below — P&L, equity, scaling,
+    # the checks, the report — must come from real premium, not from index
+    # points. The index result is kept alongside purely as the signal reference.
+    if cfg.instrument_mode != "spot":
+        if broker is None or universe is None:
+            return {"status": "error",
+                    "message": ("Option mode prices real contracts, so it needs a live Zerodha "
+                                "session for premium history. Connect Zerodha, or switch the "
+                                "instrument to 'Index points (spot)' to test the signal itself.")}
+        resolver = O.OptionResolver(broker, universe)
+        legs, skipped = O.apply(res["raw"], cfg, resolver)
+        signals = len(res["raw"])
+        if not legs:
+            return {"status": "error",
+                    "message": (f"{signals} signal(s) found, but no option premium could be priced "
+                                f"for any of them. {skipped[0]['reason'] if skipped else ''} "
+                                "Zerodha serves limited option history — try a recent date range, "
+                                "or test the signal on 'Index points (spot)'.").strip()}
+        res["index_trades"] = res["trades"]                  # keep the reference
+        res["index_summary"] = M.summary(res["trades"], res["days"], cfg)
+        res["trades"] = account_option_legs(legs, cfg)
+        res["coverage"] = {
+            "signals": signals, "priced": len(legs), "skipped": len(skipped),
+            "pct": round(len(legs) / signals * 100.0, 1) if signals else 0.0,
+            "reasons": skipped[:50],
+        }
+        res["contract_example"] = legs[-1]["tradingsymbol"] if legs else None
 
     res["summary"] = M.summary(res["trades"], res["days"], cfg)
     res["daily_df"] = M.daily_summary(res["trades"], res["days"], cfg)
@@ -131,52 +217,8 @@ def run(cfg: Config, *, df: Optional[pd.DataFrame] = None, broker=None,
     res["checks"] = checks(res, cfg, df)
     res["config"] = cfg.to_dict()
 
-    # ── options overlay (§39) ──
-    if cfg.instrument_mode != "spot":
-        if broker is None or universe is None:
-            res["option_error"] = ("Option mode needs a live broker connection for premium "
-                                   "history — the spot result is shown instead.")
-        else:
-            resolver = O.OptionResolver(broker, universe)
-            legs, skipped = O.apply(res["raw"], cfg, resolver)
-            res["option_trades"] = legs
-            res["option_skipped"] = skipped[:50]
-            res["option_summary"] = _option_summary(legs, cfg)
-
     if write:
         R.write_all(res, cfg, Path(out_dir or RESULTS_DIR))
     else:
         res["report"] = R.final_report(res, cfg)
     return res
-
-
-def _option_summary(legs: list[dict], cfg: Config) -> dict:
-    """Premium-based P&L for the option legs, sized the same way."""
-    if not legs:
-        return {"trades": 0, "note": "no option legs could be priced"}
-    equity = cfg.starting_capital
-    ratchet = cfg.base_lots
-    rows = []
-    for i, leg in enumerate(sorted(legs, key=lambda x: x["entry_time"]), start=1):
-        lots = max(E.lots_for(equity - cfg.starting_capital, cfg), ratchet)
-        ratchet = lots
-        qty = lots * cfg.lot_size
-        net = leg["points"] * qty
-        equity += net
-        rows.append({**leg, "trade_no": i, "lots": lots, "quantity": qty,
-                     "day": leg["day"].isoformat(),
-                     "entry_time": leg["entry_time"].strftime("%Y-%m-%d %H:%M"),
-                     "exit_time": leg["exit_time"].strftime("%Y-%m-%d %H:%M"),
-                     "net_pnl": round(net, 2), "equity": round(equity, 2)})
-    net_total = sum(r["net_pnl"] for r in rows)
-    wins = sum(1 for r in rows if r["net_pnl"] > 0)
-    return {
-        "trades": len(rows), "winning_trades": wins,
-        "win_rate": round(wins / len(rows) * 100.0, 2),
-        "total_premium_points": round(sum(r["points"] for r in rows), 2),
-        "net_pnl": round(net_total, 2), "final_equity": round(equity, 2),
-        "return_pct": round(net_total / cfg.starting_capital * 100.0, 2),
-        "rows": rows[-500:],
-        "note": ("Premium in / premium out on the actual contract — no delta model. "
-                 "Coverage is limited to whatever option history the broker serves."),
-    }
