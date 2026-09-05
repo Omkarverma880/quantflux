@@ -342,7 +342,7 @@ export default function Wyckoff() {
 
   if (!cfg || !meta) return <div className="p-6 text-gray-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading Wyckoff desk…</div>;
 
-  const SymbolInput = ({ placeholder }) => (
+  const symbolInput = (placeholder) => (
     <div className="relative">
       <label className={lbl}>Stock</label>
       <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} placeholder={placeholder}
@@ -360,7 +360,7 @@ export default function Wyckoff() {
     </div>
   );
 
-  const TfPicker = () => (
+  const tfPicker = () => (
     <div>
       <label className={lbl}>Candle</label>
       <select value={cfg.timeframe} onChange={(e) => patch('timeframe', e.target.value)} className={sel}>
@@ -369,7 +369,7 @@ export default function Wyckoff() {
     </div>
   );
 
-  const RunButtons = ({ which }) => (
+  const runButtons = (which) => (
     <>
       <button onClick={() => run(which)} disabled={loading} className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold disabled:opacity-50">
         {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />} Read structure
@@ -412,9 +412,9 @@ export default function Wyckoff() {
       {tab === 'equity' && (
         <div className="space-y-4">
           <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 flex flex-wrap items-end gap-3">
-            <SymbolInput placeholder="e.g. RELIANCE" />
-            <TfPicker />
-            <RunButtons which="equity" />
+            {symbolInput('e.g. RELIANCE')}
+            {tfPicker()}
+            {runButtons('equity')}
             <span className="text-[11px] text-gray-600">Cash equity — the cleanest Wyckoff read, because real volume drives the effort/result law.</span>
           </div>
           {eq ? (
@@ -434,7 +434,7 @@ export default function Wyckoff() {
                 {(meta.indices || ['NIFTY']).map((i) => <option key={i} value={i}>{i}</option>)}
               </select>
             </div>
-            <TfPicker />
+            {tfPicker()}
             <div><label className={lbl}>Read</label>
               <select value={optMode} onChange={(e) => setOptMode(e.target.value)} className={sel}>
                 <option value="index">Index only</option>
@@ -454,7 +454,7 @@ export default function Wyckoff() {
                 </div>
               </>
             )}
-            <RunButtons which="options" />
+            {runButtons('options')}
           </div>
 
           {opt ? (
@@ -484,9 +484,9 @@ export default function Wyckoff() {
       {tab === 'fno' && (
         <div className="space-y-4">
           <div className="bg-surface-2 border border-surface-3 rounded-xl p-4 flex flex-wrap items-end gap-3">
-            <SymbolInput placeholder="e.g. TATASTEEL" />
-            <TfPicker />
-            <RunButtons which="fno" />
+            {symbolInput('e.g. TATASTEEL')}
+            {tfPicker()}
+            {runButtons('fno')}
             <span className="text-[11px] text-gray-600">Stock + front-month future: open interest turns effort-vs-result into something you can measure.</span>
           </div>
           {fno ? (

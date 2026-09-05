@@ -65,7 +65,7 @@ INDICATORS: list[dict] = [
     {"key": "fourth_candle", "name": "4th Candle setup", "group": "Strategies", "pane": "price",
      "note": "Marks the 4th candle's high/low when the first 3 are all one colour, and the breakout bar."},
     {"key": "hammer", "name": "Hammer at lookback low", "group": "Strategies", "pane": "price",
-     "note": "Marks daily hammers at a 3/6-month low and the level that triggers them."},
+     "note": "Marks hammers at a lookback low after N red candles, and the level each one arms. Tune the wick/body limits below."},
     {"key": "ema_fast", "name": "EMA (20)", "group": "Trend", "pane": "price", "note": "Fast EMA."},
     {"key": "ema_slow", "name": "EMA (200)", "group": "Trend", "pane": "price", "note": "Slow EMA — the trend filter."},
 ]
@@ -88,6 +88,9 @@ DEFAULT_CONFIG: dict = {
     "first_hour_days": 5,             # sessions behind the first-hour max/avg stats
     "hammer_lookback": 126,
     "hammer_red_before": 3,
+    "hammer_lower_wick": 2.0,         # min lower wick, % of the candle's low
+    "hammer_body_max": 2.0,           # max body %
+    "hammer_upper_wick": 1.0,         # max upper wick %
     "level_near_pct": 0.5,            # "approaching" when price is inside this %
     "index_name": "NIFTY",
     "colors": {},                     # per-indicator colour overrides {key: "#rrggbb"}
@@ -95,7 +98,7 @@ DEFAULT_CONFIG: dict = {
 
 _INT = {"refresh_secs", "bars", "history_days", "volume_ma", "ema_fast", "ema_slow",
         "first_hour_minutes", "first_hour_days", "hammer_lookback", "hammer_red_before"}
-_FLOAT = {"level_near_pct"}
+_FLOAT = {"level_near_pct", "hammer_lower_wick", "hammer_body_max", "hammer_upper_wick"}
 
 
 def sanitize(cfg: dict) -> dict:
@@ -127,6 +130,9 @@ def sanitize(cfg: dict) -> dict:
     out["first_hour_days"] = max(1, min(60, out["first_hour_days"]))
     out["hammer_lookback"] = max(2, min(750, out["hammer_lookback"]))
     out["hammer_red_before"] = max(0, min(10, out["hammer_red_before"]))
+    out["hammer_lower_wick"] = max(0.0, min(50.0, out["hammer_lower_wick"]))
+    out["hammer_body_max"] = max(0.01, min(50.0, out["hammer_body_max"]))
+    out["hammer_upper_wick"] = max(0.01, min(50.0, out["hammer_upper_wick"]))
     out["level_near_pct"] = max(0.05, min(10.0, out["level_near_pct"]))
     out["auto_refresh"] = bool(out["auto_refresh"])
     keys = [k for k in (out.get("indicators") or []) if k in INDICATOR_KEYS]

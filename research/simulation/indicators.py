@@ -320,14 +320,36 @@ def fourth_candle_marks(candles: list[dict]) -> dict:
 def hammer_marks(candles: list[dict], lookback: int, red_before: int,
                  lower_wick_min: float = 2.0, body_max: float = 2.0,
                  upper_wick_max: float = 1.0) -> dict:
-    """Bars that are a hammer at a lookback low after N red candles, with the
-    breakout level they arm. Meant for the daily timeframe."""
-    marks = []
-    trigger: list[Optional[float]] = [None] * len(candles)
+    """Bars that are a hammer at a lookback low after N red candles, plus the
+    breakout level each one arms.
+
+    Same rule as Equity Strategy 4 — every percentage measured against the
+    candle's LOW. The lookback minimum is carried in a monotonic deque, so the
+    scan is O(n): a two-year 5-minute chart costs no more than a daily one,
+    which is why this can run on any timeframe instead of daily alone.
+    """
+    from collections import deque
+
     n = len(candles)
-    for i in range(max(lookback, red_before), n):
+    marks: list[dict] = []
+    signals: list[dict] = []
+    trigger: list[Optional[float]] = [None] * n
+    if n == 0 or lookback < 1:
+        return {"marks": marks, "trigger": trigger, "signals": signals}
+
+    lows = [_f(c, "low") for c in candles]
+    dq: deque = deque()                        # indices, lows increasing
+    first = max(lookback - 1, red_before)
+    for i in range(n):
+        while dq and lows[dq[-1]] >= lows[i]:
+            dq.pop()
+        dq.append(i)
+        while dq[0] <= i - lookback:
+            dq.popleft()
+        if i < first:
+            continue
         c = candles[i]
-        o, h, l, cl = _f(c, "open"), _f(c, "high"), _f(c, "low"), _f(c, "close")
+        o, h, l, cl = _f(c, "open"), _f(c, "high"), lows[i], _f(c, "close")
         if l <= 0:
             continue
         lw = (min(o, cl) - l) / l * 100.0
@@ -335,16 +357,18 @@ def hammer_marks(candles: list[dict], lookback: int, red_before: int,
         body = abs(cl - o) / l * 100.0
         if not (lw >= lower_wick_min and body < body_max and uw < upper_wick_max):
             continue
-        window = candles[i - lookback + 1: i + 1]
-        if l > min(_f(x, "low") for x in window):
+        if l > lows[dq[0]]:                    # not the low of the lookback window
             continue
         if red_before and not all(_f(candles[i - k], "close") < _f(candles[i - k], "open")
                                   for k in range(1, red_before + 1)):
             continue
         marks.append({"idx": i, "type": "HAM", "label": "hammer", "price": round(l, 2)})
-        for j in range(i, min(n, i + 10)):
+        signals.append({"at": c["_dt"].strftime("%Y-%m-%d %H:%M"), "low": round(l, 2),
+                        "trigger": round(h, 2), "lower_wick_pct": round(lw, 2),
+                        "body_pct": round(body, 2), "upper_wick_pct": round(uw, 2)})
+        for j in range(i, min(n, i + 10)):     # carry the trigger a few bars forward
             trigger[j] = round(h, 2)
-    return {"marks": marks, "trigger": trigger}
+    return {"marks": marks, "trigger": trigger, "signals": signals}
 
 
 # ── saved levels ─────────────────────────────────────────────────────
@@ -442,8 +466,11 @@ def compute(candles: list[dict], keys: list[str], cfg: dict) -> dict:
     if "fourth_candle" in want and intraday:
         # a "first three candles of the session" setup only exists intraday
         out["fourth_candle"] = fourth_candle_marks(candles)
-    if "hammer" in want and not intraday:
-        # the hammer strategy is defined on daily candles
-        out["hammer"] = hammer_marks(candles, int(cfg["hammer_lookback"]),
-                                     int(cfg["hammer_red_before"]))
+    if "hammer" in want:
+        # runs on any timeframe — the scan is linear, and the pattern is worth
+        # seeing on a 15-minute chart as much as on a daily one
+        out["hammer"] = hammer_marks(
+            candles, int(cfg["hammer_lookback"]), int(cfg["hammer_red_before"]),
+            float(cfg.get("hammer_lower_wick", 2.0)), float(cfg.get("hammer_body_max", 2.0)),
+            float(cfg.get("hammer_upper_wick", 1.0)))
     return out

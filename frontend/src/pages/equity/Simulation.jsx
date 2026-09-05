@@ -24,7 +24,7 @@ const LEVEL_COLORS = ['#f59e0b', '#38bdf8', '#a78bfa', '#22c55e', '#ef4444', '#e
 // changing any of these needs fresh maths from the server
 const SERVER_PARAMS = ['timeframe', 'history_days', 'bars', 'volume_ma', 'ema_fast', 'ema_slow',
   'pivot_basis', 'first_hour_minutes', 'first_hour_days', 'hammer_lookback', 'hammer_red_before',
-  'level_near_pct'];
+  'hammer_lower_wick', 'hammer_body_max', 'hammer_upper_wick', 'level_near_pct'];
 
 const stateTone = (s) => ({
   TOUCHED: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 animate-pulse',
@@ -337,17 +337,23 @@ export default function Simulation() {
       <div className="flex gap-3 items-start">
         <div className="flex-1 min-w-0">
           <div className="bg-surface-2 border border-surface-3 rounded-xl p-2">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-2 py-1 text-xs">
-              <span className="text-brand-300 font-bold">{data?.instrument?.label || '—'}</span>
-              <span className="text-gray-500">{TF_LABEL[data?.timeframe] || ''}</span>
-              {data && <span className="text-gray-200 font-semibold">₹{fmtNum(data.ltp)}</span>}
-              {hover && (
-                <span className="text-gray-400">
-                  {hover.t} · O {fmtNum(hover.o)} H {fmtNum(hover.h)} L {fmtNum(hover.l)} C <strong className={hover.c >= hover.o ? 'text-emerald-400' : 'text-red-400'}>{fmtNum(hover.c)}</strong> · V {compact(hover.v)}
-                  {hover.oi ? ` · OI ${compact(hover.oi)}` : ''}
-                </span>
-              )}
-              {data && <span className="ml-auto text-gray-600">{data.bars_shown} bars · from {data.first_bar} · {data.history_days}d history · {data.generated_at}</span>}
+            {/* Fixed height + nowrap: the readout must never re-flow the page
+                when it appears, or the chart jumps under the cursor. */}
+            <div className="flex items-center gap-x-4 px-2 h-6 text-xs whitespace-nowrap overflow-hidden">
+              <span className="text-brand-300 font-bold shrink-0">{data?.instrument?.label || '—'}</span>
+              <span className="text-gray-500 shrink-0">{TF_LABEL[data?.timeframe] || ''}</span>
+              {data && <span className="text-gray-200 font-semibold shrink-0">₹{fmtNum(data.ltp)}</span>}
+              {(() => {
+                const b = hover || (data?.candles || [])[(data?.candles?.length || 0) - 1];
+                if (!b) return null;
+                return (
+                  <span className="text-gray-400 truncate">
+                    {b.t} · O {fmtNum(b.o)} H {fmtNum(b.h)} L {fmtNum(b.l)} C <strong className={b.c >= b.o ? 'text-emerald-400' : 'text-red-400'}>{fmtNum(b.c)}</strong> · V {compact(b.v)}
+                    {b.oi ? ` · OI ${compact(b.oi)}` : ''}
+                  </span>
+                );
+              })()}
+              {data && <span className="ml-auto text-gray-600 shrink-0 hidden xl:inline">{data.bars_shown} bars · from {data.first_bar} · {data.history_days}d · {data.generated_at}</span>}
             </div>
             <ChartCanvas
               ref={chartRef}
@@ -355,7 +361,7 @@ export default function Simulation() {
               levels={levels} colors={cfg.colors || {}} height={chartH} addMode={addMode} ltp={data?.ltp}
               onAddLevel={onChartAdd} onMoveLevel={moveLevel} onCrosshair={(c) => setHover(c)}
             />
-            <div className="flex flex-wrap gap-x-3 gap-y-1 px-2 pt-1 text-[10px]">
+            <div className="flex items-center gap-x-3 px-2 pt-1 h-5 text-[10px] overflow-hidden whitespace-nowrap">
               {(cfg.indicators || []).flatMap((k) => (LINE_GROUPS[k] || []).map((ln) => (
                 <span key={ln.k} className="flex items-center gap-1 text-gray-500"
                   title={(meta.indicators || []).find((x) => x.key === k)?.note}>
@@ -363,7 +369,7 @@ export default function Simulation() {
                   {ln.label}
                 </span>
               )))}
-              <span className="ml-auto text-gray-600">drag to pan · wheel to zoom · drag the price axis to squeeze · double-click to fit · drag a level to move it</span>
+              <span className="ml-auto text-gray-600 shrink-0 hidden lg:inline">drag to pan · wheel to zoom · drag the axis to squeeze · double-click to fit</span>
             </div>
           </div>
         </div>
@@ -382,13 +388,24 @@ export default function Simulation() {
                     {items.map((i) => {
                       const lines = LINE_GROUPS[i.key] || [];
                       const on = (cfg.indicators || []).includes(i.key);
+                      // OI only exists on derivatives — say so instead of
+                      // letting the tick do nothing on a cash chart.
+                      const noOi = i.key === 'oi' && data && !data.series?.oi;
                       return (
-                        <div key={i.key} className="px-3 py-1.5 hover:bg-surface-3/20">
+                        <div key={i.key} className={`px-3 py-1.5 hover:bg-surface-3/20 ${noOi ? 'opacity-50' : ''}`}>
                           <div className="flex items-start gap-2">
-                            <input type="checkbox" checked={on} onChange={() => toggleInd(i.key)} className="accent-brand-500 mt-0.5 cursor-pointer" />
-                            <label className="min-w-0 flex-1 cursor-pointer" title={i.note} onClick={() => toggleInd(i.key)}>
-                              <span className="text-xs text-gray-200 block">{i.name}</span>
-                              <span className="block text-[10px] text-gray-600 leading-snug">{i.note}</span>
+                            <input type="checkbox" checked={on && !noOi} disabled={noOi}
+                              onChange={() => toggleInd(i.key)}
+                              className="accent-brand-500 mt-0.5 cursor-pointer disabled:cursor-not-allowed" />
+                            <label className="min-w-0 flex-1 cursor-pointer" title={noOi ? 'This instrument carries no open interest' : i.note}
+                              onClick={() => !noOi && toggleInd(i.key)}>
+                              <span className="text-xs text-gray-200 block">
+                                {i.name}
+                                {noOi && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-surface-3 text-amber-400/90 border border-surface-4 align-middle">no OI on {data.instrument?.label}</span>}
+                              </span>
+                              <span className="block text-[10px] text-gray-600 leading-snug">
+                                {noOi ? 'Cash equity and index charts have no open interest — switch to the Equity F&O or NIFTY Options tab to see it.' : i.note}
+                              </span>
                             </label>
                           </div>
                           {on && lines.length > 0 && (
@@ -420,6 +437,10 @@ export default function Simulation() {
                   <div><label className={lbl}>Open window (min)</label><input type="number" value={cfg.first_hour_minutes} onChange={(e) => patch('first_hour_minutes', e.target.value)} className={`${sel} w-full py-1`} /></div>
                   <div><label className={lbl}>FH stats days</label><input type="number" value={cfg.first_hour_days} onChange={(e) => patch('first_hour_days', e.target.value)} className={`${sel} w-full py-1`} /></div>
                   <div><label className={lbl}>Hammer lookback</label><input type="number" value={cfg.hammer_lookback} onChange={(e) => patch('hammer_lookback', e.target.value)} className={`${sel} w-full py-1`} /></div>
+                  <div><label className={lbl}>Red before</label><input type="number" value={cfg.hammer_red_before} onChange={(e) => patch('hammer_red_before', e.target.value)} className={`${sel} w-full py-1`} /></div>
+                  <div title="Minimum lower wick, as a % of the candle's low"><label className={lbl}>Wick min %</label><input type="number" step="0.1" value={cfg.hammer_lower_wick} onChange={(e) => patch('hammer_lower_wick', e.target.value)} className={`${sel} w-full py-1`} /></div>
+                  <div title="Maximum body, as a % of the candle's low"><label className={lbl}>Body max %</label><input type="number" step="0.1" value={cfg.hammer_body_max} onChange={(e) => patch('hammer_body_max', e.target.value)} className={`${sel} w-full py-1`} /></div>
+                  <div title="Maximum upper wick, as a % of the candle's low"><label className={lbl}>Up wick max %</label><input type="number" step="0.1" value={cfg.hammer_upper_wick} onChange={(e) => patch('hammer_upper_wick', e.target.value)} className={`${sel} w-full py-1`} /></div>
                   <div><label className={lbl}>Near level %</label><input type="number" step="0.1" value={cfg.level_near_pct} onChange={(e) => patch('level_near_pct', e.target.value)} className={`${sel} w-full py-1`} /></div>
                 </div>
               </div>
@@ -494,6 +515,37 @@ export default function Simulation() {
               </div>
             )}
           </div>
+
+          {(cfg.indicators || []).includes('hammer') && data && (
+            <div className="bg-surface-2 border border-surface-3 rounded-xl p-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-gray-200">Hammer signals</span>
+                <span className="text-[10px] text-gray-500">{(data.series?.hammer?.signals || []).length} found · {cfg.hammer_lookback}-bar low</span>
+              </div>
+              {!(data.series?.hammer?.signals || []).length ? (
+                <div className="text-[11px] text-gray-500 leading-snug">
+                  Nothing qualifies in this range. The rule is strict — lower wick ≥ {cfg.hammer_lower_wick}%,
+                  body &lt; {cfg.hammer_body_max}%, upper wick &lt; {cfg.hammer_upper_wick}%, at the
+                  {' '}{cfg.hammer_lookback}-bar low after {cfg.hammer_red_before} red candles.
+                  Shorten the lookback or relax the wick/body limits in Indicators to widen it.
+                </div>
+              ) : (
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {(data.series.hammer.signals || []).slice(-12).reverse().map((h) => (
+                    <div key={h.at} className="text-[11px]">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400">{h.at}</span>
+                        <span className="text-amber-400 font-semibold ml-auto">buy &gt; {fmtNum(h.trigger)}</span>
+                      </div>
+                      <div className="text-[10px] text-gray-600">
+                        low {fmtNum(h.low)} · wick {h.lower_wick_pct}% · body {h.body_pct}% · up {h.upper_wick_pct}%
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {data?.series?.fourth_candle?.days?.length > 0 && (cfg.indicators || []).includes('fourth_candle') && (
             <div className="bg-surface-2 border border-surface-3 rounded-xl p-3">

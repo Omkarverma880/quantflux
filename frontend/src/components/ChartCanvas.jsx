@@ -122,9 +122,13 @@ const ChartCanvas = forwardRef(function ChartCanvas({
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return undefined;
-    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: height }));
+    const apply = () => setSize((s0) => {
+      const w = el.clientWidth;
+      return (s0.w === w && s0.h === height) ? s0 : { w, h: height };   // no-op resizes must not repaint
+    });
+    const ro = new ResizeObserver(apply);
     ro.observe(el);
-    setSize({ w: el.clientWidth, h: height });
+    apply();
     return () => ro.disconnect();
   }, [height]);
 
@@ -155,7 +159,10 @@ const ChartCanvas = forwardRef(function ChartCanvas({
     }
     const scan = (arr) => { if (!arr) return; for (let i = start; i < start + count; i += 1) { const v = arr[i]; if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } } };
     priceLines().forEach((l) => scan(dig(series, l.path)));
-    levels.forEach((l) => { if (l.price) { lo = Math.min(lo, Number(l.price)); hi = Math.max(hi, Number(l.price)); } });
+    // Deliberately NOT the saved levels: a line parked 10% away would squash
+    // every candle into a sliver at the top. Like TradingView, the scale fits
+    // the bars (and the indicators drawn on them); a far level simply sits
+    // off-screen until you scroll or zoom out to it.
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
     const pad = (hi - lo) * 0.06 || 1;
     lo -= pad; hi += pad;
@@ -474,14 +481,16 @@ const ChartCanvas = forwardRef(function ChartCanvas({
     setCross({ i, y: py });
     if (lastBar.current !== i) { lastBar.current = i; onCrosshair?.(candles[i], i); }
 
-    if (axis.current) {
-      const dy = e.clientY - axis.current.y;
-      setYz((z) => ({ ...z, mult: Math.max(0.15, Math.min(8, axis.current.mult * (1 + dy / 260))) }));
+    const ax = axis.current;                  // snapshot: mouseup can clear it
+    if (ax) {
+      const dy = e.clientY - ax.y;
+      setYz((z) => ({ ...z, mult: Math.max(0.15, Math.min(8, ax.mult * (1 + dy / 260))) }));
       return;
     }
-    if (grab.current) {
+    const gr = grab.current;
+    if (gr) {
       const p = priceAt(py);
-      if (p != null) setDrift({ id: grab.current.id, price: Math.round(p * 100) / 100 });
+      if (p != null) setDrift({ id: gr.id, price: Math.round(p * 100) / 100 });
       return;
     }
     const d = pan.current;
@@ -494,7 +503,10 @@ const ChartCanvas = forwardRef(function ChartCanvas({
         pinned.current = start + v.count >= n;
         return { ...v, start };
       });
-      if (e.shiftKey) setYz((z) => ({ ...z, shift: d.shift - ((e.clientY - d.y) / priceH) }));
+      // Vertical drag moves the price scale too — no modifier key, the way a
+      // chart should feel. Double-click (or Fit) snaps back to auto.
+      const dy = e.clientY - d.y;
+      if (Math.abs(dy) > 1) setYz((z) => ({ ...z, shift: d.shift - (dy / priceH) }));
     }
   };
   const finish = () => {
