@@ -6,9 +6,10 @@ import React, {
  * A dependency-free candlestick chart on <canvas>.
  *
  * Pan by dragging, zoom the time axis with the wheel, zoom the price axis by
- * dragging it (or wheeling over it), double-click to auto-fit. Levels and text
- * notes are draggable; the crosshair lives on its own layer so hovering never
- * repaints the candles. Nothing here fetches or mutates.
+ * dragging it (or wheeling over it), double-click to auto-fit. Saved levels are
+ * drawn but never draggable — a pan must not nudge a line the cursor crosses;
+ * prices are edited by typing. The crosshair lives on its own layer so hovering
+ * never repaints the candles. Nothing here fetches or mutates.
  */
 
 // ── the line registry ────────────────────────────────────────────────
@@ -82,7 +83,7 @@ const dig = (obj, path) => path.reduce((a, k) => (a == null ? a : a[k]), obj);
 
 const ChartCanvas = forwardRef(function ChartCanvas({
   candles = [], series = {}, enabled = [], levels = [], colors = {}, height = 620,
-  addMode = null, onAddLevel, onMoveLevel, onCrosshair, ltp,
+  addMode = null, onAddLevel, onCrosshair, ltp,
 }, ref) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -91,10 +92,8 @@ const ChartCanvas = forwardRef(function ChartCanvas({
   const [view, setView] = useState({ start: 0, count: 180 });
   const [yz, setYz] = useState({ mult: 1, shift: 0 });
   const [cross, setCross] = useState(null);
-  const [drift, setDrift] = useState(null);
   const pan = useRef(null);
   const axis = useRef(null);
-  const grab = useRef(null);
   const pinned = useRef(true);
   const lastBar = useRef(-1);
   const n = candles.length;
@@ -109,7 +108,13 @@ const ChartCanvas = forwardRef(function ChartCanvas({
   useImperativeHandle(ref, () => ({
     fit: () => { setYz({ mult: 1, shift: 0 }); setView((v) => ({ count: v.count, start: Math.max(0, n - v.count) })); pinned.current = true; },
     goLive: () => { setView((v) => ({ count: v.count, start: Math.max(0, n - v.count) })); pinned.current = true; },
-  }), [n]);
+    // where the crosshair is sitting right now — lets Alt+H drop a line at the
+    // cursor with no second click
+    crosshairPrice: () => (cross ? priceAt(cross.y) : null),
+    crosshairBar: () => (cross ? candles[cross.i]?.t : null),
+    lastPrice: () => (n ? candles[n - 1].c : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [n, candles, cross, view, yz, size]);
 
   useEffect(() => {
     setView((v) => {
@@ -263,7 +268,7 @@ const ChartCanvas = forwardRef(function ChartCanvas({
 
     // saved levels + notes
     levels.forEach((l) => {
-      const price = drift && drift.id === l.id ? drift.price : Number(l.price);
+      const price = Number(l.price);
       if (!price) return;
       const yy = y(price);
       if (yy < padT - 20 || yy > padT + priceH + 20) return;
@@ -287,12 +292,13 @@ const ChartCanvas = forwardRef(function ChartCanvas({
         g.restore();
         return;
       }
+      // Your own levels draw solid and heavy — they are the reference you came
+      // to the chart for. A touched/near level gets a touch more weight still.
       const hot = l.state === 'TOUCHED' || l.state === 'NEAR';
       g.save();
-      g.strokeStyle = color; g.lineWidth = (drift && drift.id === l.id) ? 2.4 : hot ? 1.8 : 1.2;
-      g.setLineDash(hot || (drift && drift.id === l.id) ? [] : [7, 4]);
-      g.beginPath(); g.moveTo(padL, yy); g.lineTo(padL + plotW, yy); g.stroke();
+      g.strokeStyle = color; g.lineWidth = hot ? 2.6 : 2;
       g.setLineDash([]);
+      g.beginPath(); g.moveTo(padL, yy); g.lineTo(padL + plotW, yy); g.stroke();
       const text = `${l.label || 'level'} ${fmtNum(price)}`;
       g.font = 'bold 9px ui-sans-serif, system-ui'; g.textAlign = 'left'; g.textBaseline = 'middle';
       const w = g.measureText(text).width + 10;
@@ -388,7 +394,7 @@ const ChartCanvas = forwardRef(function ChartCanvas({
     if (panes.cv) linePane('Cumulative volume', series.cum_volume, colors.cum_volume || '#38bdf8');
     if (panes.oi) linePane('Open interest', series.oi, colors.oi || '#c084fc');
   }, [candles, series, enabled, levels, colors, view, size, ltp, geom, has, range,
-      panes.volume, panes.cv, panes.oi, n, drift, priceLines]);
+      panes.volume, panes.cv, panes.oi, n, priceLines]);
 
   // ── crosshair layer ──
   useEffect(() => {
@@ -439,13 +445,6 @@ const ChartCanvas = forwardRef(function ChartCanvas({
     const { padT, priceH } = geom();
     return r.hi - ((py - padT) / priceH) * (r.hi - r.lo);
   };
-  const levelAt = (py) => {
-    const r = range();
-    if (!r) return null;
-    const { padT, priceH } = geom();
-    const yOf = (p) => padT + ((r.hi - p) / (r.hi - r.lo)) * priceH;
-    return levels.find((l) => l.price && Math.abs(yOf(Number(l.price)) - py) <= 5) || null;
-  };
   const onAxis = (px) => {
     const { padL, plotW } = geom();
     return px > padL + plotW;
@@ -469,10 +468,10 @@ const ChartCanvas = forwardRef(function ChartCanvas({
     });
   };
   const onDown = (e) => {
-    const { x: px, y: py } = rel(e);
+    const { x: px } = rel(e);
     if (onAxis(px)) { axis.current = { y: e.clientY, mult: yz.mult }; return; }
-    const lv = levelAt(py);
-    if (lv) { grab.current = { id: lv.id }; setDrift({ id: lv.id, price: Number(lv.price) }); return; }
+    // Saved lines are never draggable: panning must not nudge a level just
+    // because the cursor happened to cross it. Prices are edited by typing.
     pan.current = { x: e.clientX, y: e.clientY, start: view.start, shift: yz.shift };
   };
   const onMove = (e) => {
@@ -485,12 +484,6 @@ const ChartCanvas = forwardRef(function ChartCanvas({
     if (ax) {
       const dy = e.clientY - ax.y;
       setYz((z) => ({ ...z, mult: Math.max(0.15, Math.min(8, ax.mult * (1 + dy / 260))) }));
-      return;
-    }
-    const gr = grab.current;
-    if (gr) {
-      const p = priceAt(py);
-      if (p != null) setDrift({ id: gr.id, price: Math.round(p * 100) / 100 });
       return;
     }
     const d = pan.current;
@@ -511,14 +504,7 @@ const ChartCanvas = forwardRef(function ChartCanvas({
       if (Math.abs(dy) > 1) setYz((z) => ({ ...z, shift: d.shift + (dy / priceH) }));
     }
   };
-  const finish = () => {
-    if (grab.current && drift) {
-      const { id } = grab.current; const { price } = drift;
-      grab.current = null; setDrift(null);
-      onMoveLevel?.(id, price);
-    }
-    grab.current = null; pan.current = null; axis.current = null;
-  };
+  const finish = () => { pan.current = null; axis.current = null; };
   const onLeave = () => { setCross(null); onCrosshair?.(null); finish(); };
   const onClick = (e) => {
     if (!addMode) return;

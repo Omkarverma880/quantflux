@@ -60,6 +60,9 @@ export default function Simulation() {
   const timerRef = useRef(null);
   const paramTimer = useRef(null);
   const chartRef = useRef(null);
+  const instKeyRef = useRef(null);
+  const levelsRef = useRef([]);
+  const colorRef = useRef(LEVEL_COLORS[0]);
 
   const showErr = (m) => { setErr(m); setTimeout(() => setErr(''), 7000); };
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 2500); };
@@ -147,14 +150,15 @@ export default function Simulation() {
   useEffect(() => {
     const onKey = (e) => {
       if (e.target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
-      if (e.altKey && e.key.toLowerCase() === 'h') { e.preventDefault(); setAddMode('line'); }
-      else if (e.altKey && e.key.toLowerCase() === 't') { e.preventDefault(); setAddMode('text'); }
+      if (e.altKey && e.key.toLowerCase() === 'h') { e.preventDefault(); quickAdd('line'); }
+      else if (e.altKey && e.key.toLowerCase() === 't') { e.preventDefault(); quickAdd('text'); }
       else if (e.altKey && e.key.toLowerCase() === 'f') { e.preventDefault(); chartRef.current?.fit(); }
       else if (e.key === 'Escape') { setAddMode(null); setPendingText(null); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instKey, data, newLevel.color]);
 
   const toggleInd = (key) => {
     const cur = new Set(cfg.indicators || []);
@@ -177,6 +181,25 @@ export default function Simulation() {
     if (mode === 'text') setPendingText({ price, anchor, label: '', color: newLevel.color });
     else saveLevel({ price, label: newLevel.label || `L${(data?.levels?.length || 0) + 1}`, color: newLevel.color, type: 'line' });
   };
+  // Alt+H / Alt+T drop straight onto the chart at the crosshair — no second
+  // click. With the cursor off the chart we fall back to arming click-to-place.
+  const quickAdd = (mode) => {
+    if (!instKeyRef.current) { showErr('Load a chart first'); return; }
+    const price = chartRef.current?.crosshairPrice();
+    if (price == null) { setAddMode(mode); flash('Now click the chart to place it'); return; }
+    const at = Math.round(price * 100) / 100;
+    const anchor = chartRef.current?.crosshairBar();
+    if (mode === 'text') setPendingText({ price: at, anchor, label: '', color: colorRef.current });
+    else saveLevel({ price: at, label: `L${(levelsRef.current.length || 0) + 1}`, color: colorRef.current, type: 'line' });
+  };
+
+  const setLevelColor = async (id, color) => {
+    try {
+      const r = await api.simUpdateLevel(id, { color });
+      if (r.status === 'ok') load(true); else showErr(r.message);
+    } catch (e) { showErr(e.message); }
+  };
+
   const moveLevel = async (id, price) => {
     try {
       const r = await api.simUpdateLevel(id, { price });
@@ -196,6 +219,9 @@ export default function Simulation() {
 
   const groups = (meta.indicators || []).reduce((a, i) => { (a[i.group] = a[i.group] || []).push(i); return a; }, {});
   const levels = data?.levels || [];
+  instKeyRef.current = instKey;
+  levelsRef.current = levels;
+  colorRef.current = newLevel.color;
   const hot = levels.filter((l) => l.type !== 'text' && (l.state === 'TOUCHED' || l.state === 'NEAR'));
   const chartH = full ? Math.max(480, window.innerHeight - 190) : 640;
   const strikes = chain?.strikes?.[expiry] || [];
@@ -214,7 +240,7 @@ export default function Simulation() {
             <p className="text-sm text-gray-500 mt-0.5">One symbol, full history, every indicator on a switch — and your own levels saved against the instrument, with what price did around them.</p>
           </div>
           <div className="flex items-center gap-3 text-[11px] text-gray-600">
-            <span className="flex items-center gap-1"><Keyboard className="w-3.5 h-3.5" /> Alt+H line · Alt+T note · Alt+F fit · Esc cancel</span>
+            <span className="flex items-center gap-1"><Keyboard className="w-3.5 h-3.5" /> Alt+H line at cursor · Alt+T note · Alt+F fit · Esc cancel</span>
           </div>
         </div>
       )}
@@ -332,7 +358,7 @@ export default function Simulation() {
           {REFRESH_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
         <div className="ml-auto flex items-center gap-2">
-          <button onClick={() => setAddMode(addMode === 'line' ? null : 'line')} title="Alt+H — then click the chart"
+          <button onClick={() => setAddMode(addMode === 'line' ? null : 'line')} title="Click the chart to place a line — or just press Alt+H with the cursor where you want it"
             className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border ${addMode === 'line' ? 'bg-brand-600 text-white border-brand-500' : 'bg-surface-3 text-gray-300 border-surface-4 hover:text-white'}`}>
             <Crosshair className="w-3.5 h-3.5" /> {addMode === 'line' ? 'Click chart…' : 'Line'}
           </button>
@@ -384,7 +410,7 @@ export default function Simulation() {
               ref={chartRef}
               candles={data?.candles || []} series={data?.series || {}} enabled={cfg.indicators || []}
               levels={levels} colors={cfg.colors || {}} height={chartH} addMode={addMode} ltp={data?.ltp}
-              onAddLevel={onChartAdd} onMoveLevel={moveLevel} onCrosshair={(c) => setHover(c)}
+              onAddLevel={onChartAdd} onCrosshair={(c) => setHover(c)}
             />
             <div className="flex items-center gap-x-3 px-2 pt-1 h-5 text-[10px] overflow-hidden whitespace-nowrap">
               {(cfg.indicators || []).flatMap((k) => (LINE_GROUPS[k] || []).map((ln) => (
@@ -501,7 +527,7 @@ export default function Simulation() {
                       <button key={c} onClick={() => setNewLevel((s) => ({ ...s, color: c }))}
                         className={`w-5 h-5 rounded ${newLevel.color === c ? 'ring-2 ring-white/70' : ''}`} style={{ background: c }} />
                     ))}
-                    <span className="text-[10px] text-gray-600 ml-auto">Alt+H then click the chart</span>
+                    <span className="text-[10px] text-gray-600 ml-auto">Alt+H drops a line at the cursor</span>
                   </div>
                 </div>
                 {!levels.length ? (
@@ -511,7 +537,9 @@ export default function Simulation() {
                     {levels.map((l) => (
                       <div key={l.id} className="px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: l.color }} />
+                          <input type="color" value={l.color || '#f59e0b'} title="Change this level's colour"
+                            onChange={(e) => setLevelColor(l.id, e.target.value)}
+                            className="w-4 h-4 rounded cursor-pointer bg-transparent border-0 p-0 shrink-0" />
                           <input
                             value={editing[l.id] ?? fmtNum(l.price)}
                             onChange={(e) => setEditing((s) => ({ ...s, [l.id]: e.target.value }))}
@@ -543,7 +571,7 @@ export default function Simulation() {
                   </div>
                 )}
                 <div className="px-3 py-2 border-t border-surface-3 text-[10px] text-gray-600 flex items-center gap-1.5">
-                  <Move className="w-3 h-3" /> Drag a line on the chart to move it, or type a new price here.
+                  <Move className="w-3 h-3" /> Alt+H drops a line at the cursor. Edit the price or colour here — lines never move by dragging, so panning is always safe.
                 </div>
               </div>
             )}
