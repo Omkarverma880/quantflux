@@ -961,3 +961,49 @@ class VWAPOptionsBacktestRun(Base):
     skipped = Column(JSONB)
 
     __table_args__ = (Index("idx_vwapopt_bt_user", "user_id", "created_at"),)
+
+
+class IndexStraddlePosition(Base):
+    """Paper/live leg for the Index Straddle Engine.
+
+    One row per LEG (a straddle writes two: CE and PE), linked by ``group_id`` so
+    the pair can be closed and reported together. ``direction`` records whether
+    the structure was sold or bought. Real orders only when paper_trade is off
+    AND the global trading gate is on. Auto-created via ``create_all``.
+    """
+    __tablename__ = "index_straddle_positions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    trade_date = Column(Date, nullable=False)
+    group_id = Column(String(40), index=True)       # ties the two legs together
+    # ── the structure ──
+    direction = Column(String(6), default="short")  # short | long
+    structure = Column(String(10), default="straddle")
+    dte = Column(Integer)
+    # ── the traded contract ──
+    tradingsymbol = Column(String(60))
+    exchange = Column(String(8), default="NFO")
+    token = Column(Integer)
+    opt_type = Column(String(4))                    # CE | PE
+    strike = Column(Numeric(12, 2))
+    expiry = Column(Date)
+    action = Column(String(5))                      # BUY | SELL on the contract
+    lots = Column(Integer, default=1)
+    qty = Column(Integer)
+    # ── prices ──
+    entry_price = Column(Numeric(12, 2))            # premium per unit
+    entry_time = Column(String(12))
+    spot_entry = Column(Numeric(12, 2))
+    exit_price = Column(Numeric(12, 2))
+    exit_time = Column(String(12))
+    spot_exit = Column(Numeric(12, 2))
+    exit_reason = Column(String(16))                # SL | TARGET | EOD | MANUAL
+    ltp = Column(Numeric(12, 2))
+    # ── result ──
+    mtm = Column(Numeric(14, 2))                    # rupees, this leg
+    combined_entry = Column(Numeric(12, 2))         # both legs at entry
+    combined_ltp = Column(Numeric(12, 2))
+    status = Column(String(10), default="OPEN")     # OPEN | CLOSED
+    paper = Column(Boolean, default=True)

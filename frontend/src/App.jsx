@@ -48,6 +48,7 @@ import EquityWorkspace from './pages/equity/EquityWorkspace';
 import Wyckoff from './pages/equity/Wyckoff';
 import Simulation from './pages/equity/Simulation';
 import NiftyOpenReversion from './pages/index/NiftyOpenReversion';
+import IndexStraddle from './pages/index/IndexStraddle';
 import EquityPMVwapHolding from './pages/equity/PMVwapHolding';
 
 export default function App() {
@@ -95,6 +96,7 @@ export default function App() {
           <Route path="research/market-hub" element={<MarketHub />} />
           <Route path="index-strategy/vwap-options" element={<VwapOptions />} />
           <Route path="index-strategy/open-reversion" element={<NiftyOpenReversion />} />
+          <Route path="index-strategy/straddle" element={<IndexStraddle />} />
           <Route path="equity-strategy/pmvwap-holding" element={<EquityPMVwapHolding />} />
           <Route path="equity-strategy/fourth-candle" element={<FourthCandle />} />
           <Route path="equity-strategy/fourth-candle-cash" element={<FourthCandleEquity />} />

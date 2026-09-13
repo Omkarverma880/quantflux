@@ -658,6 +658,21 @@ export const api = {
   norPositions: (date) => request(`/nifty-open-reversion/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
   norConfigSave: (partial) => request('/nifty-open-reversion/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
 
+  // ── Index Straddle Engine ──
+  isMeta: () => request('/index-strategy/straddle/meta'),
+  isBacktest: (config, write = true) => request('/index-strategy/straddle/backtest', { method: 'POST', body: JSON.stringify({ config: config || {}, write }) }),
+  isLast: () => request('/index-strategy/straddle/last'),
+  isUpload: (file) => { const fd = new FormData(); fd.append('file', file); return requestUpload('/index-strategy/straddle/upload', fd); },
+  isFile: (name) => requestBlob(`/index-strategy/straddle/file/${encodeURIComponent(name)}`),
+  isPreview: (config) => request('/index-strategy/straddle/preview', { method: 'POST', body: JSON.stringify({ config: config || {} }) }),
+  isStatus: () => request('/index-strategy/straddle/status'),
+  isStart: (config) => request('/index-strategy/straddle/start', { method: 'POST', body: JSON.stringify({ config: config || {} }) }),
+  isStop: () => request('/index-strategy/straddle/stop', { method: 'POST' }),
+  isCheck: () => request('/index-strategy/straddle/check', { method: 'POST' }),
+  isSquareOff: () => request('/index-strategy/straddle/squareoff', { method: 'POST' }),
+  isPositions: (date) => request(`/index-strategy/straddle/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+  isConfigSave: (partial) => request('/index-strategy/straddle/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+
   // Universal Telegram notifications (shared across the app)
   getTelegramSettings: (bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`),
   saveTelegramSettings: (cfg, bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`, { method: 'POST', body: JSON.stringify(cfg || {}) }),

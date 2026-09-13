@@ -45,6 +45,7 @@ from app.routes.wyckoff_routes import router as wyckoff_router
 from app.routes.simulation_routes import router as simulation_router
 from app.routes.nifty_open_reversion_routes import router as nifty_open_reversion_router
 from app.routes.vwap_options_routes import router as vwap_options_router
+from app.routes.index_straddle_routes import router as index_straddle_router
 from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
@@ -455,6 +456,7 @@ app.include_router(wyckoff_router, prefix="/api/wyckoff", tags=["Wyckoff"])
 app.include_router(simulation_router, prefix="/api/simulation", tags=["ChartSimulation"])
 app.include_router(nifty_open_reversion_router, prefix="/api/nifty-open-reversion", tags=["NiftyOpenReversion"])
 app.include_router(vwap_options_router, prefix="/api/index-strategy/vwap-options", tags=["Index-VWAPOptions"])
+app.include_router(index_straddle_router, prefix="/api/index-strategy/straddle", tags=["Index-StraddleEngine"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
