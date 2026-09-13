@@ -131,7 +131,24 @@ def monthly_expiry(day: date) -> date:
 
 
 def expiry_for(cfg: Config, day: date) -> date:
+    """Calendar rule — used by the backtest, where no instrument dump exists."""
     return monthly_expiry(day) if cfg.expiry_type == "monthly" else weekly_expiry(day)
+
+
+def live_expiry(universe, cfg: Config, day: date) -> date:
+    """The REAL listed expiry from the broker dump, falling back to the rule.
+
+    Live trading must use what is actually listed: NSE moves expiry days, and a
+    holiday shifts one without warning. The calendar rule is only a fallback.
+    """
+    try:
+        if universe is not None:
+            e = universe.expiry_for(cfg.index, cfg.expiry_type, day)
+            if e:
+                return e
+    except Exception as exc:
+        logger.debug("live expiry lookup failed: %s", exc)
+    return expiry_for(cfg, day)
 
 
 class ContractResolver:
@@ -148,6 +165,7 @@ class ContractResolver:
         self._cache: dict = {}
 
     def resolve(self, strike: float, opt_type: str, expiry: date) -> Optional[dict]:
+        """One contract from the cached NFO dump, via Universe.resolve."""
         if self.universe is None:
             return None
         key = (float(strike), opt_type, expiry)
@@ -155,24 +173,14 @@ class ContractResolver:
             return self._cache[key]
         out = None
         try:
-            for name in ("option_contract", "get_option", "find_option", "resolve_option"):
-                fn = getattr(self.universe, name, None)
-                if callable(fn):
-                    out = fn(self.index, expiry, float(strike), opt_type)
-                    if out:
-                        break
-            if out is None:
-                fn = getattr(self.universe, "instruments", None)
-                if callable(fn):
-                    for row in fn("NFO") or []:
-                        if (row.get("name") == self.index
-                                and float(row.get("strike") or 0) == float(strike)
-                                and row.get("instrument_type") == opt_type
-                                and _as_date(row.get("expiry")) == expiry):
-                            out = {"tradingsymbol": row.get("tradingsymbol"),
-                                   "instrument_token": row.get("instrument_token"),
-                                   "exchange": "NFO", "lot_size": row.get("lot_size")}
-                            break
+            rec = self.universe.resolve(self.index, expiry, float(strike), opt_type)
+            if rec:
+                out = {"tradingsymbol": rec.get("tradingsymbol"),
+                       "instrument_token": rec.get("token"),
+                       "exchange": "NFO",
+                       "lot_size": rec.get("lot_size"),
+                       "strike": rec.get("strike"),
+                       "expiry": rec.get("expiry")}
         except Exception as exc:
             logger.debug("contract resolve failed (%s %s %s): %s",
                          strike, opt_type, expiry, exc)

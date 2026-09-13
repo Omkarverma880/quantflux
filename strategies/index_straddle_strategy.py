@@ -218,8 +218,12 @@ class IndexStraddleStrategy:
         spot = self._index_ltp()
         if not spot:
             return
-        legs = O.legs_for(self.cfg, spot)
-        exp = O.expiry_for(self.cfg, now.date())
+        ctx = self._day_ctx or {}
+        de_now = M.effective_dte(E.calendar_dte(now.date()),
+                                 now.hour * 60 + now.minute)
+        legs = O.legs_for(self.cfg, spot, de_now,
+                          float(ctx.get("iv_regime") or 0.12))
+        exp = O.live_expiry(self.universe, self.cfg, now.date())
         ce = self.resolver.resolve(legs["call_strike"], "CE", exp)
         pe = self.resolver.resolve(legs["put_strike"], "PE", exp)
         if not ce or not pe:
@@ -407,18 +411,28 @@ class IndexStraddleStrategy:
         return self._ltp(f"NSE:{INDEX_SPOT}")
 
     def _resolve_index(self) -> Optional[int]:
+        """NIFTY 50 spot token from the NSE instrument dump.
+
+        Same lookup the other index strategies use — the index is a cash-segment
+        instrument, so it is never in the NFO dump the Universe caches.
+        """
         if self._index_token:
             return self._index_token
         try:
-            for fn in ("index_token", "resolve_index", "token_for"):
-                f = getattr(self.universe, fn, None)
-                if callable(f):
-                    tok = f(INDEX_SPOT) if fn != "token_for" else f("NSE", INDEX_SPOT)
-                    if tok:
-                        self._index_token = int(tok)
-                        return self._index_token
+            for inst in self.broker.get_instruments("NSE") or []:
+                if (inst.get("tradingsymbol") == INDEX_SPOT
+                        or inst.get("name") == INDEX_SPOT):
+                    self._index_token = int(inst["instrument_token"])
+                    break
         except Exception as exc:
-            logger.debug("index_straddle index resolve failed: %s", exc)
+            logger.debug("index_straddle index token failed: %s", exc)
+        if not self._index_token:
+            try:
+                tok = self.universe.nse_token(INDEX_SPOT)
+                if tok:
+                    self._index_token = int(tok)
+            except Exception as exc:
+                logger.debug("index_straddle nse_token fallback failed: %s", exc)
         return self._index_token
 
     def _notify(self, text: str):
