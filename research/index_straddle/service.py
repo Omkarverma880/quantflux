@@ -33,6 +33,14 @@ MIN_BARS_PER_SESSION = 300
 WARMUP_CALENDAR_DAYS = 60
 MIN_WARMUP_SESSIONS = 6
 
+# A broker pull fetches 1-minute bars in 60-day chunks, and the shared loader
+# swallows a failed chunk with nothing but a log line. That is how a run quietly
+# ends up with half the history it asked for, so we measure what actually arrived
+# against what the calendar says should be there.
+BROKER_DEFAULT_START = date(2022, 1, 1)
+NSE_HOLIDAYS_PER_YEAR = 14          # typical; only used to size the expectation
+SESSION_COVERAGE_WARN = 0.90
+
 
 def load_data(cfg: Config, broker=None, token: Optional[int] = None) -> tuple[pd.DataFrame, str]:
     """Uploaded CSV first, broker pull otherwise. One shape either way.
@@ -90,6 +98,45 @@ def coverage(df: pd.DataFrame, cfg: Config) -> dict:
         "dte_window": f"{cfg.dte_min}–{cfg.dte_max}",
         "first_day": str(days[0]), "last_day": str(days[-1]),
     }
+
+
+def data_coverage_warning(df: pd.DataFrame, cfg: Config, source: str) -> str:
+    """Did we actually receive the history we asked for?
+
+    Compares the sessions present against the number of weekdays the span should
+    contain. A short or gappy pull is the most likely reason a run returns fewer
+    trades than expected, and it is otherwise invisible.
+    """
+    if df.empty:
+        return ""
+    days = sorted({d for d in df.index.date})
+    first, last = days[0], days[-1]
+    span_days = (last - first).days + 1
+    if span_days < 30:
+        return ""
+    weekdays = sum(1 for i in range(span_days)
+                   if (first + pd.Timedelta(days=i)).weekday() < 5)
+    expected = weekdays - int(NSE_HOLIDAYS_PER_YEAR * span_days / 365.0)
+    got = len(days)
+    msgs = []
+    if expected > 0 and got < expected * SESSION_COVERAGE_WARN:
+        msgs.append(
+            f"Only {got} trading sessions arrived for {first} to {last}, where roughly "
+            f"{expected} were expected — about {100 * got / expected:.0f}% coverage. "
+            "Some history is missing.")
+    # a broker pull that never reached the requested start
+    if source.startswith("broker") and not cfg.start_date:
+        late = (first - BROKER_DEFAULT_START).days
+        if late > 45:
+            msgs.append(
+                f"The pull was requested from {BROKER_DEFAULT_START} but the earliest bar "
+                f"received is {first} — Zerodha served {late} days less than asked. "
+                "Historical minute data is a paid Kite add-on and is capped by "
+                "subscription; upload a CSV for the full history.")
+    if msgs:
+        msgs.append("Chunked broker pulls skip a failed request with only a log warning, "
+                    "so check the server log for 'history chunk failed'.")
+    return " ".join(msgs)
 
 
 def run(cfg: Config, *, df: Optional[pd.DataFrame] = None, broker=None,
@@ -160,6 +207,7 @@ def run(cfg: Config, *, df: Optional[pd.DataFrame] = None, broker=None,
     if cfg.premium_source == "broker" and contract_example is not None:
         contract_example = dict(contract_example) or None
 
+    data_warning = data_coverage_warning(df, cfg, source)
     summ = MET.summary(trades, cfg, sessions=len(set(df.index.date)))
     out = {
         "status": "ok",
@@ -177,6 +225,8 @@ def run(cfg: Config, *, df: Optional[pd.DataFrame] = None, broker=None,
         "first_day": str(min(df.index.date)), "last_day": str(max(df.index.date)),
         "rows_dropped": rows_dropped, "duplicates_removed": dupes,
         "partial_sessions_dropped": partial_dropped,
+        "data_warning": data_warning,
+        "sessions_loaded": len(set(df.index.date)),
         "warmup_sessions": warmup_sessions,
         "warmup_note": warmup_note,
         "window_start": str(win_start) if win_start else "",

@@ -387,6 +387,13 @@ export default function IndexStraddle() {
       {/* ── backtest results ── */}
       {tab === 'backtest' && res?.status === 'ok' && s && (
         <div className="space-y-4">
+          {res.data_warning && (
+            <div className="rounded-lg bg-amber-500/10 border border-amber-500/25 px-3 py-2 text-[12.5px] text-amber-200 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span><strong>Incomplete history.</strong> {res.data_warning}</span>
+            </div>
+          )}
+
           {res.warmup_note && (
             <div className="rounded-lg bg-amber-500/10 border border-amber-500/25 px-3 py-2 text-[12.5px] text-amber-200 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -398,6 +405,8 @@ export default function IndexStraddle() {
             <span className="text-gray-500">Data used: </span>
             <span className="mono text-gray-200">{res.source}</span>
             <span className="text-gray-600"> · </span>
+            <span className="mono text-gray-200">{res.sessions_loaded}</span>
+            <span className="text-gray-500"> sessions · </span>
             <span className="text-gray-500">premiums from </span>
             <span className="mono text-gray-200">{res.premium_source === 'model' ? 'calibrated model (computed from index bars)' : 'real Zerodha option candles'}</span>
             {res.window_start && (
