@@ -227,7 +227,9 @@ def backtest(payload: BacktestReq | None = None, user_id: int = Depends(login_re
         "equity_curve": res["equity_curve"],
         "contract_example": res.get("contract_example"),
         "files": {k: Path(v).name for k, v in (res.get("files") or {}).items()},
-        "parity": S.parity(res["summary"]),
+        "funnel": res.get("funnel"),
+        "parity": S.parity(res["summary"], res["first_day"], res["last_day"],
+                           res.get("sessions_loaded", 0)),
     }
     _last_run[user_id] = slim
     return slim

@@ -60,16 +60,24 @@ function EquityChart({ curve }) {
 
 function ParityBlock({ parity }) {
   if (!parity) return null;
-  const ok = parity.matches;
+  const v = parity.verdict || (parity.matches ? 'match' : 'drift');
+  const skin = v === 'match' ? 'bg-green-500/5 border-green-500/25'
+    : v === 'different_window' ? 'bg-blue-500/5 border-blue-500/25'
+    : 'bg-amber-500/5 border-amber-500/30';
+  const Icon = v === 'match' ? CheckCircle2 : v === 'different_window' ? Info : AlertTriangle;
+  const iconTone = v === 'match' ? 'text-green-400'
+    : v === 'different_window' ? 'text-blue-400' : 'text-amber-400';
+  const title = v === 'match' ? 'Parity OK — this run reproduces the research'
+    : v === 'different_window' ? 'Different data window — totals are not comparable'
+    : 'Parity drift — investigate before trusting these numbers';
   return (
-    <div className={`rounded-xl p-4 border ${ok ? 'bg-green-500/5 border-green-500/25' : 'bg-amber-500/5 border-amber-500/30'}`}>
+    <div className={`rounded-xl p-4 border ${skin}`}>
       <div className="flex items-center gap-2 mb-2">
-        {ok ? <CheckCircle2 className="w-4 h-4 text-green-400" /> : <AlertTriangle className="w-4 h-4 text-amber-400" />}
-        <h3 className="text-sm font-semibold text-gray-100">
-          {ok ? 'Parity OK — this run reproduces the research' : 'Parity drift — investigate before trusting these numbers'}
-        </h3>
+        <Icon className={`w-4 h-4 ${iconTone}`} />
+        <h3 className="text-sm font-semibold text-gray-100">{title}</h3>
       </div>
-      <p className="text-[12px] text-gray-400 mb-2">{parity.reference?.config}</p>
+      {parity.scope && <p className="text-[12.5px] text-gray-400 mb-2">{parity.scope}</p>}
+      <p className="text-[12px] text-gray-500 mb-2">{parity.reference?.config}</p>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
           <thead>
@@ -81,20 +89,67 @@ function ParityBlock({ parity }) {
             </tr>
           </thead>
           <tbody>
-            {(parity.items || []).map((r) => (
-              <tr key={r.metric} className="border-t border-surface-3/50">
-                <td className="px-2 py-1 text-gray-300">{r.metric}</td>
-                <td className="px-2 py-1 text-right mono text-gray-100">{Number(r.engine).toLocaleString('en-IN')}</td>
-                <td className="px-2 py-1 text-right mono text-gray-400">{Number(r.research).toLocaleString('en-IN')}</td>
-                <td className={`px-2 py-1 text-right mono ${Math.abs(r.delta_pct ?? 0) <= 2 ? 'text-gray-400' : 'text-amber-400'}`}>
-                  {r.delta_pct === null ? '—' : `${r.delta_pct > 0 ? '+' : ''}${r.delta_pct}%`}
-                </td>
-              </tr>
-            ))}
+            {(parity.items || []).map((r) => {
+              const muted = v === 'different_window' && r.span_sensitive;
+              return (
+                <tr key={r.metric} className="border-t border-surface-3/50">
+                  <td className="px-2 py-1 text-gray-300">
+                    {r.metric}
+                    {muted && <span className="ml-1.5 text-[10px] text-gray-600">depends on window length</span>}
+                  </td>
+                  <td className="px-2 py-1 text-right mono text-gray-100">{Number(r.engine).toLocaleString('en-IN')}</td>
+                  <td className="px-2 py-1 text-right mono text-gray-400">{Number(r.research).toLocaleString('en-IN')}</td>
+                  <td className={`px-2 py-1 text-right mono ${
+                    muted ? 'text-gray-600'
+                    : Math.abs(r.delta_pct ?? 0) <= 2 ? 'text-gray-400' : 'text-amber-400'}`}>
+                    {r.delta_pct === null ? '—' : `${r.delta_pct > 0 ? '+' : ''}${r.delta_pct}%`}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
       <p className="text-[11.5px] text-gray-500 mt-2">{parity.reference?.note}</p>
+    </div>
+  );
+}
+
+function FunnelBlock({ funnel }) {
+  if (!funnel) return null;
+  const f = funnel;
+  return (
+    <div className="card">
+      <h3 className="text-sm font-semibold text-gray-100 mb-1">Session funnel — every trading day accounted for</h3>
+      <p className="text-[11.5px] text-gray-500 mb-3">{f.first_session} → {f.last_session}</p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+        <Stat label="Trading days in data" value={f.sessions_in_data} />
+        <Stat label="Days in your window" value={f.sessions_in_window} sub={f.warmup_sessions ? `+${f.warmup_sessions} warm-up loaded before it` : ''} />
+        <Stat label="Days we traded" value={f.sessions_traded} tone="text-green-400" sub={`${f.trade_rate_pct}% of sessions`} />
+        <Stat label="Days skipped" value={f.sessions_skipped} tone="text-gray-400" />
+      </div>
+      {f.reasons?.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-[11px] uppercase tracking-wider text-gray-500">Why the rest were skipped</div>
+          {f.reasons.map((r) => {
+            const pct = f.sessions_in_window ? (r.sessions / f.sessions_in_window) * 100 : 0;
+            return (
+              <div key={r.reason} className="flex items-center gap-2">
+                <div className="w-56 shrink-0 text-[12px] text-gray-400">{r.label}</div>
+                <div className="flex-1 h-2 rounded bg-surface-3 overflow-hidden">
+                  <div className="h-full bg-gray-600" style={{ width: `${Math.min(100, pct)}%` }} />
+                </div>
+                <div className="w-20 text-right mono text-[12px] text-gray-300">{r.sessions}</div>
+                <div className="w-14 text-right mono text-[11px] text-gray-600">{pct.toFixed(0)}%</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-[11.5px] text-gray-500 mt-3">
+        Most skips are simply days outside the expiry window — that is the strategy working as
+        designed, not data missing. With a 0–1 DTE filter roughly two sessions a week qualify.
+      </p>
     </div>
   );
 }
@@ -422,6 +477,8 @@ export default function IndexStraddle() {
           </div>
 
           <ParityBlock parity={res.parity} />
+
+          <FunnelBlock funnel={res.funnel} />
 
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
             <Stat label="Trades" value={s.total_trades} sub={`${s.trades_per_week}/week`} />

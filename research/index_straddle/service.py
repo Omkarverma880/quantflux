@@ -186,6 +186,7 @@ def run(cfg: Config, *, df: Optional[pd.DataFrame] = None, broker=None,
 
     res = E.run(df, cfg, legs_for_day)
     trades = res["trades"]
+    skips = res.get("skips", {})
     # Trades inside the warm-up belong to history, not to the user's window.
     if win_start:
         trades = [t for t in trades if pd.Timestamp(t["date"]).date() >= win_start]
@@ -207,6 +208,27 @@ def run(cfg: Config, *, df: Optional[pd.DataFrame] = None, broker=None,
     if cfg.premium_source == "broker" and contract_example is not None:
         contract_example = dict(contract_example) or None
 
+    # ── session funnel: every trading day accounted for ──
+    win_days = [d for d in sessions_all if not win_start or d >= win_start]
+    funnel_rows = []
+    for k, n in sorted(skips.items(), key=lambda kv: -kv[1]):
+        if k == "no_baseline" and win_start:
+            n = max(0, n - warmup_sessions)      # warm-up days are not "skipped"
+        if n <= 0:
+            continue
+        funnel_rows.append({"reason": k, "label": E.SKIP_LABELS.get(k, k), "sessions": int(n)})
+    funnel = {
+        "sessions_in_data": len(sessions_all),
+        "warmup_sessions": warmup_sessions,
+        "sessions_in_window": len(win_days),
+        "sessions_traded": len(trades),
+        "sessions_skipped": max(0, len(win_days) - len(trades)),
+        "trade_rate_pct": round(len(trades) / len(win_days) * 100, 1) if win_days else 0.0,
+        "reasons": funnel_rows,
+        "first_session": str(win_days[0]) if win_days else "",
+        "last_session": str(win_days[-1]) if win_days else "",
+    }
+
     data_warning = data_coverage_warning(df, cfg, source)
     summ = MET.summary(trades, cfg, sessions=len(set(df.index.date)))
     out = {
@@ -225,6 +247,7 @@ def run(cfg: Config, *, df: Optional[pd.DataFrame] = None, broker=None,
         "first_day": str(min(df.index.date)), "last_day": str(max(df.index.date)),
         "rows_dropped": rows_dropped, "duplicates_removed": dupes,
         "partial_sessions_dropped": partial_dropped,
+        "funnel": funnel,
         "data_warning": data_warning,
         "sessions_loaded": len(set(df.index.date)),
         "warmup_sessions": warmup_sessions,
@@ -271,9 +294,28 @@ RESEARCH_REFERENCE = {
 }
 
 
-def parity(summary: dict) -> dict:
-    """Compare a run against the documented research figures."""
+RESEARCH_SESSIONS = 1159
+RESEARCH_FIRST = "2022-01-03"
+RESEARCH_LAST = "2026-09-11"
+
+
+def parity(summary: dict, first_day: str = "", last_day: str = "",
+           sessions: int = 0) -> dict:
+    """Compare a run against the documented research figures.
+
+    Only meaningful when the run covers the same span. A one-year dataset will
+    naturally produce a fraction of the trades, and calling that "drift" would be
+    wrong — so the span is checked first and the verdict says so.
+    """
     ref = RESEARCH_REFERENCE
+    comparable = True
+    scope = ""
+    if sessions and sessions < RESEARCH_SESSIONS * 0.9:
+        comparable = False
+        scope = (f"This run covers {sessions} sessions ({first_day} to {last_day}); "
+                 f"the research covers {RESEARCH_SESSIONS} ({RESEARCH_FIRST} to "
+                 f"{RESEARCH_LAST}). Trade counts and annual P&L are not directly "
+                 "comparable — per-trade figures like win rate and mean return still are.")
     def delta(got, want):
         if not want:
             return None
@@ -285,9 +327,21 @@ def parity(summary: dict) -> dict:
         ("t-stat", summary.get("t_stat", 0), ref["t_stat"]),
         ("P&L / year", summary.get("pnl_per_year", 0), ref["pnl_per_year"]),
     ]
-    items = [{"metric": m, "engine": g, "research": w, "delta_pct": delta(g, w)}
+    items = [{"metric": m, "engine": g, "research": w, "delta_pct": delta(g, w),
+              "span_sensitive": m in ("Trades", "P&L / year", "t-stat")}
              for m, g, w in rows]
-    worst = max((abs(i["delta_pct"]) for i in items if i["delta_pct"] is not None),
+    judged = [i for i in items if not i["span_sensitive"]] if not comparable else items
+    worst = max((abs(i["delta_pct"]) for i in judged if i["delta_pct"] is not None),
                 default=0.0)
-    return {"reference": ref, "items": items,
-            "matches": bool(worst <= 2.0), "worst_delta_pct": worst}
+    if not comparable:
+        # A shorter window cannot and should not reproduce the totals. Say that,
+        # rather than pretending a pass/fail is meaningful.
+        verdict = "different_window"
+        matches = None
+    elif worst <= 2.0:
+        verdict, matches = "match", True
+    else:
+        verdict, matches = "drift", False
+    return {"reference": ref, "items": items, "comparable": comparable, "scope": scope,
+            "verdict": verdict, "matches": matches, "worst_delta_pct": worst,
+            "tolerance_pct": 2.0}

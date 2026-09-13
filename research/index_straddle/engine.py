@@ -33,6 +33,19 @@ from research.index_straddle.config import Config
 from research.index_straddle import optmodel as M
 
 STOP, TARGET, EOD = "SL", "TARGET", "EOD"
+
+# Why a session produced no trade. Every ``return None`` in scan_day carries one,
+# so the UI can show a funnel instead of an unexplained trade count.
+SKIP_LABELS = {
+    "dte": "outside the days-to-expiry window",
+    "weekday": "weekday not selected",
+    "no_baseline": "no volatility baseline yet (warm-up)",
+    "prior_range": "prior-day range filter",
+    "gap": "overnight gap filter",
+    "open_range": "opening-range filter",
+    "no_bars": "not enough bars in the session",
+    "no_premium": "premium unavailable (no contract history)",
+}
 SESSION_END_MIN = 930          # 15:30 in minutes from midnight
 
 
@@ -94,37 +107,37 @@ def calendar_dte(day: date) -> int:
 # ── the day scan ─────────────────────────────────────────────────────
 def scan_day(day: date, frame: pd.DataFrame, cfg: Config, *,
              iv_regime: float, sigma: float, prior_range_s: float,
-             gap_s: float, legs_frames: Optional[dict] = None) -> Optional[RawTrade]:
-    """One session → at most one trade. Returns None when the day is skipped."""
+             gap_s: float, legs_frames: Optional[dict] = None):
+    """One session → ``(trade, skip_reason)``. Exactly one of the two is set."""
     dte = calendar_dte(day)
     if not (cfg.dte_min <= dte <= cfg.dte_max):
-        return None
+        return None, "dte"
     if cfg.weekdays and day.weekday() not in cfg.weekdays:
-        return None
+        return None, "weekday"
     if not np.isfinite(iv_regime) or not np.isfinite(sigma) or sigma <= 0:
-        return None
+        return None, "no_baseline"
 
     # ── day filters, all from data strictly before this session ──
     if cfg.skip_prior_range_sigma > 0 and np.isfinite(prior_range_s):
         if prior_range_s > cfg.skip_prior_range_sigma:
-            return None
+            return None, "prior_range"
     if cfg.skip_gap_sigma > 0 and np.isfinite(gap_s):
         if abs(gap_s) > cfg.skip_gap_sigma:
-            return None
+            return None, "gap"
 
     t_in = _hhmm(cfg.entry_time, dtime(10, 0))
     t_out = _hhmm(cfg.exit_time, dtime(15, 20))
     times = frame.index.time
     ent_rows = np.where(times >= t_in)[0]
     if len(ent_rows) == 0:
-        return None
+        return None, "no_bars"
     i = int(ent_rows[0])
     out_rows = np.where(times <= t_out)[0]
     if len(out_rows) == 0:
-        return None
+        return None, "no_bars"
     e = int(out_rows[-1])
     if e - i < 5:
-        return None
+        return None, "no_bars"
 
     # opening-range filter measured up to the entry bar
     o_hi = float(frame["high"].values[:i + 1].max())
@@ -132,7 +145,7 @@ def scan_day(day: date, frame: pd.DataFrame, cfg: Config, *,
     open_range_s = (o_hi - o_lo) / sigma if sigma > 0 else np.nan
     if cfg.skip_open_range_sigma > 0 and np.isfinite(open_range_s):
         if open_range_s > cfg.skip_open_range_sigma:
-            return None
+            return None, "open_range"
 
     hi = frame["high"].values.astype(float)
     lo = frame["low"].values.astype(float)
@@ -160,11 +173,11 @@ def scan_day(day: date, frame: pd.DataFrame, cfg: Config, *,
     if legs_frames:
         c_df, p_df = legs_frames.get("call"), legs_frames.get("put")
         if c_df is None or p_df is None or c_df.empty or p_df.empty:
-            return None
+            return None, "no_premium"
         real = (c_df.reindex(frame.index, method="ffill"),
                 p_df.reindex(frame.index, method="ffill"))
         if real[0]["close"].isna().all() or real[1]["close"].isna().all():
-            return None
+            return None, "no_premium"
 
     def comb(s: float, d: float) -> float:
         return (M.premium(s, kc, d, iv_regime, True)
@@ -184,9 +197,9 @@ def scan_day(day: date, frame: pd.DataFrame, cfg: Config, *,
         pe0 = M.premium(spot0, kp, de0, iv_regime, False)
     gross = comb_real(i, "close") if real else (ce0 + pe0)
     if real and not np.isfinite(gross):
-        return None
+        return None, "no_premium"
     if gross < 1e-6:
-        return None
+        return None, "no_premium"
 
     hs = cfg.costs.half_spread_pct / 100.0
     bk = cfg.costs.brokerage_pct / 100.0
@@ -258,7 +271,7 @@ def scan_day(day: date, frame: pd.DataFrame, cfg: Config, *,
             pe1 = M.premium(float(cl[e]), kp, de, iv_regime, False)
             close_p = ce1 + pe1
         if not np.isfinite(close_p):
-            return None
+            return None, "no_premium"
         if short:
             exit_prem = close_p * (1.0 + hs)
             ret = (basis - exit_prem) / basis - bk
@@ -282,7 +295,7 @@ def scan_day(day: date, frame: pd.DataFrame, cfg: Config, *,
         prior_range_sigma=float(prior_range_s) if np.isfinite(prior_range_s) else 0.0,
         gap_sigma=float(gap_s) if np.isfinite(gap_s) else 0.0,
         open_range_sigma=float(open_range_s) if np.isfinite(open_range_s) else 0.0,
-    )
+    ), None
 
 
 def scan(df: pd.DataFrame, cfg: Config, legs_for_day=None) -> list[RawTrade]:
@@ -296,9 +309,10 @@ def scan(df: pd.DataFrame, cfg: Config, legs_for_day=None) -> list[RawTrade]:
     gps = M.gap_sigma(df)
 
     out: list[RawTrade] = []
+    skips: dict[str, int] = {}
     for d, day in df.groupby(df.index.date, sort=True):
         key = pd.Timestamp(d)
-        t = scan_day(
+        t, why = scan_day(
             d, day, cfg,
             iv_regime=float(ivs.get(key, np.nan)),
             sigma=float(sigs.get(key, np.nan)),
@@ -308,6 +322,9 @@ def scan(df: pd.DataFrame, cfg: Config, legs_for_day=None) -> list[RawTrade]:
         )
         if t is not None:
             out.append(t)
+        elif why:
+            skips[why] = skips.get(why, 0) + 1
+    scan.last_skips = skips
     return out
 
 
@@ -384,4 +401,5 @@ def account(raws: Iterable[RawTrade], cfg: Config) -> list[dict]:
 def run(df: pd.DataFrame, cfg: Config, legs_for_day=None) -> dict:
     raws = scan(df, cfg, legs_for_day)
     trades = account(raws, cfg)
-    return {"raw": raws, "trades": trades}
+    return {"raw": raws, "trades": trades,
+            "skips": getattr(scan, "last_skips", {}) or {}}
