@@ -53,6 +53,8 @@ def summary(trades: list[dict], cfg: Config, sessions: int = 0) -> dict:
         "profit_factor": None, "expectancy": 0.0,
         "stop_exits": 0, "target_exits": 0, "eod_exits": 0, "stop_rate": 0.0,
         "avg_credit": 0.0, "avg_bars_held": 0.0, "worst_mae_pct": 0.0,
+        "capital_used": 0.0, "capital_basis": "", "avg_return_on_capital_pct": 0.0,
+        "annual_return_on_capital_pct": 0.0, "peak_capital_used": 0.0,
     }
     df = frame(trades)
     if df.empty:
@@ -100,6 +102,15 @@ def summary(trades: list[dict], cfg: Config, sessions: int = 0) -> dict:
         "avg_credit": round(float(df["basis_value"].mean()), 2),
         "avg_bars_held": round(float(df["bars_held"].mean()), 1),
         "worst_mae_pct": round(float(df["mae"].min()) * 100, 2),
+        # ── what the strategy actually ties up ──
+        "capital_used": round(float(df["capital_used"].iloc[-1]), 2),
+        "peak_capital_used": round(float(df["capital_used"].max()), 2),
+        "capital_basis": ("margin blocked (short options)" if cfg.is_short
+                          else "premium paid (long options)"),
+        "avg_return_on_capital_pct": round(float(df["return_on_capital_pct"].mean()), 3),
+        "annual_return_on_capital_pct": (
+            round(float(pnl.sum()) / years / float(df["capital_used"].max()) * 100, 2)
+            if years > 0 and float(df["capital_used"].max()) else 0.0),
     })
     return base
 

@@ -110,6 +110,7 @@ export default function IndexStraddle() {
   const [positions, setPositions] = useState([]);
   const [preview, setPreview] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [openRow, setOpenRow] = useState(null);
   const fileRef = useRef(null);
 
   const set = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
@@ -294,6 +295,8 @@ export default function IndexStraddle() {
             <Field label="DTE to" hint="0–1 is the edge"><input type="number" className={inp} value={cfg.dte_max} onChange={(e) => set('dte_max', Number(e.target.value))} /></Field>
             <Field label="Lots" hint={`× ${cfg.lot_size} = ${cfg.lots * cfg.lot_size} qty/leg`}><input type="number" className={inp} value={cfg.lots} onChange={(e) => set('lots', Number(e.target.value))} /></Field>
             <Field label="Lot size"><input type="number" className={inp} value={cfg.lot_size} onChange={(e) => set('lot_size', Number(e.target.value))} /></Field>
+            <Field label="Margin per lot (₹)" hint="short only — blocked, not spent"><input type="number" step="10000" className={inp} value={cfg.margin_per_lot} onChange={(e) => set('margin_per_lot', Number(e.target.value))} /></Field>
+            <Field label="Starting capital (₹)"><input type="number" step="10000" className={inp} value={cfg.starting_capital} onChange={(e) => set('starting_capital', Number(e.target.value))} /></Field>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -375,6 +378,22 @@ export default function IndexStraddle() {
             <Stat label="Return / DD" value={s.return_over_dd} />
           </div>
 
+          <div className="card">
+            <h3 className="text-sm font-semibold text-gray-100 mb-2">Capital &amp; margin</h3>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <Stat label="Starting capital" value={INR(s.starting_capital)} />
+              <Stat label="Capital tied up / trade" value={INR(s.capital_used)} sub={s.capital_basis} />
+              <Stat label="Avg return on capital" value={PCT(s.avg_return_on_capital_pct, 2)} sub="per trade" tone={tone(s.avg_return_on_capital_pct)} />
+              <Stat label="Annual return on capital" value={PCT(s.annual_return_on_capital_pct, 1)} tone={tone(s.annual_return_on_capital_pct)} />
+              <Stat label="Final equity" value={INR(s.final_equity)} sub={`${s.total_return_pct}% total`} tone={tone(s.total_return_pct)} />
+            </div>
+            <p className="text-[11.5px] text-gray-500 mt-2">
+              {cfg.direction === 'short'
+                ? `Selling options blocks margin, it does not cost premium. ${cfg.lots} lot(s) x ${INR(cfg.margin_per_lot)} = ${INR(cfg.margin_per_lot * cfg.lots)} is blocked for the session and released at square-off. The credit collected is cash in, not capital out. Change "margin per lot" in the config if your broker differs.`
+                : `Buying options costs the premium itself - there is no margin. Capital used per trade is the debit paid, which varies with the premium on the day.`}
+            </p>
+          </div>
+
           <EquityChart curve={res.equity_curve} />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -439,7 +458,10 @@ export default function IndexStraddle() {
 
           <div className="card">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold text-gray-100">Trades ({res.trade_count})</h3>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-100">Trade log ({res.trade_count})</h3>
+                <p className="text-[11.5px] text-gray-500">Click any row for the plain-English version of that trade.</p>
+              </div>
               {res.files?.trades && (
                 <button onClick={() => api.isFile(res.files.trades)}
                   className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] bg-surface-3 text-gray-300 hover:text-white">
@@ -447,37 +469,91 @@ export default function IndexStraddle() {
                 </button>
               )}
             </div>
-            <div className="overflow-x-auto max-h-[420px]">
+            <div className="overflow-x-auto max-h-[520px]">
               <table className="w-full text-[12px]">
-                <thead className="sticky top-0 bg-surface-2">
+                <thead className="sticky top-0 bg-surface-2 z-10">
                   <tr className="text-gray-500">
-                    {['Date', 'DTE', 'In', 'Out', 'Spot', 'CE', 'PE', 'Credit', 'Exit', 'Ret', 'P&L', 'Equity'].map((h, i) => (
-                      <th key={h} className={`px-2 py-1.5 font-semibold ${i ? 'text-right' : 'text-left'}`}>{h}</th>
-                    ))}
+                    <th className="px-2 py-1.5 text-left font-semibold">Date</th>
+                    <th className="px-2 py-1.5 text-center font-semibold">DTE</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">What was traded</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">Spot</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">CE in&rarr;out</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">PE in&rarr;out</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">{cfg.direction === 'short' ? 'Credit in' : 'Debit paid'}</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">{cfg.direction === 'short' ? 'Cost to close' : 'Sold for'}</th>
+                    <th className="px-2 py-1.5 text-center font-semibold">Why it ended</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">Ret</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">P&amp;L</th>
+                    <th className="px-2 py-1.5 text-right font-semibold">Equity</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(res.trades || []).slice().reverse().map((t, i) => (
-                    <tr key={i} className="border-t border-surface-3/40">
-                      <td className="px-2 py-1 text-gray-300">{t.date}</td>
-                      <td className="px-2 py-1 text-right mono">{t.dte}</td>
-                      <td className="px-2 py-1 text-right mono text-gray-500">{t.entry_time}</td>
-                      <td className="px-2 py-1 text-right mono text-gray-500">{t.exit_time}</td>
-                      <td className="px-2 py-1 text-right mono">{Number(t.spot_entry).toFixed(0)}</td>
-                      <td className="px-2 py-1 text-right mono">{Number(t.call_strike).toFixed(0)}</td>
-                      <td className="px-2 py-1 text-right mono">{Number(t.put_strike).toFixed(0)}</td>
-                      <td className="px-2 py-1 text-right mono">{INR(t.basis_value)}</td>
-                      <td className="px-2 py-1 text-right">
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                          t.exit_reason === 'SL' ? 'bg-red-500/15 text-red-300'
-                          : t.exit_reason === 'TARGET' ? 'bg-green-500/15 text-green-300'
-                          : 'bg-surface-3 text-gray-400'}`}>{t.exit_reason}</span>
-                      </td>
-                      <td className={`px-2 py-1 text-right mono ${tone(t.return_pct)}`}>{PCT(t.return_pct, 1)}</td>
-                      <td className={`px-2 py-1 text-right mono font-semibold ${tone(t.pnl)}`}>{INR(t.pnl)}</td>
-                      <td className="px-2 py-1 text-right mono text-gray-500">{INR(t.equity)}</td>
-                    </tr>
-                  ))}
+                  {(res.trades || []).slice().reverse().map((t, i) => {
+                    const rowKey = `${t.date}-${i}`;
+                    const open = openRow === rowKey;
+                    const why = t.exit_reason === 'SL' ? 'Stop hit'
+                      : t.exit_reason === 'TARGET' ? 'Target hit' : 'Time exit 15:20';
+                    return (
+                      <React.Fragment key={rowKey}>
+                        <tr onClick={() => setOpenRow(open ? null : rowKey)}
+                          className={`border-t border-surface-3/40 cursor-pointer hover:bg-surface-3/40 ${open ? 'bg-surface-3/50' : ''}`}>
+                          <td className="px-2 py-1 text-gray-300 whitespace-nowrap">{t.date}</td>
+                          <td className="px-2 py-1 text-center">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${t.dte === 0 ? 'bg-amber-500/15 text-amber-300' : 'bg-surface-3 text-gray-400'}`}>
+                              {t.dte === 0 ? 'expiry' : `${t.dte}d`}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1 whitespace-nowrap">
+                            <span className={t.action === 'SELL' ? 'text-red-300' : 'text-green-300'}>{t.action}</span>
+                            <span className="text-gray-300"> {Number(t.call_strike).toFixed(0)} CE</span>
+                            <span className="text-gray-600"> + </span>
+                            <span className={t.action === 'SELL' ? 'text-red-300' : 'text-green-300'}>{t.action}</span>
+                            <span className="text-gray-300"> {Number(t.put_strike).toFixed(0)} PE</span>
+                            <span className="text-gray-600"> &times;{t.qty}</span>
+                          </td>
+                          <td className="px-2 py-1 text-right mono text-gray-400">{Number(t.spot_entry).toFixed(0)}</td>
+                          <td className="px-2 py-1 text-right mono whitespace-nowrap">
+                            {Number(t.call_entry).toFixed(2)}<span className="text-gray-600">&rarr;</span>{Number(t.call_exit).toFixed(2)}
+                          </td>
+                          <td className="px-2 py-1 text-right mono whitespace-nowrap">
+                            {Number(t.put_entry).toFixed(2)}<span className="text-gray-600">&rarr;</span>{Number(t.put_exit).toFixed(2)}
+                          </td>
+                          <td className="px-2 py-1 text-right mono text-gray-200">{INR(t.basis_value)}</td>
+                          <td className="px-2 py-1 text-right mono text-gray-400">{INR(t.exit_value)}</td>
+                          <td className="px-2 py-1 text-center">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap ${
+                              t.exit_reason === 'SL' ? 'bg-red-500/15 text-red-300'
+                              : t.exit_reason === 'TARGET' ? 'bg-green-500/15 text-green-300'
+                              : 'bg-surface-3 text-gray-400'}`}>{why}</span>
+                          </td>
+                          <td className={`px-2 py-1 text-right mono ${tone(t.return_pct)}`}>{PCT(t.return_pct, 1)}</td>
+                          <td className={`px-2 py-1 text-right mono font-semibold ${tone(t.pnl)}`}>{INR(t.pnl)}</td>
+                          <td className="px-2 py-1 text-right mono text-gray-500">{INR(t.equity)}</td>
+                        </tr>
+                        {open && (
+                          <tr className="bg-surface-3/30 border-t border-surface-3/40">
+                            <td colSpan={12} className="px-4 py-3">
+                              <p className="text-[13px] text-gray-200 leading-relaxed">{t.story}</p>
+                              <div className="mt-2 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-5 gap-y-1.5 text-[11.5px]">
+                                <div><span className="text-gray-500">Entry &rarr; exit</span><div className="mono text-gray-300">{t.entry_time} &rarr; {t.exit_time}</div></div>
+                                <div><span className="text-gray-500">Held</span><div className="mono text-gray-300">{t.bars_held} min</div></div>
+                                <div><span className="text-gray-500">Spot moved</span><div className="mono text-gray-300">{Number(t.spot_entry).toFixed(0)} &rarr; {Number(t.spot_exit).toFixed(0)} ({(t.spot_exit - t.spot_entry) >= 0 ? '+' : ''}{(t.spot_exit - t.spot_entry).toFixed(0)})</div></div>
+                                <div><span className="text-gray-500">Capital tied up</span><div className="mono text-gray-300">{INR(t.capital_used)}</div></div>
+                                <div><span className="text-gray-500">Return on capital</span><div className={`mono ${tone(t.return_on_capital_pct)}`}>{PCT(t.return_on_capital_pct, 2)}</div></div>
+                                <div><span className="text-gray-500">Worst point in trade</span><div className="mono text-red-400">{PCT((t.mae || 0) * 100, 1)}</div></div>
+                                <div><span className="text-gray-500">CE leg value in</span><div className="mono text-gray-300">{INR(t.call_entry_value)}</div></div>
+                                <div><span className="text-gray-500">PE leg value in</span><div className="mono text-gray-300">{INR(t.put_entry_value)}</div></div>
+                                <div><span className="text-gray-500">Prior-day range</span><div className="mono text-gray-300">{Number(t.prior_range_sigma).toFixed(2)}&sigma;</div></div>
+                                <div><span className="text-gray-500">Overnight gap</span><div className="mono text-gray-300">{Number(t.gap_sigma) >= 0 ? '+' : ''}{Number(t.gap_sigma).toFixed(2)}&sigma;</div></div>
+                                <div><span className="text-gray-500">Implied vol used</span><div className="mono text-gray-300">{(Number(t.iv_regime) * 100).toFixed(1)}%</div></div>
+                                <div><span className="text-gray-500">Effective days to expiry</span><div className="mono text-gray-300">{Number(t.de0).toFixed(2)}</div></div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -96,6 +96,9 @@ class Config:
     lot_size: int = LOT_SIZE
     lots: int = LOTS
     starting_capital: float = STARTING_CAPITAL
+    margin_per_lot: float = 190_000.0     # SPAN+exposure for ONE short straddle lot.
+                                          # Ignored when buying: a long straddle costs
+                                          # the debit, not margin.
 
     # ── pricing ──
     premium_source: str = "model"         # model = calibrated research pricer
@@ -155,6 +158,7 @@ class Config:
         c.lot_size = max(1, int(c.lot_size))
         c.lots = max(1, min(100, int(c.lots)))
         c.starting_capital = max(1.0, float(c.starting_capital))
+        c.margin_per_lot = max(0.0, float(c.margin_per_lot))
         c.vrp = max(0.5, min(3.0, float(c.vrp)))
         c.expiry_type = c.expiry_type if c.expiry_type in ("weekly", "monthly") else "weekly"
         c.paper_trade = bool(c.paper_trade)

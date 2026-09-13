@@ -61,6 +61,10 @@ class RawTrade:
     de0: float
     iv_regime: float
     gross_premium: float      # mid, both legs, at entry
+    call_entry: float         # the CE leg's own premium at entry
+    put_entry: float          # the PE leg's own premium at entry
+    call_exit: float          # the CE leg at exit
+    put_exit: float           # the PE leg at exit
     basis: float              # credit received (short) or debit paid (long)
     exit_premium: float       # what it cost to close, after spread
     ret: float                # net fraction of basis, after all friction
@@ -173,7 +177,12 @@ def scan_day(day: date, frame: pd.DataFrame, cfg: Config, *,
             return float("nan")
         return float(cv) + float(pv)
 
-    gross = comb_real(i, "close") if real else comb(spot0, de0)
+    if real:
+        ce0 = float(real[0]["close"].iloc[i]); pe0 = float(real[1]["close"].iloc[i])
+    else:
+        ce0 = M.premium(spot0, kc, de0, iv_regime, True)
+        pe0 = M.premium(spot0, kp, de0, iv_regime, False)
+    gross = comb_real(i, "close") if real else (ce0 + pe0)
     if real and not np.isfinite(gross):
         return None
     if gross < 1e-6:
@@ -189,6 +198,7 @@ def scan_day(day: date, frame: pd.DataFrame, cfg: Config, *,
     tgt_f = cfg.target_pct / 100.0
     mae = 0.0
     reason, ret, held, exit_prem = EOD, 0.0, e - i, 0.0
+    ce1 = pe1 = 0.0
 
     for j in range(i + 1, e + 1):
         mins = _minute(frame.index[j].time())
@@ -218,15 +228,35 @@ def scan_day(day: date, frame: pd.DataFrame, cfg: Config, *,
         if mtm_bad <= -stop_f:
             reason, ret, held = STOP, -stop_f - bk, j - i
             exit_prem = adverse * (1.0 + hs) if short else adverse * (1.0 - hs)
+            if real:
+                ce1 = float(real[0]["high" if short else "low"].iloc[j])
+                pe1 = float(real[1]["high" if short else "low"].iloc[j])
+            else:
+                sx = hi[j] if (p_hi >= p_lo) == short else lo[j]
+                ce1 = M.premium(sx, kc, de, iv_regime, True)
+                pe1 = M.premium(sx, kp, de, iv_regime, False)
             break
         if tgt_f > 0 and mtm_good >= tgt_f:
             reason, ret, held = TARGET, tgt_f - bk, j - i
             exit_prem = favour * (1.0 + hs) if short else favour * (1.0 - hs)
+            if real:
+                ce1 = float(real[0]["low" if short else "high"].iloc[j])
+                pe1 = float(real[1]["low" if short else "high"].iloc[j])
+            else:
+                sx = lo[j] if (p_hi >= p_lo) == short else hi[j]
+                ce1 = M.premium(sx, kc, de, iv_regime, True)
+                pe1 = M.premium(sx, kp, de, iv_regime, False)
             break
     else:
         mins = _minute(frame.index[e].time())
         de = M.effective_dte(dte, mins, SESSION_END_MIN)
-        close_p = comb_real(e, "close") if real else comb(float(cl[e]), de)
+        if real:
+            ce1 = float(real[0]["close"].iloc[e]); pe1 = float(real[1]["close"].iloc[e])
+            close_p = ce1 + pe1
+        else:
+            ce1 = M.premium(float(cl[e]), kc, de, iv_regime, True)
+            pe1 = M.premium(float(cl[e]), kp, de, iv_regime, False)
+            close_p = ce1 + pe1
         if not np.isfinite(close_p):
             return None
         if short:
@@ -243,7 +273,10 @@ def scan_day(day: date, frame: pd.DataFrame, cfg: Config, *,
         spot_entry=round(spot0, 2), spot_exit=round(float(cl[e]), 2),
         call_strike=float(kc), put_strike=float(kp),
         de0=round(de0, 4), iv_regime=round(float(iv_regime), 5),
-        gross_premium=round(gross, 2), basis=round(basis, 2),
+        gross_premium=round(gross, 2),
+        call_entry=round(ce0, 2), put_entry=round(pe0, 2),
+        call_exit=round(ce1, 2), put_exit=round(pe1, 2),
+        basis=round(basis, 2),
         exit_premium=round(exit_prem, 2), ret=float(ret),
         exit_reason=reason, bars_held=int(held), mae=float(mae),
         prior_range_sigma=float(prior_range_s) if np.isfinite(prior_range_s) else 0.0,
@@ -278,6 +311,28 @@ def scan(df: pd.DataFrame, cfg: Config, legs_for_day=None) -> list[RawTrade]:
     return out
 
 
+def _story(t: RawTrade, cfg: Config, qty: int, pnl: float) -> str:
+    """One sentence a human can check against their own broker statement."""
+    act = "Sold" if cfg.is_short else "Bought"
+    got = "collected" if cfg.is_short else "paid"
+    strikes = (f"{int(t.call_strike)} CE @ Rs{t.call_entry:.2f} and "
+               f"{int(t.put_strike)} PE @ Rs{t.put_entry:.2f}")
+    head = (f"{t.entry_time}: NIFTY at {t.spot_entry:.0f}. {act} {strikes} "
+            f"({qty} qty each) - {got} Rs{t.basis * qty:,.0f} net of the spread.")
+    if t.exit_reason == STOP:
+        why = (f"{t.exit_time}: the two legs together moved {cfg.stop_pct:.0f}% "
+               f"{'against' if cfg.is_short else 'below'} entry, so the stop closed both.")
+    elif t.exit_reason == TARGET:
+        why = f"{t.exit_time}: combined premium hit the {cfg.target_pct:.0f}% target, closed both."
+    else:
+        why = (f"{t.exit_time}: square-off time, closed both legs at "
+               f"Rs{t.call_exit:.2f} / Rs{t.put_exit:.2f}.")
+    tail = (f" Bought them back for Rs{t.exit_premium * qty:,.0f}" if cfg.is_short
+            else f" Sold them for Rs{t.exit_premium * qty:,.0f}")
+    res = f" Result: {'profit' if pnl >= 0 else 'loss'} of Rs{abs(pnl):,.0f}."
+    return head + " " + why + tail + "." + res
+
+
 # ── the money ────────────────────────────────────────────────────────
 def account(raws: Iterable[RawTrade], cfg: Config) -> list[dict]:
     """Turn signals into rupees at a fixed size, in strict date order."""
@@ -292,12 +347,32 @@ def account(raws: Iterable[RawTrade], cfg: Config) -> list[dict]:
         peak = max(peak, equity)
         dd = equity - peak
         d = t.as_dict()
+        # Capital actually tied up: a SHORT straddle blocks margin; a LONG one
+        # costs the debit and nothing else.
+        if cfg.is_short:
+            capital_used = cfg.margin_per_lot * cfg.lots
+        else:
+            capital_used = t.basis * qty
+        act = "SELL" if cfg.is_short else "BUY"
         d.update({
             "qty": qty, "lots": cfg.lots,
+            "action": act,
+            "leg_summary": (f"{act} {int(t.call_strike)} CE + "
+                            f"{act} {int(t.put_strike)} PE"),
+            "call_action": f"{act} CE {int(t.call_strike)}",
+            "put_action": f"{act} PE {int(t.put_strike)}",
+            "capital_used": round(capital_used, 2),
+            "return_on_capital_pct": round(t.ret * t.basis * qty / capital_used * 100, 3)
+                                     if capital_used else 0.0,
+            "credit_or_debit": "credit received" if cfg.is_short else "debit paid",
             "basis_value": round(t.basis * qty, 2),
+            "exit_value": round(t.exit_premium * qty, 2),
+            "call_entry_value": round(t.call_entry * qty, 2),
+            "put_entry_value": round(t.put_entry * qty, 2),
             "pnl": round(pnl, 2),
             "return_pct": round(t.ret * 100.0, 4),
             "equity": round(equity, 2),
+            "story": _story(t, cfg, qty, pnl),
             "drawdown": round(dd, 2),
             "drawdown_pct": round(dd / peak * 100.0 if peak else 0.0, 4),
             "date": str(t.trade_date),
