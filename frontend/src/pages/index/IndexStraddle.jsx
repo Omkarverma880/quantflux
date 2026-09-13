@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../../api';
 import {
   FlaskConical, Wallet, Info, Play, Square, RefreshCw, Upload, Download,
-  TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, Target,
+  TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, XCircle, Eye, Target, Save,
 } from 'lucide-react';
 import IndexStraddleInfo from './IndexStraddleInfo';
 
@@ -111,6 +111,8 @@ export default function IndexStraddle() {
   const [preview, setPreview] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [openRow, setOpenRow] = useState(null);
+  const [saved, setSaved] = useState(null);   // last persisted config, for the dirty flag
+  const [saving, setSaving] = useState(false);
   const fileRef = useRef(null);
 
   const set = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
@@ -118,7 +120,7 @@ export default function IndexStraddle() {
   useEffect(() => {
     api.isMeta().then((m) => {
       if (m?.status === 'error') { setErr(m.message); return; }
-      setMeta(m); setCfg(m.config);
+      setMeta(m); setCfg(m.config); setSaved(JSON.stringify(m.config));
     }).catch((e) => setErr(String(e)));
     api.isLast().then((r) => { if (r?.status === 'ok') setRes(r); }).catch(() => {});
   }, []);
@@ -156,6 +158,17 @@ export default function IndexStraddle() {
       if (r?.status === 'error') setErr(r.message);
       else { set('csv_path', r.path); setMsg(`Uploaded ${r.name}`); const m = await api.isMeta(); setMeta(m); }
     } catch (e) { setErr(String(e)); } finally { setUploading(false); }
+  };
+
+  const dirty = saved !== null && cfg !== null && JSON.stringify(cfg) !== saved;
+
+  const saveCfg = async () => {
+    setSaving(true); setErr(''); setMsg('');
+    try {
+      const r = await api.isConfigSave(cfg);
+      if (r?.status === 'error') setErr(r.message);
+      else { setSaved(JSON.stringify(r.config)); setCfg(r.config); setMsg('Configuration saved'); }
+    } catch (e) { setErr(String(e)); } finally { setSaving(false); }
   };
 
   const doPreview = async () => {
@@ -337,8 +350,17 @@ export default function IndexStraddle() {
               Telegram alerts
             </label>
             <div className="flex-1" />
+            {dirty && (
+              <span className="px-2 py-1 rounded-lg text-[10.5px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/25">
+                unsaved changes
+              </span>
+            )}
             <button onClick={() => setCfg(meta?.defaults)} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-3 text-gray-300 hover:text-white">
               Reset to research defaults
+            </button>
+            <button onClick={saveCfg} disabled={saving || !dirty}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-3 text-gray-200 hover:text-white disabled:opacity-40">
+              <Save className="w-3.5 h-3.5" />{saving ? 'Saving…' : 'Save config'}
             </button>
             {tab === 'backtest' && (
               <>
@@ -355,12 +377,41 @@ export default function IndexStraddle() {
               </>
             )}
           </div>
+          <p className="text-[11px] text-gray-600 -mt-1">
+            Backtests always use what is on screen — Save is only needed to make this config the
+            one the live engine and the next page load start from. Arming the strategy saves it too.
+          </p>
         </div>
       )}
 
       {/* ── backtest results ── */}
       {tab === 'backtest' && res?.status === 'ok' && s && (
         <div className="space-y-4">
+          {res.warmup_note && (
+            <div className="rounded-lg bg-amber-500/10 border border-amber-500/25 px-3 py-2 text-[12.5px] text-amber-200 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span><strong>Warm-up too short.</strong> {res.warmup_note}</span>
+            </div>
+          )}
+
+          <div className="rounded-lg bg-surface-2 border border-surface-3 px-3 py-2 text-[12px] text-gray-400">
+            <span className="text-gray-500">Data used: </span>
+            <span className="mono text-gray-200">{res.source}</span>
+            <span className="text-gray-600"> · </span>
+            <span className="text-gray-500">premiums from </span>
+            <span className="mono text-gray-200">{res.premium_source === 'model' ? 'calibrated model (computed from index bars)' : 'real Zerodha option candles'}</span>
+            {res.window_start && (
+              <>
+                <span className="text-gray-600"> · </span>
+                <span className="text-gray-500">window </span>
+                <span className="mono text-gray-200">{res.window_start} → {res.window_end || res.last_day}</span>
+                <span className="text-gray-600"> · </span>
+                <span className="mono text-gray-200">{res.warmup_sessions}</span>
+                <span className="text-gray-500"> warm-up sessions loaded before it</span>
+              </>
+            )}
+          </div>
+
           <ParityBlock parity={res.parity} />
 
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">

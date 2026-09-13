@@ -73,6 +73,31 @@ function T({ head, rows, note }) {
   );
 }
 
+
+function Cfg({ name, deflt, effect, rows }) {
+  return (
+    <div className="border border-surface-3 rounded-lg overflow-hidden">
+      <div className="bg-surface-3/50 px-3 py-2 flex flex-wrap items-baseline gap-x-3">
+        <span className="text-[13px] font-semibold text-gray-100">{name}</span>
+        {deflt && <span className="mono text-[11px] text-brand-300">default: {deflt}</span>}
+      </div>
+      <div className="px-3 py-2 space-y-1.5">
+        <p className="text-[12.5px] text-gray-400">{effect}</p>
+        {rows && (
+          <div className="divide-y divide-surface-3/40 pt-1">
+            {rows.map(([k, v]) => (
+              <div key={k} className="py-1 grid grid-cols-1 sm:grid-cols-[170px_1fr] gap-x-3">
+                <div className="mono text-[11.5px] text-gray-300">{k}</div>
+                <div className="text-[12px] text-gray-500">{v}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function IndexStraddleInfo({ cfg, research }) {
   const c = cfg || {};
   const isShort = (c.direction || 'short') === 'short';
@@ -260,16 +285,165 @@ export default function IndexStraddleInfo({ cfg, research }) {
         ]} />
       </Sec>
 
-      <Sec title="Configuration guide">
-        <Grid rows={[
-          ['Direction', 'short sells the structure (the researched edge), long buys it (documented as losing).'],
-          ['Structure', 'straddle uses one strike for both legs; strangle places wings either side of ATM.'],
-          ['Strike — distance from ATM', 'Signed points. 0 = ATM, −200 = 200 ITM, +200 = 200 OTM. Resolved per option type, so −200 means 200 ITM for the call and the put alike.'],
-          ['Strike — target premium', 'Instead of a distance, pick the strike whose premium prices nearest your target. "Sell the ₹100 option" rather than "sell the 200-OTM option" — the strike that delivers it moves with volatility.'],
-          ['DTE window', '0–1 is the researched setting. Widening it will lower expectancy; the by-DTE table on the Backtest tab shows exactly how much.'],
-          ['Premium source', 'model reproduces the research over the full history. broker uses the contract\'s own candles — honest but limited to the option history Zerodha serves, and days without it are skipped rather than modelled.'],
-          ['Paper trade', 'ON by default and stays on until you turn it off. Real orders additionally require the global trading gate.'],
-        ]} />
+      <Sec title="Every setting, and exactly what it changes">
+        <p className="text-[12.5px] text-gray-500">
+          Measured effects below come from the 4.7-year study. Anything you change moves the
+          numbers away from the researched result — the <strong>Parity</strong> block on the
+          Backtest tab tells you by how much.
+        </p>
+
+        <h4 className="text-[12px] uppercase tracking-wider text-gray-500 pt-2">What is traded</h4>
+        <div className="space-y-2">
+          <Cfg name="Direction" deflt="SHORT straddle"
+            effect="Whether the two legs are sold or bought. This is the single biggest switch on the page — it flips the sign of the entire result."
+            rows={[
+              ['SHORT (sell)', 'Collect premium. +16.3% of credit per trade, 72.9% win, t = 10.0. Makes money from time passing; loses fast on a trend day.'],
+              ['LONG (buy)', 'Pay premium. −7.35% per trade pooled, t = −8.95. Included so the claim is checkable, not because it is recommended.'],
+            ]} />
+          <Cfg name="Structure" deflt="Straddle"
+            effect="How the two legs are placed relative to the money."
+            rows={[
+              ['Straddle', 'Both legs on ONE strike. Maximum credit, maximum gamma risk. This is the researched configuration.'],
+              ['Strangle', 'Legs placed either side of ATM by the wing width. Smaller credit, wider break-evens, fewer stop-outs. 100-wide measured +28.2% per trade but a lower rupee total, because the credit is smaller.'],
+            ]} />
+          <Cfg name="Wing width" deflt="100 points (strangle only)"
+            effect="Points either side of ATM for a strangle. Wider = safer but thinner. The call goes OTM upward, the put OTM downward." />
+        </div>
+
+        <h4 className="text-[12px] uppercase tracking-wider text-gray-500 pt-3">Strike selection</h4>
+        <div className="space-y-2">
+          <Cfg name="Strike selection" deflt="Distance from ATM"
+            effect="Two ways to decide which strike to trade."
+            rows={[
+              ['Distance from ATM', 'A fixed number of points from the at-the-money strike. Predictable, and what the research used.'],
+              ['Target premium', 'Pick whichever strike prices nearest a rupee value you name. The strike then moves with volatility instead of staying at a fixed distance.'],
+            ]} />
+          <Cfg name="Distance from ATM" deflt="ATM (0)"
+            effect="Signed points. Negative is IN the money, positive is OUT of the money. Applied per option type, so −200 means 200 ITM for the call AND for the put."
+            rows={[
+              ['ATM (0)', 'Researched setting. Most credit, most theta, most gamma.'],
+              ['+200 OTM', 'Cheaper legs. Measured +35.8% per trade but only ≈₹2.5L/yr — the percentage is bigger because the credit base is much smaller.'],
+              ['−200 ITM', 'Expensive legs, mostly intrinsic value. Measured +0.87% per trade — there is almost no time value to harvest. Avoid for selling.'],
+            ]} />
+          <Cfg name="Target premium" deflt="₹100"
+            effect="Only used when strike selection is 'Target premium'. The engine scans ±20 strikes and picks the one whose modelled premium is closest, per leg."
+            rows={[
+              ['≈₹50–60', 'Roughly ATM on an expiry morning. Measured +21.4% per trade at t = 11.4 — the sweet spot.'],
+              ['≈₹120', 'Forces slightly ITM strikes. +9.5% per trade.'],
+              ['≈₹200+', 'Forces deep ITM. +2.1% per trade at ₹1.4L/yr. An expiry-day ATM straddle is only ~110–120 points in TOTAL, so a 225 target per leg is far past useful.'],
+            ]} />
+        </div>
+
+        <h4 className="text-[12px] uppercase tracking-wider text-gray-500 pt-3">Session timing</h4>
+        <div className="space-y-2">
+          <Cfg name="Entry time" deflt="10:00"
+            effect="When both legs go on. Flat between 09:45 and 11:15 — the rule is 'after the opening auction settles', not a magic minute."
+            rows={[
+              ['09:20', '+11.71% per trade — opening noise widens spreads and clusters early stop-outs.'],
+              ['10:00', '+15.39% per trade, the measured best.'],
+              ['11:15', '+14.78%, higher win rate (76.2%) but less theta left to collect.'],
+              ['12:45', '+14.20% at only ₹3.4L/yr, but the smallest drawdown of any entry time.'],
+            ]} />
+          <Cfg name="Exit time" deflt="15:20"
+            effect="Hard square-off. Nothing is ever carried overnight."
+            rows={[
+              ['15:20', 'Earns the most (₹4.9L/yr) but the final 40 minutes are the least efficient part of the day.'],
+              ['14:40', 'Keeps 82% of the return with 33% LESS drawdown and a higher win rate. Choose this if capital preservation matters more than the headline.'],
+              ['After 15:15', 'Not advisable — the 1-minute ATM bar range widens from 3.2% to 5.3% of premium, so exit liquidity is at its worst.'],
+            ]} />
+        </div>
+
+        <h4 className="text-[12px] uppercase tracking-wider text-gray-500 pt-3">Exits</h4>
+        <div className="space-y-2">
+          <Cfg name="Stop %" deflt="35%"
+            effect="Measured on the COMBINED premium of both legs, not per leg — the risk is the structure. When the pair moves this far against you, both are closed at once. Checked every minute against the worse of that bar's high and low."
+            rows={[
+              ['−25%', 'Nearly identical annual return with roughly HALF the drawdown. The conservative choice.'],
+              ['−35%', 'The default. Balanced.'],
+              ['−50%', 'Higher win rate (73.9%), but the worst day grows to ₹31k on 3 lots.'],
+              ['−100%', 'Lower return AND a much fatter tail. No reason to use it.'],
+            ]} />
+          <Cfg name="Target %" deflt="0 (off)"
+            effect="Close early if the combined premium falls this far in your favour. Leaving it at 0 means time exit only — which is what the research used, and what performs best."
+            rows={[
+              ['0 = off', 'Let theta run to 15:20. ₹4.8L/yr.'],
+              ['+20%', 'Raises the win rate to 80.3% and CUTS income to ₹2.6L/yr. The target caps the big expiry-day winners that pay for the stop-outs. This is the win-rate trap in miniature — see the section above.'],
+            ]} />
+        </div>
+
+        <h4 className="text-[12px] uppercase tracking-wider text-gray-500 pt-3">Which days to trade — where the edge actually lives</h4>
+        <div className="space-y-2">
+          <Cfg name="DTE from / to" deflt="0 to 1"
+            effect="Calendar days to that week's expiry. 0 means expiry day itself. This filter IS the strategy — nothing else on the page matters as much."
+            rows={[
+              ['0–1', '+14.80% per trade. The researched window.'],
+              ['0 only', '+24.09% per trade, but half the number of trades.'],
+              ['2–3', '+0.03% — exactly zero. There is no theta left to harvest this far out.'],
+              ['4–6', '−2.36% per trade, reliably negative.'],
+              ['0–6 (all)', 'Dilutes to +6.07%. More trades, worse each.'],
+            ]} />
+          <Cfg name="Skip if prior-day range >" deflt="1.3σ"
+            effect="Do not trade the session after an unusually wide day. σ is the 20-day EWMA of the daily true range, so this adapts to the regime instead of being a fixed point value. Volatility clusters — yesterday's big range is a genuine warning about today."
+            rows={[
+              ['1.3σ', 'Removes only 42 of 463 trades while improving BOTH mean return and drawdown. The one filter that is close to free.'],
+              ['0 = off', 'Slightly higher gross income (₹5.0L) with a worse drawdown profile.'],
+            ]} />
+          <Cfg name="Skip if |gap| >" deflt="0 (off)"
+            effect="Skip when the overnight gap exceeds this many σ. Tested and NOT adopted: at 0.5σ it lifts per-trade return but costs ₹70k/yr and makes the drawdown worse." />
+          <Cfg name="Skip if open range >" deflt="0 (off)"
+            effect="Skip when the range from 09:15 to entry is already wide. At 0.35σ this gives the best win rate in the whole study (81.3%) — and cuts annual income almost in half, from ₹4.9L to ₹2.8L. Use it only if you are optimising for smoothness over income." />
+        </div>
+
+        <h4 className="text-[12px] uppercase tracking-wider text-gray-500 pt-3">Size and capital</h4>
+        <div className="space-y-2">
+          <Cfg name="Lots / Lot size" deflt="3 × 65"
+            effect="Quantity per leg = lots × lot size. Both legs get the same quantity. P&L scales linearly, so 1 lot is exactly one third of the 3-lot figures." />
+          <Cfg name="Margin per lot" deflt="₹190,000"
+            effect="What your broker blocks for ONE short-straddle lot. Used only to compute return on capital — it does not affect P&L. Selling options BLOCKS margin, it does not spend it; the credit you collect is cash in. Check your broker's SPAN calculator and correct this. Ignored entirely when buying, where capital used is the debit paid." />
+          <Cfg name="Starting capital" deflt="₹570,000"
+            effect="The opening equity for the curve and the drawdown percentage. Does not gate trades — the engine will not stop you sizing beyond it, so set it to what you would really deploy." />
+        </div>
+
+        <h4 className="text-[12px] uppercase tracking-wider text-gray-500 pt-3">Pricing and data</h4>
+        <div className="space-y-2">
+          <Cfg name="Premium source" deflt="Calibrated research model"
+            effect="Where the option prices in the backtest come from. This is the setting people most often misunderstand."
+            rows={[
+              ['Calibrated model', 'Premiums are COMPUTED from the index bars — no option data is fetched at all. Works over the full history and reproduces the documented result. Validated at r = 0.988 against a real chain.'],
+              ['Real option candles', "Each contract's own traded minute candles from Zerodha. The honest test, but limited to the option history Zerodha serves. Days with no contract history are SKIPPED, never modelled — mixing two pricing sources silently would be worse than trading fewer days."],
+            ]} />
+          <Cfg name="Dataset" deflt="— pull from broker —"
+            effect="Where the NIFTY index bars come from. Note this is separate from the premium source above."
+            rows={[
+              ['An uploaded file', 'Reads that CSV. Fast, fixed, repeatable — use this to reproduce the research.'],
+              ['— pull from broker —', 'Live Zerodha call for NIFTY 50 minute candles, fetched in 60-day chunks. Slower, and how far back it reaches depends on your Kite historical-data subscription.'],
+              ['Your local files', 'Are NOT picked up automatically. Click Upload CSV first; the file is then listed here.'],
+            ]} />
+          <Cfg name="Start / End date" deflt="blank = all available"
+            effect="The window you want results for. The engine automatically loads 60 extra calendar days BEFORE your start date as warm-up, because σ and the implied-vol regime are 20-session EWMAs — without that history the first few days of your window would have no volatility baseline and be silently skipped. Those warm-up days never appear as trades. If the dataset does not reach back far enough you get an amber warning on the results."
+            rows={[
+              ['blank / blank', 'Full history. 421 trades, the parity benchmark.'],
+              ['A short window', 'Works correctly — but a 10-day window contains only 2–3 expiry-window days, so do not read a win rate from it.'],
+            ]} />
+        </div>
+
+        <h4 className="text-[12px] uppercase tracking-wider text-gray-500 pt-3">Live controls</h4>
+        <div className="space-y-2">
+          <Cfg name="Paper trade" deflt="ON"
+            effect="ON records simulated fills and places nothing. Turning it OFF means real orders, and additionally requires the global trading gate — you also get a confirm dialog when arming. Leave it on until you have run the 09:35 straddle check above." />
+          <Cfg name="Auto-start at 09:15" deflt="OFF"
+            effect="Arms the strategy automatically each morning without you opening the page. Only sensible once paper trading has run clean for a full expiry cycle." />
+          <Cfg name="Telegram alerts" deflt="OFF"
+            effect="Sends entry and exit messages with strikes, premiums and P&L to your configured bot." />
+        </div>
+
+        <div className="text-[13px] bg-surface-3/40 rounded-lg p-3 border border-surface-3 mt-3">
+          <strong className="text-gray-100">Saving.</strong> The <strong>Backtest always uses what is
+          on screen</strong> — you never need to save to test something. <strong>Save config</strong>
+          persists the current settings to disk so the live engine and your next page load start from
+          them; an amber <em>unsaved changes</em> pill appears whenever the screen differs from what is
+          stored. Arming the strategy also saves automatically, so what you backtested is what runs.
+        </div>
       </Sec>
 
       <Sec title="How to run this properly">

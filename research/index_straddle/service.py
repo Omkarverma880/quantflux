@@ -25,20 +25,41 @@ logger = get_logger("research.index_straddle.service")
 
 MIN_BARS_PER_SESSION = 300
 
+# Sigma and the implied-vol regime are EWMAs over the PRIOR 20 sessions, shifted
+# one day. A session cannot be evaluated until that history exists — so a run
+# that starts exactly at the requested date silently loses its first ~6 days.
+# We therefore always load this much extra history BEFORE the window, compute the
+# indicators on the full series, and only then cut the trades back to the window.
+WARMUP_CALENDAR_DAYS = 60
+MIN_WARMUP_SESSIONS = 6
+
 
 def load_data(cfg: Config, broker=None, token: Optional[int] = None) -> tuple[pd.DataFrame, str]:
-    """Uploaded CSV first, broker pull otherwise. One shape either way."""
+    """Uploaded CSV first, broker pull otherwise. One shape either way.
+
+    Loads WARMUP_CALENDAR_DAYS of history BEFORE cfg.start_date so the volatility
+    indicators are already warm on the first day the user actually asked for. The
+    trades are cut back to the requested window afterwards, in ``run``.
+    """
+    warm_start = ""
+    if cfg.start_date:
+        warm_start = str(pd.Timestamp(cfg.start_date).date()
+                         - pd.Timedelta(days=WARMUP_CALENDAR_DAYS))
     if cfg.csv_path:
         df = D.load_csv(cfg.csv_path)
         src = f"csv:{Path(cfg.csv_path).name}"
     else:
         if broker is None or not token:
             raise ValueError("Upload a 1-minute CSV, or connect Zerodha to pull history")
-        end = date.today()
-        start = pd.Timestamp(cfg.start_date).date() if cfg.start_date else date(2022, 1, 1)
+        end = (pd.Timestamp(cfg.end_date).date() if cfg.end_date else date.today())
+        if cfg.start_date:
+            start = pd.Timestamp(warm_start).date()
+        else:
+            start = date(2022, 1, 1)
         df = D.load_from_broker(broker, token, start, end, "minute")
         src = "broker:NIFTY 50"
-    df = D.slice_dates(df, cfg.start_date, cfg.end_date)
+    # slice to [start - warmup, end]; the window itself is applied to the trades
+    df = D.slice_dates(df, warm_start, cfg.end_date)
     return df, src
 
 
@@ -57,6 +78,11 @@ def coverage(df: pd.DataFrame, cfg: Config) -> dict:
     if df.empty:
         return {}
     days = sorted({d for d in df.index.date})
+    if cfg.start_date:
+        w = pd.Timestamp(cfg.start_date).date()
+        days = [d for d in days if d >= w]
+    if not days:
+        return {}
     in_dte = [d for d in days if cfg.dte_min <= E.calendar_dte(d) <= cfg.dte_max]
     return {
         "sessions": len(days),
@@ -106,8 +132,31 @@ def run(cfg: Config, *, df: Optional[pd.DataFrame] = None, broker=None,
             return legs
         contract_example = seen
 
+    # How much of the loaded data is warm-up rather than the requested window?
+    sessions_all = sorted({d for d in df.index.date})
+    win_start = pd.Timestamp(cfg.start_date).date() if cfg.start_date else None
+    warmup_sessions = len([d for d in sessions_all if win_start and d < win_start])
+
     res = E.run(df, cfg, legs_for_day)
     trades = res["trades"]
+    # Trades inside the warm-up belong to history, not to the user's window.
+    if win_start:
+        trades = [t for t in trades if pd.Timestamp(t["date"]).date() >= win_start]
+        # re-run the account so equity and drawdown start at the window, not before
+        kept = {t["date"] for t in trades}
+        raws = [r for r in res["raw"] if str(r.trade_date) in kept]
+        trades = E.account(raws, cfg)
+
+    warmup_note = ""
+    if win_start:
+        if warmup_sessions == 0:
+            warmup_note = ("No history before the start date, so the first ~6 sessions "
+                           "of the window had no volatility baseline and were skipped. "
+                           "Use a dataset that begins earlier, or widen the start date.")
+        elif warmup_sessions < MIN_WARMUP_SESSIONS:
+            warmup_note = (f"Only {warmup_sessions} session(s) of warm-up available; "
+                           f"{MIN_WARMUP_SESSIONS} are needed for a stable baseline. "
+                           "Early days in the window may have been skipped.")
     if cfg.premium_source == "broker" and contract_example is not None:
         contract_example = dict(contract_example) or None
 
@@ -128,6 +177,10 @@ def run(cfg: Config, *, df: Optional[pd.DataFrame] = None, broker=None,
         "first_day": str(min(df.index.date)), "last_day": str(max(df.index.date)),
         "rows_dropped": rows_dropped, "duplicates_removed": dupes,
         "partial_sessions_dropped": partial_dropped,
+        "warmup_sessions": warmup_sessions,
+        "warmup_note": warmup_note,
+        "window_start": str(win_start) if win_start else "",
+        "window_end": cfg.end_date or "",
         "trades": trades,
         "trade_count": len(trades),
         "contract_example": contract_example,
