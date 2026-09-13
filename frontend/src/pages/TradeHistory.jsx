@@ -9,7 +9,21 @@ import {
   TrendingUp,
   TrendingDown,
   IndianRupee,
+  Filter,
+  X,
 } from 'lucide-react';
+
+const DEFAULT_STATUS_FILTER = 'COMPLETE';
+const DEFAULT_SIDE_FILTER = 'ALL';
+const STATUS_FILTERS = ['ALL', 'COMPLETE', 'REJECTED', 'CANCELLED', 'OPEN'];
+const SIDE_FILTERS = ['ALL', 'BUY', 'SELL'];
+
+const matchesStatus = (order, filter) => {
+  if (filter === 'ALL') return true;
+  // OPEN covers every still-working state (OPEN, TRIGGER PENDING, etc.)
+  if (filter === 'OPEN') return !['COMPLETE', 'REJECTED', 'CANCELLED', 'EXPIRED'].includes(order.status);
+  return order.status === filter;
+};
 
 /* Derive strategy label from the order tag.
  *
@@ -150,6 +164,14 @@ const computeDaySummary = (orders) => {
 export default function TradeHistory() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState(DEFAULT_STATUS_FILTER);
+  const [sideFilter, setSideFilter] = useState(DEFAULT_SIDE_FILTER);
+
+  const filterOrders = (orders) => orders.filter(
+    (o) => matchesStatus(o, statusFilter) && (sideFilter === 'ALL' || o.transaction_type === sideFilter),
+  );
+  const filtersActive = statusFilter !== 'ALL' || sideFilter !== 'ALL';
+  const clearFilters = () => { setStatusFilter('ALL'); setSideFilter('ALL'); };
 
   const fetchHistory = () => {
     setLoading(true);
@@ -176,6 +198,14 @@ export default function TradeHistory() {
 
   // Count total orders across all days
   const totalOrders = history.reduce((s, d) => s + (d.orders?.length || 0), 0);
+  const visibleOrders = history.reduce((s, d) => s + filterOrders(d.orders || []).length, 0);
+
+  const chipClass = (active) => `px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
+    active
+      ? 'bg-brand-500/20 text-brand-400 border-brand-500/40'
+      : 'bg-surface-2 text-gray-400 border-surface-3 hover:text-gray-200'
+  }`;
+  const chipLabel = (value) => (value === 'ALL' ? 'All' : value.charAt(0) + value.slice(1).toLowerCase());
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 max-w-[1400px] mx-auto">
@@ -194,6 +224,39 @@ export default function TradeHistory() {
         </button>
       </div>
 
+      {/* Filters */}
+      <div className="card flex flex-wrap items-center gap-x-6 gap-y-3 py-3">
+        <div className="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wide">
+          <Filter className="w-3.5 h-3.5" /> Filters
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-gray-500 mr-1">Status</span>
+          {STATUS_FILTERS.map((s) => (
+            <button key={s} onClick={() => setStatusFilter(s)} className={chipClass(statusFilter === s)}>
+              {chipLabel(s)}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-gray-500 mr-1">Side</span>
+          {SIDE_FILTERS.map((s) => (
+            <button key={s} onClick={() => setSideFilter(s)} className={chipClass(sideFilter === s)}>
+              {chipLabel(s)}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-3 ml-auto">
+          {totalOrders > 0 && (
+            <span className="text-xs text-gray-500">Showing {visibleOrders} of {totalOrders}</span>
+          )}
+          {filtersActive && (
+            <button onClick={clearFilters} className="btn-ghost flex items-center gap-1 text-xs px-2 py-1">
+              <X className="w-3.5 h-3.5" /> Clear filters
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Days */}
       {loading ? (
         <div className="card text-center py-12 text-gray-500">Loading…</div>
@@ -203,12 +266,21 @@ export default function TradeHistory() {
           <p className="text-gray-400 font-medium">No trade history yet</p>
           <p className="text-xs text-gray-600 mt-1">Orders will be stored here at end of each trading day</p>
         </div>
+      ) : visibleOrders === 0 ? (
+        <div className="card text-center py-12">
+          <Filter className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+          <p className="text-gray-400 font-medium">No orders match the selected filters</p>
+          <button onClick={clearFilters} className="text-xs text-brand-400 hover:underline mt-2">Clear filters</button>
+        </div>
       ) : (
         history.map((day) => {
           const isToday = day.date === today;
           const orders = day.orders || [];
           const completedOrders = orders.filter((o) => o.status === 'COMPLETE');
+          // Summary always reflects the full day (P&L only uses COMPLETE fills anyway)
           const summary = computeDaySummary(orders);
+          const visible = filterOrders(orders);
+          if (visible.length === 0) return null;
 
           return (
             <div key={day.date} className={`card space-y-3 ${isToday ? 'border border-brand-500/30' : ''}`}>
@@ -289,7 +361,7 @@ export default function TradeHistory() {
                     </tr>
                   </thead>
                   <tbody>
-                    {orders.map((o, i) => {
+                    {visible.map((o, i) => {
                       const time = o.time ? String(o.time) : '—';
                       const isBuy = o.transaction_type === 'BUY';
                       const displayPrice = o.average_price || o.price || 0;

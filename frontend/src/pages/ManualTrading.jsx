@@ -15,9 +15,10 @@ import {
   Wallet,
 } from 'lucide-react';
 
-const INDEX_OPTIONS = ['NIFTY', 'SENSEX'];
+const INDEX_OPTIONS = ['NIFTY', 'BANKNIFTY', 'SENSEX'];
 const INDEX_CONFIG = {
   NIFTY: { exchange: 'NFO', fallbackLotSize: 75 },
+  BANKNIFTY: { exchange: 'NFO', fallbackLotSize: 35 },
   SENSEX: { exchange: 'BFO', fallbackLotSize: 20 },
 };
 
