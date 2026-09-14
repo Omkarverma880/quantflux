@@ -293,6 +293,19 @@ export default function IndexStraddle() {
         </div>
       </div>
 
+      <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-[13px] text-red-100 flex items-start gap-2.5">
+        <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-300" />
+        <div>
+          <strong className="text-red-200">Re-tested on real option prices — the modelled result did not hold.</strong>{' '}
+          On actual expired NIFTY contracts (Sep-2023 → Sep-2026), this exact configuration returned between
+          {' '}<strong>−₹14k and +₹66k per year</strong> on 3 lots (t = 0.4 to 1.9, depending on how the stop is
+          monitored), with a max drawdown of ₹1.2L–₹1.8L and stops on 33–39% of days — not the ₹4.8L the premium
+          model produced. The premium <em>level</em> assumption was right (real 0-DTE straddle median 0.41% of spot);
+          the intraday path was not. Backtests below still use the model. Keep this on paper; real-premium
+          backtests live in <strong>Options Lab</strong>.
+        </div>
+      </div>
+
       {err && <div className="rounded-lg bg-red-500/10 border border-red-500/25 px-3 py-2 text-sm text-red-300 flex items-start gap-2"><XCircle className="w-4 h-4 mt-0.5 shrink-0" />{err}</div>}
       {msg && <div className="rounded-lg bg-green-500/10 border border-green-500/25 px-3 py-2 text-sm text-green-300">{msg}</div>}
 

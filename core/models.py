@@ -1007,3 +1007,54 @@ class IndexStraddlePosition(Base):
     combined_ltp = Column(Numeric(12, 2))
     status = Column(String(10), default="OPEN")     # OPEN | CLOSED
     paper = Column(Boolean, default=True)
+
+
+class MarketStorePartition(Base):
+    """Catalog of the Market Store — one row per (kind, underlying, month).
+
+    Candles live on disk as zstd Parquet (see research/market_store); this table
+    is the index of what exists, so the UI and every backtest can answer "what
+    data do we have?" without opening a file. Shared market data, not per user.
+    Auto-created via ``create_all``.
+    """
+    __tablename__ = "market_store_partitions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(12), nullable=False)          # spot | options
+    underlying = Column(String(20), nullable=False)
+    year = Column(Integer, nullable=False)
+    month = Column(Integer, nullable=False)
+    path = Column(String(500))
+    rows = Column(Integer, default=0)
+    bytes = Column(Integer, default=0)
+    checksum = Column(String(64))
+    first_ts = Column(DateTime)
+    last_ts = Column(DateTime)
+    sessions = Column(Integer, default=0)
+    contracts = Column(Integer)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("uq_mstore_partition", "kind", "underlying", "year", "month", unique=True),
+    )
+
+
+class MarketStoreIngest(Base):
+    """Audit log of every upload into the Market Store — who, what, and what the
+    normaliser changed (bad rows dropped, rolling-series duplicates merged)."""
+    __tablename__ = "market_store_ingests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    filename = Column(String(300))
+    kind = Column(String(12))
+    underlying = Column(String(20))
+    status = Column(String(16), default="completed")
+    rows_in = Column(Integer, default=0)
+    rows_added = Column(Integer, default=0)
+    report = Column(JSONB, default=dict)
+    error = Column(Text)
+
+    __table_args__ = (Index("idx_mstore_ingest_user", "user_id", "created_at"),)

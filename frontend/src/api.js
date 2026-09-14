@@ -673,6 +673,17 @@ export const api = {
   isPositions: (date) => request(`/index-strategy/straddle/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
   isConfigSave: (partial) => request('/index-strategy/straddle/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
 
+  // ── Market Store (historical spot + option candles) ──
+  msSummary: () => request('/market-store/summary'),
+  msPartitions: () => request('/market-store/partitions'),
+  msIngests: () => request('/market-store/ingests'),
+  msUpload: (files, underlying = 'NIFTY') => { const fd = new FormData(); [...files].forEach((f) => fd.append('files', f)); return requestUpload(`/market-store/upload?underlying=${encodeURIComponent(underlying)}`, fd); },
+  msRebuild: () => request('/market-store/rebuild-catalog', { method: 'POST' }),
+
+  // ── Options Lab (backtests on real option prices) ──
+  olMeta: () => request('/index-strategy/options-lab/meta'),
+  olBacktest: (payload) => request('/index-strategy/options-lab/backtest', { method: 'POST', body: JSON.stringify(payload || {}) }),
+
   // Universal Telegram notifications (shared across the app)
   getTelegramSettings: (bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`),
   saveTelegramSettings: (cfg, bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`, { method: 'POST', body: JSON.stringify(cfg || {}) }),

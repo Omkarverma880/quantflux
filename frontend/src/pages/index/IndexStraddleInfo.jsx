@@ -108,6 +108,32 @@ export default function IndexStraddleInfo({ cfg, research }) {
   return (
     <div className="space-y-3 max-w-5xl text-sm text-gray-300 leading-relaxed">
 
+      <Sec title="Read first — what happened when this was tested on real option prices" tone="bad">
+        <p>
+          Everything below was derived with a <strong>modelled</strong> option premium, because at the time only
+          one day of real chain data existed. Three years of actual expired NIFTY contracts (Sep-2023 → Sep-2026)
+          have since been tested with identical rules — same entry, same DTE filter, same stop — on the real
+          traded prices of the exact contracts.
+        </p>
+        <T
+          head={['Test', 'Trades', 'Mean/trade', 't', '₹/year (3 lots)', 'Max DD', 'Stop days']}
+          rows={[
+            { c: ['Model (what this page shows)', '421', '+16.3%', '10.0', INR(483431), INR(-65297), '14%'] },
+            { c: ['Real — stop on minute close', '262', '+5.0%', '1.90', INR(66181), INR(-123754), '33%'], tone: [null, null, null, null, 'g', 'r', null], hl: true },
+            { c: ['Real — stop on minute highs', '262', '+1.0%', '0.37', INR(-14304), INR(-182510), '39%'], tone: [null, null, null, null, 'r', 'r', null] },
+            { c: ['Real — expiry day only (close)', '139', '+9.4%', '2.03', INR(64010), INR(-78453), '46%'] },
+            { c: ['Real — day before expiry (close)', '123', '−0.0%', '0.00', INR(2232), INR(-108978), '19%'], tone: [null, null, null, null, null, 'r', null] },
+          ]}
+          note="The model got the premium LEVEL right — the real 0-DTE ATM straddle at 10:00 has a median of 0.406% of spot, almost exactly what was assumed. What it could not capture is the intraday path: real premiums spike far more often, so the stop fires on a third of days instead of one in seven."
+        />
+        <p className="text-[13px]">
+          <strong>Verdict:</strong> not statistically significant on real prices, and a max drawdown larger than the
+          annual gain. The day-before-expiry leg contributes nothing. Treat this strategy as paper-only. Note also
+          that a naked short straddle needs roughly ₹1.9L margin per lot. Real-premium research continues in
+          <strong> Options Lab</strong>.
+        </p>
+      </Sec>
+
       <Sec title="Where this strategy came from">
         <p>
           It is the surviving result of a study that set out to do the opposite. The brief was to find
