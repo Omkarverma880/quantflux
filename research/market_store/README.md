@@ -29,6 +29,18 @@ missing months from the database onto disk. The Data tab shows "Restoring…" me
 Months found on disk but missing from the database are pushed up automatically.
 No Railway volume is required. Set `MARKET_STORE_DB_SYNC=0` to turn the database copy off.
 
+## Bundled history (no upload needed)
+
+`seed/market_store/` in the repo holds the 3-year NIFTY spot, NIFTY options and India VIX
+store (same layout, ~120 MB). A fresh server copies every month it lacks from there on the
+first Data-tab visit or backtest, then saves those months to `market_store_blobs` in the
+background. Months already on disk are never overwritten by the seed, and a newer copy of a
+month in the database (e.g. after an upload merged new rows) replaces the seed copy.
+Override the folder with `MARKET_STORE_SEED_DIR`.
+
+To refresh the bundle after adding data locally, copy `data/market_store` over
+`seed/market_store` and commit.
+
 ## Loading 3 years of history into Railway (once)
 
 Uploading the 22 rolling option files through the UI works, but each one touches

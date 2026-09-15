@@ -251,7 +251,8 @@ def _sync(block: bool) -> None:
     """Restore months kept in the database but missing from disk (see durable.py)."""
     try:
         from research.market_store import durable
-        durable.hydrate() if block else durable.hydrate_in_background()
+        durable.seed_disk()                        # bundled history, fast local copy, once
+        durable.hydrate(push=False) if block else durable.hydrate_in_background()
     except Exception as exc:                      # storage must work without a database
         logger.debug("market store sync skipped: %s", exc)
 

@@ -33,7 +33,13 @@ from research.market_store import store as MS
 logger = get_logger("research.market_store.durable")
 
 _lock = threading.Lock()
-_state = {"checked_at": 0.0, "fail_until": 0.0, "thread": None, "syncing": False}
+_seed_lock = threading.Lock()
+_state = {"checked_at": 0.0, "fail_until": 0.0, "thread": None, "syncing": False, "seeded": False}
+
+# History bundled with the code (repo folder seed/market_store, same layout as the store).
+# A fresh server copies any month it lacks from here, so the app has data with no upload.
+SEED_ROOT = Path(os.environ.get("MARKET_STORE_SEED_DIR")
+                 or (Path(__file__).resolve().parents[2] / "seed" / "market_store"))
 RECHECK_SECONDS = 60
 FAIL_BACKOFF_SECONDS = 300
 
@@ -48,9 +54,44 @@ def _session():
 
 
 def _local_partitions() -> dict:
+    return _partitions_under(MS.ROOT)
+
+
+def seed_disk() -> int:
+    """Copy bundled seed months that are missing on disk. Runs once per process, needs no DB.
+
+    Months already on disk are never touched; a newer copy of a month kept in the database
+    replaces the seed copy on the next ``hydrate``."""
+    if _state["seeded"]:
+        return 0
+    with _seed_lock:
+        if _state["seeded"]:
+            return 0
+        n = 0
+        try:
+            if SEED_ROOT.exists() and SEED_ROOT.resolve() != MS.ROOT.resolve():
+                local = _local_partitions()
+                for key, f in sorted(_partitions_under(SEED_ROOT).items()):
+                    if key in local:
+                        continue
+                    pdir = MS._part_dir(*key)
+                    pdir.mkdir(parents=True, exist_ok=True)
+                    tmp = pdir / (f.name + ".tmp")
+                    shutil.copy2(f, tmp)
+                    os.replace(tmp, pdir / f.name)
+                    n += 1
+            if n:
+                logger.info("market store: loaded %d month file(s) from the bundled seed %s", n, SEED_ROOT)
+        except Exception as exc:
+            logger.error("market store: loading the bundled seed failed: %s", exc)
+        _state["seeded"] = True
+        return n
+
+
+def _partitions_under(root: Path) -> dict:
     out = {}
     for kind in ("spot", "options"):
-        base = MS.ROOT / f"kind={kind}"
+        base = root / f"kind={kind}"
         if not base.exists():
             continue
         for f in base.rglob("*.parquet"):
@@ -128,8 +169,12 @@ def _restore(db, key, want_checksum) -> None:
             f.unlink()
 
 
-def hydrate(force: bool = False) -> dict:
-    """Make disk and database agree. Cheap when they already do (metadata only)."""
+def hydrate(force: bool = False, push: bool = True) -> dict:
+    """Make disk and database agree. Cheap when they already do (metadata only).
+
+    ``push=False`` (used inside a backtest request) only restores newer months from the
+    database; uploading disk-only months is left to the background run."""
+    seed_disk()
     if not enabled():
         return {"skipped": "disabled"}
     now = time.time()
@@ -150,12 +195,19 @@ def hydrate(force: bool = False) -> dict:
                 if f is None or f.stem.replace("part-", "") != r.checksum[:16]:
                     _restore(db, key, r.checksum)
                     restored += 1
+            if not push:
+                return {"restored": restored, "pushed": 0, "db_months": len(remote)}
             for key, f in local.items():
                 if key not in remote:
                     pushed += _upsert(db, *key, f)
             _state["checked_at"] = time.time()
             if restored or pushed:
                 logger.info("market store sync: restored %d month(s) from DB, pushed %d to DB", restored, pushed)
+                try:
+                    from research.market_store import service as SV
+                    SV.rebuild_catalog()
+                except Exception as exc:
+                    logger.warning("market store catalog rebuild after sync failed: %s", exc)
             return {"restored": restored, "pushed": pushed, "db_months": len(remote)}
         except Exception as exc:
             if db is not None:
