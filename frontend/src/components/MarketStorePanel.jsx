@@ -42,6 +42,13 @@ export default function MarketStorePanel() {
 
   useEffect(() => { load(); }, [load]);
 
+  // A fresh server restores stored months from the database in the background.
+  useEffect(() => {
+    if (!summary?.syncing) return undefined;
+    const t = setTimeout(load, 5000);
+    return () => clearTimeout(t);
+  }, [summary, load]);
+
   const upload = async (files) => {
     if (!files?.length) return;
     setBusy(true); setErr(''); setResults(null);
@@ -87,10 +94,24 @@ export default function MarketStorePanel() {
           <Tile label="Spot months" value={sp.months || 0} sub={MB(sp.bytes)} />
         </div>
 
+        {summary?.syncing && (
+          <div className="mt-3 rounded-lg bg-amber-500/10 border border-amber-500/25 px-3 py-2 text-[12px] text-amber-200 flex items-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+            Restoring stored months from the database onto this server. Counts above come from the database copy.
+          </div>
+        )}
+        {!summary?.syncing && summary && !op.months && !sp.months && (
+          <div className="mt-3 rounded-lg bg-surface-3/60 px-3 py-2 text-[12px] text-gray-300">
+            The store is empty. Upload the spot CSV and option parquet files here, or push a local store to
+            this database once with <code className="text-[11px]">python -m research.market_store.durable push</code>.
+          </div>
+        )}
+
         <p className="text-[11.5px] text-gray-500 mt-3 flex items-start gap-1.5">
           <HardDrive className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           <span>
-            Candles are stored as compressed monthly Parquet; the database keeps the catalog. Uploading
+            Candles are stored as compressed monthly Parquet, and every month is also saved in the database so
+            the data survives redeploys. Uploading
             overlapping files is safe — only rows not already stored are added. Option files need
             timestamp, strike, option_type, expiry_date and OHLC; a <code className="text-[11px]">contract</code> column is
             used when present. Files are detected as spot or options from their columns.
@@ -125,6 +146,7 @@ export default function MarketStorePanel() {
                         {r.filename}
                       </span>
                       {r.status !== 'ok' && <div className="text-[11px] text-red-300">{r.message}</div>}
+                      {r.warning && <div className="text-[11px] text-amber-300">{r.warning}</div>}
                     </td>
                     <td className="px-2 py-1 text-right">{r.kind || '—'}</td>
                     <td className="px-2 py-1 text-right mono">{N(r.report?.rows_in)}</td>

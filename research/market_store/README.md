@@ -17,18 +17,34 @@ Historical NIFTY spot and option minute bars, shared by every Options Lab backte
 
 ## Where the data lives
 
-| Environment | Location |
-|---|---|
-| Local | `data/market_store/` (git-ignored and docker-ignored) |
-| Railway | set `MARKET_STORE_DIR` to a mounted volume, e.g. `/data/market_store` |
+| Copy | Location | Role |
+|---|---|---|
+| Disk | `data/market_store/` (or `MARKET_STORE_DIR`) | what backtests scan; git- and docker-ignored |
+| Database | `market_store_blobs` (one row per month, the same Parquet bytes) | survives redeploys |
 
-**Railway's container disk is wiped on every redeploy.** Without a volume the store
-is empty after each deploy and history has to be uploaded again.
+Railway wipes the container disk on every deploy; the Postgres volume survives. So
+every month written by an upload is also saved to `market_store_blobs`
+(`durable.py`). On a fresh server the first Data-tab visit or backtest restores the
+missing months from the database onto disk. The Data tab shows "Restoring…" meanwhile.
+Months found on disk but missing from the database are pushed up automatically.
+No Railway volume is required. Set `MARKET_STORE_DB_SYNC=0` to turn the database copy off.
 
-1. Railway → service → **Volumes** → add a volume mounted at `/data`.
-2. Railway → **Variables** → `MARKET_STORE_DIR=/data/market_store`.
-3. Redeploy, open **Index Strategies → Options Lab → Data**, upload the spot CSV and
-   the option parquet files. Uploads are merged, so they can be sent in batches.
+## Loading 3 years of history into Railway (once)
+
+Uploading the 22 rolling option files through the UI works, but each one touches
+every month, so the database copy is rewritten 22 times. Push an already-built local
+store instead:
+
+```bash
+# 1. build the local store (skip if data/market_store already has it)
+python -m research.market_store.bootstrap --spot "NIFTY_spot_1m.csv" --options "Options Data" --no-catalog
+
+# 2. push it — Railway → Postgres → Connect → "Public Network" connection URL
+DATABASE_URL="postgresql://..." python -m research.market_store.durable push
+```
+
+`push` is idempotent: months already in the database with the same checksum are skipped.
+`python -m research.market_store.durable status` shows what the database holds.
 
 ## Loading history locally
 

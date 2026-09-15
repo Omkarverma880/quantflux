@@ -5,7 +5,7 @@ Maps to the PostgreSQL tables in quantflux_db.
 from datetime import datetime, date, timezone
 from sqlalchemy import (
     Column, Integer, String, Boolean, Float, Date, DateTime,
-    Text, Numeric, ForeignKey, UniqueConstraint, Index,
+    Text, Numeric, ForeignKey, UniqueConstraint, Index, LargeBinary,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -1058,3 +1058,29 @@ class MarketStoreIngest(Base):
     error = Column(Text)
 
     __table_args__ = (Index("idx_mstore_ingest_user", "user_id", "created_at"),)
+
+
+class MarketStoreBlob(Base):
+    """Durable copy of each Market Store partition file (zstd Parquet bytes).
+
+    Local disk is a cache that backtests scan; on hosts whose disk is wiped on deploy
+    the cache is restored from here (research/market_store/durable.py). One row per
+    (kind, underlying, month), a few MB each. Auto-created via ``create_all``.
+    """
+    __tablename__ = "market_store_blobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(12), nullable=False)
+    underlying = Column(String(20), nullable=False)
+    year = Column(Integer, nullable=False)
+    month = Column(Integer, nullable=False)
+    checksum = Column(String(64), nullable=False)
+    rows = Column(Integer, default=0)
+    bytes = Column(Integer, default=0)
+    data = Column(LargeBinary, nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("uq_mstore_blob", "kind", "underlying", "year", "month", unique=True),
+    )

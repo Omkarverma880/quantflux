@@ -93,12 +93,22 @@ def ingest_frame(df: pd.DataFrame, *, filename: str = "", kind: Optional[str] = 
             norm, report = MS.normalize_spot(df, underlying)
         records = MS.append(kind, norm, underlying)
         added = sum(r["rows_added"] for r in records)
+        durable_result = None
         if catalog:
+            from research.market_store import durable
+            durable_result = durable.save(records)
             _catalog(records)
             _log(user_id, filename, kind, underlying, report, added)
-        return {"status": "ok", "kind": kind, "filename": filename, "report": report,
-                "rows_added": added, "partitions": len(records),
-                "months": [f"{r['year']}-{r['month']:02d}" for r in records]}
+        out = {"status": "ok", "kind": kind, "filename": filename, "report": report,
+               "rows_added": added, "partitions": len(records),
+               "months": [f"{r['year']}-{r['month']:02d}" for r in records]}
+        if durable_result is not None:
+            out["saved_to_database"] = durable_result.get("ok", False)
+            if not durable_result.get("ok", False):
+                out["warning"] = ("Stored on this server's disk only — saving to the database failed, "
+                                  "so this upload will be lost on the next deploy: "
+                                  + durable_result.get("error", ""))
+        return out
     except Exception as exc:
         logger.error("market store ingest failed (%s): %s", filename, exc)
         if catalog:

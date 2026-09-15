@@ -247,6 +247,15 @@ _PARTITIONING = ds.partitioning(
     flavor="hive")
 
 
+def _sync(block: bool) -> None:
+    """Restore months kept in the database but missing from disk (see durable.py)."""
+    try:
+        from research.market_store import durable
+        durable.hydrate() if block else durable.hydrate_in_background()
+    except Exception as exc:                      # storage must work without a database
+        logger.debug("market store sync skipped: %s", exc)
+
+
 def _dataset(kind: str) -> Optional[ds.Dataset]:
     base = ROOT / f"kind={kind}"
     if not base.exists() or not any(base.rglob("*.parquet")):
@@ -258,6 +267,7 @@ def read(kind: str, underlying: str = "NIFTY", start: Optional[str] = None,
          end: Optional[str] = None, columns: Optional[Iterable[str]] = None,
          where: Optional[ds.Expression] = None) -> pd.DataFrame:
     """Predicate-pushdown read. Only the partitions in range are opened."""
+    _sync(block=True)
     d = _dataset(kind)
     if d is None:
         return pd.DataFrame()
@@ -277,7 +287,25 @@ def read(kind: str, underlying: str = "NIFTY", start: Optional[str] = None,
 
 
 def summary() -> dict:
-    """What is in the store, without opening a single data page."""
+    """What is in the store, without opening a single data page.
+
+    While a fresh server is still restoring months from the database, the counts come
+    from the database copy and ``syncing`` is True."""
+    _sync(block=False)
+    out = _disk_summary()
+    try:
+        from research.market_store import durable
+        if durable.is_syncing():
+            remote = durable.db_summary()
+            if remote and sum(v["months"] for v in remote.values()) > sum(v["months"] for v in out.values()):
+                out = remote
+            out["syncing"] = True
+    except Exception:
+        pass
+    return out
+
+
+def _disk_summary() -> dict:
     out = {}
     for kind in ("spot", "options"):
         base = ROOT / f"kind={kind}"
