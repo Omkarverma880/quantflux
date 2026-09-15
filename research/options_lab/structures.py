@@ -72,6 +72,13 @@ class StructureTrade:
     exit_reason: str
     stale_legs_at_exit: int
     gap_min: int
+    # human-readable view of the same trade (prices per unit, always positive)
+    premium_in: float = 0.0
+    premium_out: float = 0.0
+    entry_action: str = ""               # "Paid" (bought / debit) | "Received" (sold / credit)
+    exit_action: str = ""
+    leg_prices: str = ""                 # "BUY 23250 CE 110.20→242.05"
+    plain: str = ""                      # one sentence a person can check against the chart
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -210,7 +217,29 @@ def run_day(day: pd.DataFrame, rule: StructureRule, lot_size: int, costs: CostMo
     pnl = pnl_unit * qty - c
     cap = rule.margin_per_lot * lots if short else -net_entry * qty
     leg_txt = " + ".join(f"{'BUY' if s > 0 else 'SELL'} {int(k)} {t}" for t, k, s, _ in legs)
+    leg_px = " + ".join(f"{'BUY' if s > 0 else 'SELL'} {int(k)} {t} {pi:.2f}→{po:.2f}"
+                        for (t, k, s, _), pi, po in zip(legs, ein, exits))
+    t_in, t_out = _hhmm(SESSION_OPEN + i0), _hhmm(SESSION_OPEN + exit_i)
+    why = {"SL": "stop-loss hit", "TARGET": "target hit",
+           "EOD": f"squared off at {_hhmm(rule.squareoff)}"}.get(reason, reason)
+    lot_txt = f"{lots} lot{'s' if lots != 1 else ''} ({qty} qty)"
+    if len(legs) == 1:
+        typ0, k0, _, _ = legs[0]
+        plain = (f"Bought {lot_txt} of {int(k0)} {typ0} at ₹{ein[0]:.2f} at {t_in}, sold at ₹{exits[0]:.2f} "
+                 f"at {t_out} — {why}. NIFTY {spot[i0]:.0f} → {spx:.0f}.")
+    else:
+        opened = ", ".join(f"{'bought' if s > 0 else 'sold'} {int(k)} {t} at ₹{p:.2f}"
+                           for (t, k, s, _), p in zip(legs, ein))
+        closed = ", ".join(f"{'sold' if s > 0 else 'bought back'} {int(k)} {t} at ₹{p:.2f}"
+                           for (t, k, s, _), p in zip(legs, exits))
+        plain = (f"{lot_txt} at {t_in}: {opened} (net ₹{abs(net_entry):.2f} per unit "
+                 f"{'received' if net_entry > 0 else 'paid'}). At {t_out}: {closed} — {why}. "
+                 f"NIFTY {spot[i0]:.0f} → {spx:.0f}.")
     return StructureTrade(
+        premium_in=round(abs(float(net_entry)), 2), premium_out=round(abs(float(net_exit)), 2),
+        entry_action="Received" if net_entry > 0 else "Paid",
+        exit_action="Received" if net_exit > 0 else "Paid",
+        leg_prices=leg_px, plain=plain,
         date=str(d), structure=rule.structure, dte=dte,
         decision_time=_hhmm(rule.entry_minute), entry_time=_hhmm(SESSION_OPEN + i0),
         exit_time=_hhmm(SESSION_OPEN + exit_i), spot_entry=round(float(spot[i0]), 2),

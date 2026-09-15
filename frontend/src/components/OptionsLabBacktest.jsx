@@ -35,7 +35,14 @@ function Stat({ label, value, sub, t = '' }) {
 }
 
 function SplitRow({ label, s }) {
-  if (!s || !s.trades) return <tr className="border-t border-surface-3/50"><td className="px-2 py-1.5 text-gray-400">{label}</td><td colSpan={7} className="px-2 py-1.5 text-gray-600">no trades</td></tr>;
+  if (!s || !s.trades) return (
+    <tr className="border-t border-surface-3/50">
+      <td className="px-2 py-1.5 text-gray-400">{label}</td>
+      <td colSpan={7} className="px-2 py-1.5 text-gray-600">
+        {s?.outside_range ? 'not in your selected dates — widen Start/End to include it' : 'no trades in this period'}
+      </td>
+    </tr>
+  );
   return (
     <tr className="border-t border-surface-3/50">
       <td className="px-2 py-1.5 text-gray-200">{label}</td>
@@ -62,7 +69,10 @@ export default function OptionsLabBacktest() {
   useEffect(() => {
     api.olMeta().then((m) => {
       if (m?.status === 'error') { setErr(m.message); return; }
-      setMeta(m); setRule(m.defaults);
+      setMeta(m);
+      const start = m.default_preset && m.presets?.[m.default_preset];
+      setPreset(start ? m.default_preset : '');
+      setRule(start ? { ...m.defaults, ...start.rule } : m.defaults);
     }).catch((e) => setErr(String(e)));
   }, []);
 
@@ -165,7 +175,8 @@ export default function OptionsLabBacktest() {
               <Stat label="Win rate" value={`${s.win_rate}%`} />
               <Stat label="P&L / trade" value={INR(s.pnl_per_trade)} t={tone(s.pnl_per_trade)} />
               <Stat label="t-stat" value={s.t_stat ?? '—'} sub="> 2 before believing it" />
-              <Stat label="P&L / year" value={INR(s.pnl_per_year)} t={tone(s.pnl_per_year)} />
+              <Stat label="P&L / year" value={INR(s.pnl_per_year)} t={tone(s.pnl_per_year)}
+                sub={s.pnl_per_year == null ? 'shown for 3+ months of dates' : 'projected from this range'} />
               <Stat label="Max drawdown" value={INR(s.max_drawdown)} t="text-red-400" />
               <Stat label="Total P&L" value={INR(s.pnl_total)} t={tone(s.pnl_total)} />
               <Stat label="Profit factor" value={s.profit_factor ?? '—'} />
@@ -212,33 +223,54 @@ export default function OptionsLabBacktest() {
 
           {res.trades?.length > 0 && (
             <div className="card">
-              <h3 className="text-sm font-semibold text-gray-100 mb-2">Trade log ({res.trades.length})</h3>
-              <div className="overflow-x-auto max-h-[520px]">
+              <h3 className="text-sm font-semibold text-gray-100">Trade log ({res.trades.length})</h3>
+              <p className="text-[11.5px] text-gray-500 mb-2">
+                Prices are per unit of the option (1 qty), after slippage. P&L = (exit − entry) × qty − costs.
+                For multi-leg trades the price is the net of all legs; each leg is listed underneath.
+              </p>
+              <div className="overflow-x-auto max-h-[620px]">
                 <table className="w-full text-[12px]">
                   <thead className="sticky top-0 bg-surface-2">
                     <tr className="text-gray-500">
-                      {['Date', 'DTE', 'In', 'Out', 'Legs', 'Spot', 'Net in', 'Net out', 'Lots', 'Costs', 'P&L', 'Why', 'Stale'].map((h, i) => (
-                        <th key={h} className={`px-2 py-1.5 font-semibold ${[0, 4].includes(i) ? 'text-left' : 'text-right'}`}>{h}</th>))}
+                      {['Date', 'DTE', 'Entry', 'Exit', 'Size', 'Costs', 'P&L', 'Result'].map((h, i) => (
+                        <th key={h} className={`px-2 py-1.5 font-semibold ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>))}
                     </tr>
                   </thead>
                   <tbody>
-                    {res.trades.slice().reverse().map((t, i) => (
-                      <tr key={i} className="border-t border-surface-3/40">
-                        <td className="px-2 py-1 text-gray-300 whitespace-nowrap">{t.date}</td>
-                        <td className="px-2 py-1 text-right mono">{t.dte}</td>
-                        <td className="px-2 py-1 text-right mono text-gray-500">{t.entry_time}</td>
-                        <td className="px-2 py-1 text-right mono text-gray-500">{t.exit_time}</td>
-                        <td className="px-2 py-1 text-gray-300 whitespace-nowrap">{t.legs}</td>
-                        <td className="px-2 py-1 text-right mono text-gray-400">{Number(t.spot_entry).toFixed(0)}→{Number(t.spot_exit).toFixed(0)}</td>
-                        <td className="px-2 py-1 text-right mono">{Number(t.net_entry).toFixed(2)}</td>
-                        <td className="px-2 py-1 text-right mono">{Number(t.net_exit).toFixed(2)}</td>
-                        <td className="px-2 py-1 text-right mono">{t.lots}</td>
-                        <td className="px-2 py-1 text-right mono text-gray-500">{INR(t.costs_rs)}</td>
-                        <td className={`px-2 py-1 text-right mono font-semibold ${tone(t.pnl_rs)}`}>{INR(t.pnl_rs)}</td>
-                        <td className="px-2 py-1 text-right text-gray-400">{t.exit_reason}</td>
-                        <td className={`px-2 py-1 text-right mono ${t.stale_legs_at_exit ? 'text-amber-400' : 'text-gray-600'}`}>{t.stale_legs_at_exit}</td>
-                      </tr>
-                    ))}
+                    {res.trades.slice().reverse().map((t, i) => {
+                      const credit = t.entry_action === 'Received';
+                      const result = { SL: 'Stop-loss', TARGET: 'Target', EOD: 'Square-off' }[t.exit_reason] || t.exit_reason;
+                      return (
+                        <React.Fragment key={i}>
+                          <tr className="border-t border-surface-3/40">
+                            <td className="px-2 pt-1.5 text-gray-200 whitespace-nowrap">{t.date}</td>
+                            <td className="px-2 pt-1.5 text-right mono">{t.dte}</td>
+                            <td className="px-2 pt-1.5 text-right whitespace-nowrap">
+                              <span className="mono text-gray-500">{t.entry_time}</span>{' '}
+                              <span className="text-gray-400">{credit ? 'sold for' : 'bought at'}</span>{' '}
+                              <span className="mono text-gray-100">₹{Number(t.premium_in).toFixed(2)}</span>
+                            </td>
+                            <td className="px-2 pt-1.5 text-right whitespace-nowrap">
+                              <span className="mono text-gray-500">{t.exit_time}</span>{' '}
+                              <span className="text-gray-400">{credit ? 'bought back at' : 'sold at'}</span>{' '}
+                              <span className="mono text-gray-100">₹{Number(t.premium_out).toFixed(2)}</span>
+                            </td>
+                            <td className="px-2 pt-1.5 text-right mono whitespace-nowrap">{t.lots} lots · {t.qty} qty</td>
+                            <td className="px-2 pt-1.5 text-right mono text-gray-500">{INR(t.costs_rs)}</td>
+                            <td className={`px-2 pt-1.5 text-right mono font-semibold ${tone(t.pnl_rs)}`}>{INR(t.pnl_rs)}</td>
+                            <td className={`px-2 pt-1.5 text-right ${t.exit_reason === 'TARGET' ? 'text-green-400' : t.exit_reason === 'SL' ? 'text-red-400' : 'text-gray-400'}`}>{result}</td>
+                          </tr>
+                          <tr>
+                            <td colSpan={8} className="px-2 pb-1.5 text-[11.5px] text-gray-400">
+                              {t.plain || t.legs}
+                              {t.stale_legs_at_exit > 0 && (
+                                <span className="text-amber-400"> · {t.stale_legs_at_exit} leg(s) had no trade at the exit minute and were priced adversely</span>
+                              )}
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

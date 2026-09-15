@@ -44,17 +44,24 @@ export default function OptionsLab() {
       {tab === 'backtest' && <OptionsLabBacktest />}
       {tab === 'info' && <OptionsLabInfo />}
       {tab === 'live' && (
-        <div className="card space-y-2 max-w-3xl">
-          <h2 className="text-sm font-semibold text-gray-100">No live or paper engine is armed from the lab</h2>
-          <p className="text-[13px] text-gray-400">
-            Three years of real option prices were tested for both buying and selling. No setup survived the sealed
-            holdout, realistic costs and margin, and the data-window checks — so there is nothing here that has earned
-            a place in live trading, and placing orders from an unvalidated rule is exactly how losses happen.
+        <div className="card space-y-3 max-w-3xl">
+          <h2 className="text-sm font-semibold text-gray-100">Nothing trades from this page yet — on purpose</h2>
+          <p className="text-[13px] text-gray-300">
+            This tab only arms a strategy that has passed its tests. None has so far, so no live or paper orders are
+            placed from here. Your other strategies (Strategies page, VWAP Options Engine, NIFTY Open ±50, Index
+            Straddle) are not affected and run exactly as before.
           </p>
-          <p className="text-[13px] text-gray-400">
-            Use the Backtest tab to test your own ideas on real prices. If a rule clears t &gt; 2, holds after the
-            holdout date, and does not depend on unobserved legs, that is the point to build a paper engine for it.
-            The How it works tab has the full record of what was tried.
+          <div className="text-[12.5px] text-gray-400 space-y-1">
+            <div className="font-semibold text-gray-300">What a strategy must show in the Backtest tab first</div>
+            <div>1. Profit over years, not days — a few days can look great by luck (t-stat above 2).</div>
+            <div>2. Still profitable in the “From 2025-12-01” row, the period it was never tuned on.</div>
+            <div>3. Profit not coming from 2–3 lucky trades, and no legs priced without a real trade.</div>
+          </div>
+          <p className="text-[12.5px] text-gray-400">
+            The strongest candidate from the machine-learning research (a model picking option buys using India VIX,
+            first-hour option flow and previous-day/week/month levels) made money on its unseen period but has not yet
+            cleared rule 1. The next step for it is a paper-only engine that logs every signal so it can be judged on
+            real forward results before any money is used.
           </p>
         </div>
       )}

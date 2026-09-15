@@ -54,26 +54,40 @@ def safe(name: str):
     return deco
 
 
+DEFAULT_PRESET = "short_straddle_expiry"
+# Notes quote this exact code run on the full store (Sep 2023 – Sep 2026, 739 sessions), so a
+# user testing a few days can compare with the long-run result before trusting it.
 PRESETS = {
-    "iron_fly_research": {
-        "label": "Iron fly, 200-pt wings (sell) — NOT validated",
-        "rule": {"structure": "iron_fly", "entry_minute": 585, "squareoff": 915, "wing_steps": 4,
-                 "stop_x_credit": 0.0, "dte_min": 2, "dte_max": 30, "margin_per_lot": 40000.0},
-        "note": "Looked strong in research (holdout t = 2.35) until stress-tested: 48% of trades had a wing "
-                "with no real price at exit. Priced adversely it loses (t = -9). Kept so the result can be "
-                "re-checked; stale-leg adverse pricing is ON by default.",
-    },
     "short_straddle_expiry": {
-        "label": "Short straddle, expiry day (for comparison)",
+        "label": "Short straddle, expiry day, 10:00, stop 0.35× — most consistent (needs ₹2L)",
         "rule": {"structure": "short_straddle", "entry_minute": 600, "squareoff": 915,
-                 "stop_x_credit": 0.35, "dte_min": 0, "dte_max": 0, "margin_per_lot": 190000.0},
-        "note": "The old modelled strategy on real prices. Not significant; needs ~₹1.9L margin per lot.",
+                 "stop_x_credit": 0.35, "target_pct": 0.0, "dte_min": 0, "dte_max": 0,
+                 "margin_per_lot": 190000.0, "capital": 200000.0, "max_lots": 1},
+        "note": "3 years, 1 lot: 154 trades, win 47.4%, +₹80,028 (≈ ₹27k/year), max drawdown −₹24,138, "
+                "profit every year (2023 +₹6k, 2024 +₹16k, 2025 +₹31k, 2026 +₹27k) and after 2025-12-01 "
+                "(+₹39k). t = 1.66 — consistent but not yet proven (> 2). Needs ~₹1.9L margin: with ₹1L "
+                "capital it cannot place a lot.",
+    },
+    "iron_fly_expiry_100": {
+        "label": "Iron fly, 100-pt wings, expiry day, 10:00 (fits ₹1L) — breakeven",
+        "rule": {"structure": "iron_fly", "entry_minute": 600, "squareoff": 915, "wing_steps": 2,
+                 "stop_x_credit": 0.0, "dte_min": 0, "dte_max": 0, "margin_per_lot": 30000.0,
+                 "capital": 100000.0, "max_lots": 3},
+        "note": "3 years: 154 trades, win 46.8%, −₹4,644 in total (2024 −₹37k, 2025 +₹31k). No edge.",
     },
     "long_atm_call": {
-        "label": "Long ATM call (research baseline — loses)",
+        "label": "Long ATM call, 10:00, stop 15% / target 100% — loses over 3 years",
         "rule": {"structure": "long_call", "entry_minute": 600, "squareoff": 915, "stop_pct": 15.0,
-                 "target_pct": 100.0, "dte_min": 0, "dte_max": 30},
-        "note": "Random-entry option buying on real premiums loses in every slice tested.",
+                 "target_pct": 100.0, "dte_min": 0, "dte_max": 30, "max_lots": 1},
+        "note": "3 years, 1 lot: 737 trades, win 22.5%, −₹63,446. A week or two can show a big profit "
+                "from one or two target hits; over years the stop-losses outweigh them. Long ATM put: −₹2.31L.",
+    },
+    "iron_fly_research": {
+        "label": "Iron fly, 200-pt wings, DTE 2–30 — worst result, do not use",
+        "rule": {"structure": "iron_fly", "entry_minute": 585, "squareoff": 915, "wing_steps": 4,
+                 "stop_x_credit": 0.0, "dte_min": 2, "dte_max": 30, "margin_per_lot": 40000.0},
+        "note": "3 years: 443 trades, win 20.3%, −₹9,61,460, lost every year. It only looked good in early "
+                "research because 48% of trades had a wing with no real price at exit.",
     },
 }
 
@@ -104,12 +118,14 @@ def _stats(df: pd.DataFrame) -> dict:
     n = len(r)
     d0, d1 = pd.to_datetime(df.date).min(), pd.to_datetime(df.date).max()
     yrs = max((d1 - d0).days / 365.25, 1 / 12)
+    # projecting a few days to a year is meaningless — only annualise 3+ months
+    per_year = round(float(r.sum() / yrs)) if (d1 - d0).days >= 90 else None
     eq = r.cumsum()
     wins, losses = r[r > 0], r[r < 0]
     return {
         "trades": n, "win_rate": round(float((r > 0).mean() * 100), 1),
         "pnl_total": round(float(r.sum())), "pnl_per_trade": round(float(r.mean())),
-        "pnl_per_year": round(float(r.sum() / yrs)),
+        "pnl_per_year": per_year,
         "t_stat": round(float(r.mean() / (r.std() / np.sqrt(n))), 2) if n > 2 and r.std() > 0 else None,
         "max_drawdown": round(float((eq - eq.cummax()).min())),
         "worst_trade": round(float(r.min())), "best_trade": round(float(r.max())),
@@ -128,7 +144,8 @@ def _stats(df: pd.DataFrame) -> dict:
 @safe("meta")
 def meta(user_id: int = Depends(login_required)):
     return {"status": "ok", "structures": list(ST.STRUCTURES), "defaults": asdict(ST.StructureRule()),
-            "presets": PRESETS, "holdout_start": HOLDOUT_START, "store": MS.summary()}
+            "presets": PRESETS, "default_preset": DEFAULT_PRESET,
+            "holdout_start": HOLDOUT_START, "store": MS.summary()}
 
 
 @router.post("/backtest")
@@ -141,7 +158,9 @@ def backtest(req: LabReq, user_id: int = Depends(login_required)):
                          "open", "close", "spot"])
     if O.empty:
         return {"status": "error", "message": "No option data in the Market Store for that range — upload it in the Data tab"}
-    sessions = int(pd.to_datetime(O.timestamp).dt.date.nunique())
+    days = pd.to_datetime(O.timestamp).dt.date
+    sessions = int(days.nunique())
+    first_day, last_day = pd.Timestamp(days.min()), pd.Timestamp(days.max())
     trades = ST.run(O, rule, lot_size=req.lot_size, costs=CostModel(slippage_pts=req.slippage_pts),
                     underlying=req.underlying)
     T = pd.DataFrame([t.as_dict() for t in trades])
@@ -175,6 +194,11 @@ def backtest(req: LabReq, user_id: int = Depends(login_required)):
             s = _stats(g); s["period"] = p; rows.append(s)
         out[key] = rows
     ho = pd.Timestamp(HOLDOUT_START)
-    out["split"] = {"before_holdout": _stats(T[dt < ho]), "holdout": _stats(T[dt >= ho])}
+    before, after = _stats(T[dt < ho]), _stats(T[dt >= ho])
+    if first_day >= ho:
+        before["outside_range"] = True            # the chosen dates never reach this period
+    if last_day < ho:
+        after["outside_range"] = True
+    out["split"] = {"before_holdout": before, "holdout": after}
     out["funnel"] = {"sessions_in_range": sessions, "trades": len(T), "skips": skips}
     return out
