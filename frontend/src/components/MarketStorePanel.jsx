@@ -65,6 +65,9 @@ export default function MarketStorePanel() {
 
   const sp = summary?.spot || {};
   const op = summary?.options || {};
+  // extra series stored next to NIFTY (e.g. INDIAVIX), listed under the tiles
+  const others = ['spot', 'options'].flatMap((k) => Object.entries(summary?.[k]?.by_underlying || {})
+    .filter(([u]) => u !== 'NIFTY').map(([u, v]) => ({ kind: k, u, ...v })));
 
   return (
     <div className="space-y-4">
@@ -93,6 +96,15 @@ export default function MarketStorePanel() {
           <Tile label="Spot bars" value={N(sp.rows)} sub={sp.first_month ? `${sp.first_month} → ${sp.last_month}` : 'empty'} />
           <Tile label="Spot months" value={sp.months || 0} sub={MB(sp.bytes)} />
         </div>
+        {others.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-gray-400">
+            {others.map((o) => (
+              <span key={`${o.kind}-${o.u}`}>
+                <span className="text-gray-200 font-semibold">{o.u}</span> {o.kind}: {N(o.rows)} bars, {o.first_month} → {o.last_month}, {MB(o.bytes)}
+              </span>
+            ))}
+          </div>
+        )}
 
         {summary?.syncing && (
           <div className="mt-3 rounded-lg bg-amber-500/10 border border-amber-500/25 px-3 py-2 text-[12px] text-amber-200 flex items-center gap-2">

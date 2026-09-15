@@ -196,16 +196,8 @@ def db_summary() -> dict | None:
     finally:
         if db is not None:
             db.close()
-    out = {}
-    for kind in ("spot", "options"):
-        rows = [(k, r) for k, r in remote.items() if k[0] == kind]
-        months = sorted((k[2], k[3]) for k, _ in rows)
-        out[kind] = {"files": len(rows), "rows": int(sum(r.rows or 0 for _, r in rows)),
-                     "bytes": int(sum(r.bytes or 0 for _, r in rows)),
-                     "first_month": f"{months[0][0]}-{months[0][1]:02d}" if months else None,
-                     "last_month": f"{months[-1][0]}-{months[-1][1]:02d}" if months else None,
-                     "months": len(months)}
-    return out
+    return MS.summarize_entries([(k[0], k[1], k[2], k[3], r.rows or 0, r.bytes or 0)
+                                 for k, r in remote.items()])
 
 
 def _cli(argv: list[str]) -> int:
@@ -230,8 +222,9 @@ def _cli(argv: list[str]) -> int:
         print(hydrate(force=True))
     s = db_summary() or {}
     for kind, v in s.items():
-        print(f"database has {kind}: {v['months']} months, {v['rows']:,} rows, {v['bytes']/1e6:.1f} MB "
-              f"({v['first_month']} .. {v['last_month']})")
+        for und, u in v.get("by_underlying", {}).items():
+            print(f"database has {kind} {und}: {u['months']} months, {u['rows']:,} rows, {u['bytes']/1e6:.1f} MB "
+                  f"({u['first_month']} .. {u['last_month']})")
     return 0
 
 

@@ -305,19 +305,37 @@ def summary() -> dict:
     return out
 
 
-def _disk_summary() -> dict:
+PRIMARY_UNDERLYING = "NIFTY"
+
+
+def summarize_entries(entries: list[tuple]) -> dict:
+    """entries: (kind, underlying, year, month, rows, bytes) per partition file.
+
+    Each kind reports its primary underlying (what backtests read) at the top level and
+    every series separately under ``by_underlying`` — e.g. INDIAVIX next to NIFTY spot."""
+    def agg(items):
+        months = sorted({(y, m) for _, _, y, m, _, _ in items})
+        return {"files": len(items), "rows": int(sum(r for *_, r, _ in items)),
+                "bytes": int(sum(b for *_, b in items)),
+                "first_month": f"{months[0][0]}-{months[0][1]:02d}" if months else None,
+                "last_month": f"{months[-1][0]}-{months[-1][1]:02d}" if months else None,
+                "months": len(months)}
     out = {}
     for kind in ("spot", "options"):
-        base = ROOT / f"kind={kind}"
-        files = list(base.rglob("*.parquet")) if base.exists() else []
-        rows = 0; size = 0; first = last = None
-        for f in files:
-            md = pq.ParquetFile(f).metadata
-            rows += md.num_rows; size += f.stat().st_size
-        parts = sorted({(int(p.parent.parent.name.split("=")[1]), int(p.parent.name.split("=")[1]))
-                        for p in files})
-        if parts:
-            first, last = f"{parts[0][0]}-{parts[0][1]:02d}", f"{parts[-1][0]}-{parts[-1][1]:02d}"
-        out[kind] = {"files": len(files), "rows": rows, "bytes": size,
-                     "first_month": first, "last_month": last, "months": len(parts)}
+        items = [e for e in entries if e[0] == kind]
+        unds = sorted({e[1] for e in items})
+        by = {u: agg([e for e in items if e[1] == u]) for u in unds}
+        primary = by.get(PRIMARY_UNDERLYING) or agg(items)
+        out[kind] = {**primary, "by_underlying": by}
     return out
+
+
+def _disk_summary() -> dict:
+    entries = []
+    for kind in ("spot", "options"):
+        base = ROOT / f"kind={kind}"
+        for f in (base.rglob("*.parquet") if base.exists() else []):
+            und = f.parent.parent.parent.name.split("=")[1]
+            y = int(f.parent.parent.name.split("=")[1]); mo = int(f.parent.name.split("=")[1])
+            entries.append((kind, und, y, mo, pq.ParquetFile(f).metadata.num_rows, f.stat().st_size))
+    return summarize_entries(entries)
