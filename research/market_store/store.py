@@ -43,7 +43,9 @@ from core.logger import get_logger
 
 logger = get_logger("research.market_store")
 
-ROOT = Path(settings.DATA_DIR) / "market_store"
+# On Railway the container disk is wiped on every redeploy. Point MARKET_STORE_DIR
+# at a mounted volume (e.g. /data/market_store) so uploaded history survives.
+ROOT = Path(os.environ.get("MARKET_STORE_DIR") or (Path(settings.DATA_DIR) / "market_store"))
 COMPRESSION = "zstd"
 SESSION_START_MIN, SESSION_END_MIN = 9 * 60 + 15, 15 * 60 + 30
 

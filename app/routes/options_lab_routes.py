@@ -151,8 +151,19 @@ def backtest(req: LabReq, user_id: int = Depends(login_required)):
            "trades": [], "yearly": [], "monthly": [], "equity": [], "split": {},
            "funnel": {"sessions_in_range": sessions, "trades": len(T), "skips": skips}}
     if T.empty:
-        top = skips[0]["label"] if skips else "no eligible sessions"
-        out["summary"]["note"] = f"No trades. Main reason: {top}."
+        # Days outside the DTE window are expected skips, not the problem. Name the
+        # reason that stopped the days that WERE eligible, or it points at the wrong setting.
+        outside = next((k["sessions"] for k in skips if k["reason"] == "outside_dte_window"), 0)
+        eligible = [k for k in skips if k["reason"] != "outside_dte_window"]
+        if eligible:
+            n_elig = sum(k["sessions"] for k in eligible)
+            out["summary"]["note"] = (f"No trades. {outside} session(s) were outside the days-to-expiry window; "
+                                      f"of the {n_elig} inside it, the main reason was: {eligible[0]['label']}.")
+        elif outside:
+            out["summary"]["note"] = ("No trades. Every session was outside the days-to-expiry window — "
+                                      "widen DTE from / DTE to.")
+        else:
+            out["summary"]["note"] = "No trades. No eligible sessions in the selected range."
         return out
     T["pnl_cum"] = T.pnl_rs.cumsum()
     out["trades"] = T.to_dict("records")
