@@ -81,6 +81,9 @@ export default function OILab() {
     }
   }, [index, expiry, span]);
 
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
   const loadOverview = useCallback(() => {
     api.oiLabOverview().then((r) => { if (r.status === 'ok') setOverview(r); }).catch(() => {});
   }, []);
@@ -90,7 +93,7 @@ export default function OILab() {
   useEffect(() => {
     loadOverview();
     const t = setInterval(() => { if (!document.hidden) loadOverview(); }, 60000);
-    const onConn = () => { loadOverview(); load(); };
+    const onConn = () => { loadOverview(); loadRef.current(); };
     window.addEventListener('zerodha_connected', onConn);
     return () => { clearInterval(t); window.removeEventListener('zerodha_connected', onConn); };
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps

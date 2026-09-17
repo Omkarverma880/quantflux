@@ -227,8 +227,9 @@ def flow(rows: list[dict], spot: float, step: float) -> dict:
     for side in ("ce", "pe"):
         b = sum(_num((r.get(side) or {}).get("buy_qty")) for r in near)
         s = sum(_num((r.get(side) or {}).get("sell_qty")) for r in near)
-        ltp = sum(_num((r.get(side) or {}).get("ltp")) for r in near)
-        vwap = sum(_num((r.get(side) or {}).get("vwap")) for r in near)
+        traded = [r[side] for r in near if (r.get(side) or {}).get("ltp") and (r.get(side) or {}).get("vwap")]
+        ltp = sum(_num(c["ltp"]) for c in traded)
+        vwap = sum(_num(c["vwap"]) for c in traded)
         agg[side] = {"bid_qty": b, "ask_qty": s, "imbalance": round((b - s) / (b + s), 3) if b + s else 0.0,
                      "vs_vwap_pct": round((ltp - vwap) / vwap * 100, 2) if vwap else 0.0}
     ce, pe = agg["ce"], agg["pe"]

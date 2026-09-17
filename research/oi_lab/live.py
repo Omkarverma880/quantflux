@@ -91,11 +91,18 @@ class Tape:
         age = time.monotonic() - rec["fetched"]
         if rec.get("error"):
             return age > 60
-        return _market_open(IX.now_ist()) and age > TAPE_REFRESH_S
+        now = IX.now_ist()
+        if _market_open(now):
+            return age > TAPE_REFRESH_S
+        # fetched during today's session but the session is now over → one more fetch for the final bars
+        closed_at = datetime.combine(now.date(), datetime.min.time()) + timedelta(minutes=IX.SESSION_CLOSE_MIN + 5)
+        fetched_at = rec.get("fetched_at")
+        return fetched_at is not None and fetched_at.date() == now.date() and fetched_at < closed_at <= now
 
     def request(self, broker, tokens: list[int], with_oi: bool = True) -> None:
         with self._lock:
             self._broker = broker
+            self._prune()
             for t in tokens:
                 self._with_oi[t] = with_oi
                 if t not in self._queued and self._stale(t):
@@ -104,6 +111,13 @@ class Tape:
             if self._queue and (self._thread is None or not self._thread.is_alive()):
                 self._thread = threading.Thread(target=self._run, daemon=True, name="oi-lab-tape")
                 self._thread.start()
+
+    def _prune(self) -> None:
+        """Drop tapes of sessions older than a week (expired contracts accumulate otherwise)."""
+        cutoff = IX.now_ist().date() - timedelta(days=7)
+        for t in [t for t, r in self._data.items() if r.get("session") and r["session"] < cutoff]:
+            self._data.pop(t, None)
+            self._with_oi.pop(t, None)
 
     def get(self, token: int) -> Optional[dict]:
         rec = self._data.get(token)
@@ -135,7 +149,7 @@ class Tape:
             candles = broker.get_historical_data(token, frm, now, TAPE_INTERVAL, oi=with_oi) or []
         except Exception as exc:
             logger.debug("tape fetch %s failed: %s", token, exc)
-            self._data[token] = {"fetched": time.monotonic(), "error": str(exc)[:200]}
+            self._data[token] = {"fetched": time.monotonic(), "fetched_at": now, "error": str(exc)[:200]}
             return
         rows = []
         for c in candles:
@@ -145,14 +159,14 @@ class Tape:
             rows.append((dt.date(), dt.hour * 60 + dt.minute + 5, float(c.get("close") or 0),
                          float(c.get("volume") or 0), float(c.get("oi") or 0)))
         if not rows:
-            self._data[token] = {"fetched": time.monotonic(), "session": None, "prev_oi": None,
+            self._data[token] = {"fetched": time.monotonic(), "fetched_at": now, "session": None, "prev_oi": None,
                                  "prev_close": None, "bars": []}
             return
         session = rows[-1][0]
         prev = [r for r in rows if r[0] < session]
         bars = [{"cp": r[1], "close": r[2], "volume": r[3], "oi": r[4]} for r in rows if r[0] == session]
         self._data[token] = {
-            "fetched": time.monotonic(), "session": session,
+            "fetched": time.monotonic(), "fetched_at": now, "session": session,
             "prev_oi": prev[-1][4] if prev and with_oi else None,
             "prev_close": prev[-1][2] if prev else None, "bars": bars,
         }
@@ -165,7 +179,8 @@ class OILabLive:
         self._inst: dict[str, tuple[date, list[dict]]] = {}
         self._spot_tokens: dict[str, int] = {}
         self._cache: dict[tuple, tuple[float, dict]] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()                      # guards the dicts only, never held while fetching
+        self._key_locks: dict[tuple, threading.Lock] = {}
 
     # instruments ---------------------------------------------------------
     def _options(self, broker, index: str) -> list[dict]:
@@ -222,12 +237,17 @@ class OILabLive:
         window = max(3, min(int(window or 7), 15))
         key = (cfg["key"], expiry or "", window)
         with self._lock:
+            key_lock = self._key_locks.setdefault(key, threading.Lock())
+        # One build per chain at a time. Other indices/windows build in parallel, and
+        # concurrent viewers of the same chain wait for, then reuse, the fresh result.
+        with key_lock:
             hit = self._cache.get(key)
             if hit and time.monotonic() - hit[0] < SNAPSHOT_TTL_S:
                 return hit[1]
             out = self._build(broker, cfg, expiry, window)
             if out.get("status") == "ok":
-                self._cache[key] = (time.monotonic(), out)
+                with self._lock:
+                    self._cache[key] = (time.monotonic(), out)
             return out
 
     def _build(self, broker, cfg: dict, expiry: Optional[str], window: int) -> dict:
@@ -250,6 +270,10 @@ class OILabLive:
 
         listed = [o for o in opts if o["expiry"] == exp]
         strikes_all = sorted({o["strike"] for o in listed})
+        if not strikes_all:
+            return {"status": "error", "message": f"No {cfg['key']} contracts listed for expiry {exp.isoformat()} — "
+                                                  "it may have expired. Pick another expiry.",
+                    "expiries": [e.isoformat() for e in exps[:8]]}
         step = self._step(strikes_all, spot, cfg["step"])
         atm = min(strikes_all, key=lambda s: abs(s - spot))
         i = strikes_all.index(atm)
@@ -267,14 +291,17 @@ class OILabLive:
         must = [o["token"] for o in ordered if abs(o["strike"] - atm) <= step * 2.01] + ([spot_token] if spot_token else [])
         self.tape.wait(must, timeout=4.0)
 
-        exp_close = datetime.combine(exp, datetime.min.time()) + timedelta(hours=15, minutes=30)
-        T = max((exp_close - now).total_seconds() / (365 * 24 * 3600), MIN_T)
         spot_tape = self.tape.get(spot_token) if spot_token else None
         session = (spot_tape or {}).get("session") or next(
             (t["session"] for t in (self.tape.get(o["token"]) for o in ordered) if t and t.get("session")), now.date())
         dte = max((exp - session).days, 0)
         now_min = now.hour * 60 + now.minute
         live_session = session == now.date() and _market_open(now)
+        # A closed session's last prices were struck with the time left AT its close, not now.
+        session_close = datetime.combine(session, datetime.min.time()) + timedelta(minutes=IX.SESSION_CLOSE_MIN)
+        priced_at = now if live_session else min(now, session_close)
+        exp_close = datetime.combine(exp, datetime.min.time()) + timedelta(minutes=IX.SESSION_CLOSE_MIN)
+        T = max((exp_close - priced_at).total_seconds() / (365 * 24 * 3600), MIN_T)
         cp_now = min(max(now_min, IX.REF_MIN), HS.LAST_CP) if live_session else HS.LAST_CP
         mins_left = max(IX.SESSION_CLOSE_MIN - now_min, 0) if live_session else 0
 
@@ -294,7 +321,7 @@ class OILabLive:
         ivs = [c["iv"] for c in (atm_row["ce"], atm_row["pe"]) if c and c.get("iv")]
         atm_iv = sum(ivs) / len(ivs) if ivs else None
 
-        timeline, state_open = self._timeline(rows, spot_tape, step, dte, T, now)
+        timeline, state_open = self._timeline(rows, spot_tape, step, dte, T, priced_at)
         feat = self._features_now(rows, spot, step, dte, cp_now, state_open, s_ohlc)
         model_walls = feat.pop("_walls", None) if feat else None
         study, prediction, analogs, probs = HS.get(), None, None, None
@@ -313,6 +340,10 @@ class OILabLive:
         if not live_session:
             S["warnings"].insert(0, f"Market is closed — levels are from the {session:%d %b} session; "
                                     "use them to plan the next open, not to enter now.")
+            S["best"] = None
+            S["stand_aside"] = ("Market is closed, so no setup is live. Re-check after 09:20 next session, once the "
+                                "opening OI has settled"
+                                + (" — and switch to the next expiry, this one has settled." if exp <= session else "."))
         curve = None
         if study is not None:
             curve = {"dte_bucket": HS.dte_fine(dte), "history": study.curves.get(HS.dte_fine(dte)),

@@ -460,8 +460,25 @@ def status() -> dict:
     return s
 
 
+_SIG_CHECK_S = 600
+_last_sig_check = 0.0
+
+
 def get() -> Optional[HistoryStudy]:
+    """The fitted study (None until the first build finishes).
+
+    Every few minutes the store's file hashes are compared with the ones the study was built
+    from; after an upload the study rebuilds in the background while the old one keeps serving."""
+    global _last_sig_check
     ensure_started()
+    if _study is not None and time.monotonic() - _last_sig_check > _SIG_CHECK_S:
+        _last_sig_check = time.monotonic()
+        try:
+            if signature() != _study.sig:
+                logger.info("OI Lab history: Market Store changed — rebuilding")
+                ensure_started(force=True)
+        except Exception as exc:
+            logger.debug("history signature check failed: %s", exc)
     return _study
 
 
