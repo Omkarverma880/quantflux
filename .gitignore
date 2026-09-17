@@ -11,3 +11,4 @@ data/trade_history/
 data/strategy_configs/
 *.bak
 data/market_store/
+data/oi_lab/

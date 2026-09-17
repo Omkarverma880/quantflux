@@ -684,6 +684,14 @@ export const api = {
   olMeta: () => request('/index-strategy/options-lab/meta'),
   olBacktest: (payload) => request('/index-strategy/options-lab/backtest', { method: 'POST', body: JSON.stringify(payload || {}) }),
 
+  // ── OI Lab (live OI X-ray, entry zones, 3-year OI study) ──
+  oiLabMeta: () => request('/index-strategy/oi-lab/meta'),
+  oiLabSnapshot: (payload) => request('/index-strategy/oi-lab/snapshot', { method: 'POST', body: JSON.stringify(payload || {}) }),
+  oiLabOverview: () => request('/index-strategy/oi-lab/overview'),
+  oiLabContractSeries: (token) => request(`/index-strategy/oi-lab/contract-series?token=${encodeURIComponent(token)}`),
+  oiLabHistory: () => request('/index-strategy/oi-lab/history'),
+  oiLabHistoryRebuild: () => request('/index-strategy/oi-lab/history/rebuild', { method: 'POST' }),
+
   // Universal Telegram notifications (shared across the app)
   getTelegramSettings: (bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`),
   saveTelegramSettings: (cfg, bot) => request(`/settings/telegram${bot ? `?bot=${bot}` : ''}`, { method: 'POST', body: JSON.stringify(cfg || {}) }),
