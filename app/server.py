@@ -49,6 +49,7 @@ from app.routes.index_straddle_routes import router as index_straddle_router
 from app.routes.market_store_routes import router as market_store_router
 from app.routes.options_lab_routes import router as options_lab_router
 from app.routes.oi_lab_routes import router as oi_lab_router
+from app.routes.data_ingestion_routes import router as data_ingestion_router
 from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
 from app.routes.settings_routes import router as settings_router
@@ -294,6 +295,14 @@ def _run_strategies_for_user(uid: int):
         vo = _get_vwapopt(broker, uid, db)
         if authenticated and (vo.is_active or vo.cfg.get("auto_start")):
             vo.check()
+
+        # OI Lab paper engine: NIFTY/SENSEX Gann x OI signals on paper (never places orders).
+        if authenticated:
+            try:
+                from research.oi_lab.paper import ENGINE as _oi_paper
+                _oi_paper.check(uid, broker)
+            except Exception as exc:
+                print(f"[BG] OI Lab paper engine error user {uid}: {exc}", flush=True)
     finally:
         db.close()
 
@@ -463,6 +472,7 @@ app.include_router(index_straddle_router, prefix="/api/index-strategy/straddle",
 app.include_router(market_store_router, prefix="/api/market-store", tags=["MarketStore"])
 app.include_router(options_lab_router, prefix="/api/index-strategy/options-lab", tags=["Index-OptionsLab"])
 app.include_router(oi_lab_router, prefix="/api/index-strategy/oi-lab", tags=["Index-OILab"])
+app.include_router(data_ingestion_router, prefix="/api/data-ingestion", tags=["DataIngestion"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])

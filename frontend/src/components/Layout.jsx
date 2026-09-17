@@ -29,11 +29,13 @@ import {
   ChevronDown,
   Gauge,
   Wallet,
+  DatabaseZap,
 } from 'lucide-react';
 
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/research/market-dashboard', icon: Gauge, label: 'Market Dashboard' },
+  { to: '/data-ingestion', icon: DatabaseZap, label: 'Data Ingestion Lab' },
   { to: '/strategy1', icon: BarChart3, label: 'Cum. Volume' },
   { to: '/strategies', icon: TrendingUp, label: 'Strategies' },
   {

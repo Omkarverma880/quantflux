@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ScanSearch, LineChart as LineIcon, Crosshair, Database, BookOpen, RefreshCw, Pause, Play, WifiOff } from 'lucide-react';
+import { ScanSearch, LineChart as LineIcon, Crosshair, Database, BookOpen, RefreshCw, Pause, Play, WifiOff, Wallet, ChevronDown } from 'lucide-react';
 import { api } from '../../api';
 import { fmtNum, fmtInt, fmtSignedPct, tone, isNum, Empty } from '../../components/oilab/ui';
 import { Verdict, KpiStrip, BattleMap, Zones, StrikeTable } from '../../components/oilab/XRay';
@@ -7,6 +7,8 @@ import ContractDrawer from '../../components/oilab/ContractDrawer';
 import Timeline from '../../components/oilab/Timeline';
 import EntryZones from '../../components/oilab/EntryZones';
 import HistoryPanel from '../../components/oilab/HistoryPanel';
+import SignalDesk from '../../components/oilab/SignalDesk';
+import PaperPanel from '../../components/oilab/PaperPanel';
 import Guide from '../../components/oilab/Guide';
 
 /**
@@ -19,11 +21,13 @@ const TABS = [
   ['xray', 'OI X-Ray', ScanSearch],
   ['flow', 'Flow & Timeline', LineIcon],
   ['entry', 'AI Entry Zones', Crosshair],
+  ['paper', 'Paper Trades', Wallet],
   ['history', 'History & Expiry', Database],
   ['guide', 'How to read', BookOpen],
 ];
 const REFRESH_MS = 20000;
 const LIVE_TABS = new Set(['xray', 'flow', 'entry']);
+const TRADE_INDICES = new Set(['NIFTY', 'SENSEX']);
 
 function IndexStrip({ overview, active, onPick, indices }) {
   const cards = overview?.indices?.length ? overview.indices : indices.map((i) => ({ index: i.key, label: i.label }));
@@ -189,11 +193,32 @@ export default function OILab() {
               </div>
             )}
             {tab === 'flow' && <Timeline snap={snap} />}
-            {tab === 'entry' && <EntryZones snap={snap} />}
+            {tab === 'entry' && (
+              TRADE_INDICES.has(index) ? (
+                <div className="space-y-4">
+                  <SignalDesk index={index} active={tab === 'entry'} onPaper={() => {}} />
+                  <details className="group" open={false}>
+                    <summary className="cursor-pointer list-none flex items-center gap-2 text-[13px] font-semibold text-gray-200 card !py-3">
+                      <ChevronDown className="w-4 h-4 transition group-open:rotate-180" />
+                      OI wall setups (planning view) — bounce, rejection, breakout and range levels from the live chain
+                    </summary>
+                    <div className="mt-4"><EntryZones snap={snap} /></div>
+                  </details>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-surface-3 bg-surface-2 px-3 py-2 text-[12.5px] text-gray-400">
+                    The timed Signal Desk and paper trading run on NIFTY and SENSEX. {index} shows the OI wall planning view below.
+                  </div>
+                  <EntryZones snap={snap} />
+                </div>
+              )
+            )}
           </>
         )
       )}
-      {tab === 'history' && <HistoryPanel />}
+      {tab === 'history' && <HistoryPanel underlying={index} />}
+      {tab === 'paper' && <PaperPanel active={tab === 'paper'} />}
       {tab === 'guide' && <Guide />}
 
       {picked && snap && <ContractDrawer row={picked} snap={snap} onClose={() => setPicked(null)} />}

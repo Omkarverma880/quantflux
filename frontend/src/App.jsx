@@ -51,6 +51,7 @@ import NiftyOpenReversion from './pages/index/NiftyOpenReversion';
 import IndexStraddle from './pages/index/IndexStraddle';
 import OptionsLab from './pages/index/OptionsLab';
 import OILab from './pages/index/OILab';
+import DataIngestion from './pages/DataIngestion';
 import EquityPMVwapHolding from './pages/equity/PMVwapHolding';
 
 export default function App() {
@@ -101,6 +102,7 @@ export default function App() {
           <Route path="index-strategy/straddle" element={<IndexStraddle />} />
           <Route path="index-strategy/options-lab" element={<OptionsLab />} />
           <Route path="index-strategy/oi-lab" element={<OILab />} />
+          <Route path="data-ingestion" element={<DataIngestion />} />
           <Route path="equity-strategy/pmvwap-holding" element={<EquityPMVwapHolding />} />
           <Route path="equity-strategy/fourth-candle" element={<FourthCandle />} />
           <Route path="equity-strategy/fourth-candle-cash" element={<FourthCandleEquity />} />

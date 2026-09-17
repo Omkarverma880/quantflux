@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Database, CheckCircle2, XCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { RefreshCw, Database, CheckCircle2, XCircle, UploadCloud } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ReferenceLine } from 'recharts';
 import { api } from '../../api';
 import { useTheme } from '../../ThemeContext';
@@ -128,26 +129,56 @@ function DecayCurves({ curves }) {
   );
 }
 
-export default function HistoryPanel() {
+function UnderlyingPicker({ current, available, onPick }) {
+  const names = [...new Set([current, ...(available || []).map((a) => a.underlying)])];
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] uppercase tracking-wider text-gray-500 mr-1">History of</span>
+      {names.map((u) => {
+        const st = (available || []).find((a) => a.underlying === u);
+        return (
+          <button key={u} onClick={() => onPick(u)}
+            className={`px-2.5 py-1 rounded-lg text-[12px] border transition ${u === current ? 'border-brand-500/60 bg-brand-600/10 text-brand-400' : 'border-surface-3 text-gray-400 hover:text-gray-200'}`}>
+            {u}{st?.sessions ? <span className="text-gray-500"> · {st.sessions}d</span> : ''}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function HistoryPanel({ underlying = 'NIFTY' }) {
+  const [picked, setPicked] = useState(underlying);
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
-  const load = () => api.oiLabHistory().then((r) => { setData(r); setErr(r.status === 'error' ? r.message : ''); }).catch((e) => setErr(String(e.message || e)));
-  useEffect(() => { load(); }, []);
+  useEffect(() => { setPicked(underlying); }, [underlying]);
+  const load = () => api.oiLabHistory(picked).then((r) => { setData(r); setErr(r.status === 'error' ? r.message : ''); }).catch((e) => setErr(String(e.message || e)));
+  useEffect(() => { setData(null); load(); }, [picked]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (data?.status !== 'pending') return undefined;
+    if (data?.status !== 'pending' || data?.history?.status === 'error') return undefined;
     const t = setTimeout(load, 3000);
     return () => clearTimeout(t);
-  }, [data]);
+  }, [data]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   if (err) return <Empty>{err}</Empty>;
   if (!data) return <Empty>Loading…</Empty>;
   const h = data.history || {};
+  const picker = <UnderlyingPicker current={picked} available={data.available} onPick={setPicked} />;
   if (data.status === 'pending') {
+    const missing = h.status === 'error';
     return (
-      <div className="card text-center py-10 space-y-2">
-        <Database className="w-8 h-8 text-brand-400 mx-auto animate-pulse" />
-        <div className="text-gray-200 font-semibold">{h.status === 'error' ? 'History could not be built' : 'Building the 3-year OI study…'}</div>
-        <div className="text-[12.5px] text-gray-400">{h.status === 'error' ? h.error : `${h.done || 0} / ${h.total || '…'} months processed from the Market Store`}</div>
+      <div className="space-y-3">
+        {picker}
+        <div className="card text-center py-10 space-y-2">
+          <Database className={`w-8 h-8 mx-auto ${missing ? 'text-gray-500' : 'text-brand-400 animate-pulse'}`} />
+          <div className="text-gray-200 font-semibold">{missing ? `No usable ${picked} history yet` : `Building the ${picked} OI study…`}</div>
+          <div className="text-[12.5px] text-gray-400 max-w-xl mx-auto">{missing ? h.error : `${h.done || 0} / ${h.total || '…'} months processed from the Market Store`}</div>
+          {missing && (
+            <Link to="/data-ingestion" className="btn-primary !py-1.5 text-[12.5px] inline-flex items-center gap-1.5 mt-2">
+              <UploadCloud className="w-4 h-4" />Upload {picked} index + option data
+            </Link>
+          )}
+        </div>
       </div>
     );
   }
@@ -158,15 +189,28 @@ export default function HistoryPanel() {
 
   return (
     <div className="space-y-4">
+      {picker}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-[12.5px] text-gray-400">
           <span className="text-gray-100 font-semibold">{R.underlying}</span> · {R.sessions} sessions ({R.first} → {R.last}) · every 5 minutes ·
-          models trained before <span className="mono">{R.holdout_start}</span>, scored only on later sessions
+          strike step {R.step} · models trained before <span className="mono">{R.holdout_start}</span>, scored only on later sessions
         </div>
-        <button className="btn-ghost !py-1.5 text-[12px] flex items-center gap-1.5" onClick={() => api.oiLabHistoryRebuild().then(() => setTimeout(load, 800))}>
+        <button className="btn-ghost !py-1.5 text-[12px] flex items-center gap-1.5" onClick={() => api.oiLabHistoryRebuild(picked).then(() => setTimeout(load, 800))}>
           <RefreshCw className="w-3.5 h-3.5" />Rebuild
         </button>
       </div>
+      {(R.notes?.iv_computed_months?.length > 0 || R.notes?.spot_sources?.includes('options spot column') || R.notes?.skipped_months?.length > 0) && (
+        <div className="rounded-lg border border-surface-3 bg-surface-2 px-3 py-2 text-[11.5px] text-gray-400 space-y-0.5">
+          {R.notes.iv_computed_months?.length > 0 && <div>IV was not in the uploaded files for {R.notes.iv_computed_months.length} month(s) — computed from premium, spot and expiry.</div>}
+          {R.notes.spot_sources?.includes('options spot column') && <div>No index file for some months — spot taken from the option files' spot column (no intrabar high/low, so wall-break tests are slightly softer).</div>}
+          {R.notes.skipped_months?.length > 0 && <div className="text-amber-500">Skipped: {R.notes.skipped_months.join(' · ')}</div>}
+        </div>
+      )}
+      {!R.has_models && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[12px] text-amber-500">
+          Only {R.sessions} sessions — models need at least {R.min_sessions_models}. Wall tables and expiry curves below are descriptive; live odds for {R.underlying} are borrowed from NIFTY until more history is uploaded.
+        </div>
+      )}
 
       <Section title="What OI can predict — wall models" tip="Logistic regressions on the 12 chain features. AUC 0.5 = coin flip, 1.0 = perfect. Calibration compares the predicted probability with how often it actually happened, on sessions the model never saw.">
         <div className="grid gap-3 lg:grid-cols-3">{walls.map((m) => <ModelCard key={m.target} m={m} />)}</div>

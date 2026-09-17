@@ -111,7 +111,8 @@ def normalize_options(df: pd.DataFrame, underlying: str = "NIFTY") -> tuple[pd.D
                          + " " + d["strike"].astype(float).round(2).map(lambda x: f"{x:g}")
                          + " " + d["option_type"])
     for c in ("volume", "oi"):
-        d[c] = pd.to_numeric(d.get(c, 0), errors="coerce").fillna(0).astype("int64")
+        # optional columns: a file without volume/OI is valid (index files rarely carry volume)
+        d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0).astype("int64") if c in d.columns else 0
     for c in ("iv", "spot"):
         d[c] = pd.to_numeric(d.get(c, np.nan), errors="coerce")
     d["is_monthly_expiry"] = d.get("is_monthly_expiry", False)
@@ -156,7 +157,8 @@ def normalize_spot(df: pd.DataFrame, underlying: str = "NIFTY") -> tuple[pd.Data
     n0 = len(d)
     d["timestamp"] = _ts(d[ts])
     d["underlying"] = underlying.upper()
-    d["volume"] = pd.to_numeric(d.get("volume", 0), errors="coerce").fillna(0).astype("int64")
+    d["volume"] = (pd.to_numeric(d["volume"], errors="coerce").fillna(0).astype("int64")
+                   if "volume" in d.columns else 0)
     for c in ("open", "high", "low", "close"):
         d[c] = pd.to_numeric(d[c], errors="coerce")
     d = d.dropna(subset=["timestamp", "open", "high", "low", "close"])

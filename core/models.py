@@ -1084,3 +1084,102 @@ class MarketStoreBlob(Base):
     __table_args__ = (
         Index("uq_mstore_blob", "kind", "underlying", "year", "month", unique=True),
     )
+
+
+class OILabSignal(Base):
+    """OI Lab signal desk — every Gann × OI signal fired live (NIFTY / SENSEX).
+
+    Market-wide, not per user: one row per (day, underlying, bar, setup, level). Paper
+    positions reference it. Auto-created via ``create_all``.
+    """
+    __tablename__ = "oi_lab_signals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    trade_date = Column(Date, nullable=False)
+    underlying = Column(String(20), nullable=False)
+    bar_time = Column(String(5))                    # 5-min close the decision was made on (HH:MM)
+    setup = Column(String(24))
+    side = Column(String(2))                        # CE | PE
+    level = Column(Numeric(12, 2))                  # the Gann level
+    spot = Column(Numeric(12, 2))
+    spot_target = Column(Numeric(12, 2))
+    invalidation = Column(Numeric(12, 2))
+    strike = Column(Numeric(12, 2))
+    tradingsymbol = Column(String(60))
+    token = Column(Integer)
+    exchange = Column(String(8))
+    expiry = Column(Date)
+    lot_size = Column(Integer)
+    premium = Column(Numeric(12, 2))                # contract LTP when the signal fired
+    plans = Column(JSONB, default=dict)             # SWING / SCALP plan
+    reasons = Column(JSONB, default=list)
+    context = Column(JSONB, default=dict)           # walls, writing balance, wall-hold odds, straddle
+    backtest = Column(JSONB, default=dict)          # holdout record of this setup at the time
+
+    __table_args__ = (
+        Index("uq_oi_lab_signal", "trade_date", "underlying", "bar_time", "setup", "level", unique=True),
+    )
+
+
+class OILabPaperPosition(Base):
+    """OI Lab paper position — a Gann × OI signal traded on paper with live prices.
+
+    PAPER ONLY: never places an order. Opened automatically (auto-paper on) or by hand from the
+    signal desk; managed by the background loop (targets, stops, exit alerts, 15:15 square-off).
+    Auto-created via ``create_all``.
+    """
+    __tablename__ = "oi_lab_paper_positions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+    trade_date = Column(Date, nullable=False)
+    signal_id = Column(Integer, ForeignKey("oi_lab_signals.id", ondelete="SET NULL"))
+    source = Column(String(8), default="AUTO")      # AUTO | MANUAL
+    mode = Column(String(6), default="SWING")       # SWING | SCALP
+    underlying = Column(String(20))
+    setup = Column(String(24))
+    side = Column(String(2))
+    tradingsymbol = Column(String(60))
+    token = Column(Integer)
+    exchange = Column(String(8))
+    strike = Column(Numeric(12, 2))
+    expiry = Column(Date)
+    lots = Column(Integer, default=1)
+    qty = Column(Integer)
+    # entry and plan
+    entry_time = Column(String(8))
+    entry_price = Column(Numeric(12, 2))
+    spot_entry = Column(Numeric(12, 2))
+    level = Column(Numeric(12, 2))
+    spot_target = Column(Numeric(12, 2))
+    invalidation = Column(Numeric(12, 2))
+    premium_stop = Column(Numeric(12, 2))
+    premium_target = Column(Numeric(12, 2))
+    trail_after = Column(Numeric(12, 2))
+    entry_doi_bal = Column(Float)
+    adverse_streak = Column(Integer, default=0)
+    # live
+    ltp = Column(Numeric(12, 2))
+    spot_ltp = Column(Numeric(12, 2))
+    mtm = Column(Numeric(14, 2))
+    max_favourable = Column(Numeric(12, 2), default=0)
+    max_adverse = Column(Numeric(12, 2), default=0)
+    alerts = Column(JSONB, default=list)
+    # exit
+    status = Column(String(8), default="OPEN")      # OPEN | CLOSED
+    exit_time = Column(String(8))
+    exit_price = Column(Numeric(12, 2))
+    spot_exit = Column(Numeric(12, 2))
+    exit_reason = Column(String(32))
+    pnl_points = Column(Numeric(12, 2))
+    charges = Column(Numeric(12, 2))
+    pnl = Column(Numeric(14, 2))                    # rupees, after statutory charges
+
+    __table_args__ = (
+        Index("idx_oi_lab_paper_user_date", "user_id", "trade_date"),
+        Index("idx_oi_lab_paper_status", "status"),
+    )

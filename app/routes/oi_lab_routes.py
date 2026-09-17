@@ -21,6 +21,10 @@ from core.logger import get_logger
 from research.oi_lab import history as HS
 from research.oi_lab import indices as IX
 from research.oi_lab import live as LV
+from research.oi_lab import paper as PAPER
+from research.oi_lab import signal_backtest as SB
+from research.oi_lab import signals as SG
+from research.oi_lab.signal_hub import HUB
 
 router = APIRouter()
 logger = get_logger("api.oi_lab")
@@ -83,9 +87,11 @@ class SnapshotReq(BaseModel):
 @router.get("/meta")
 @safe("meta")
 def meta(user_id: int = Depends(login_required)):
-    HS.ensure_started()
+    for u in set(HS.available_underlyings()) | {HS.UNDERLYING}:
+        HS.ensure_started(u)
     return {"status": "ok", "indices": [{"key": k, **v} for k, v in IX.INDICES.items()],
-            "history": HS.status()}
+            "history": HS.status(), "histories": HS.all_status(),
+            "trade_underlyings": list(SG.TRADE_UNDERLYINGS)}
 
 
 @router.get("/expiries")
@@ -123,15 +129,106 @@ def contract_series(token: int, user_id: int = Depends(login_required)):
 
 @router.get("/history")
 @safe("history")
-def history(user_id: int = Depends(login_required)):
-    study = HS.get()
+def history(underlying: str = "NIFTY", user_id: int = Depends(login_required)):
+    u = underlying.upper()
+    study = HS.get(u)
+    base = {"underlying": u, "history": HS.status(u), "available": HS.all_status()}
     if study is None:
-        return {"status": "pending", "history": HS.status()}
-    return {"status": "ok", "history": HS.status(), "report": study.report()}
+        return {"status": "pending", **base}
+    return {"status": "ok", **base, "report": study.report()}
 
 
 @router.post("/history/rebuild")
 @safe("history_rebuild")
-def history_rebuild(user_id: int = Depends(login_required)):
-    HS.ensure_started(force=True)
-    return {"status": "ok", "history": HS.status()}
+def history_rebuild(underlying: str = "NIFTY", user_id: int = Depends(login_required)):
+    HS.ensure_started(underlying, force=True)
+    return {"status": "ok", "history": HS.status(underlying)}
+
+
+# ── signal desk (NIFTY / SENSEX) ─────────────────────────────────────
+@router.get("/desk")
+@safe("desk")
+def desk(index: str = "NIFTY", user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = _broker(db, user_id)
+    if broker is None:
+        return NOT_CONNECTED
+    return HUB.desk(broker, index)
+
+
+@router.get("/signal-backtest")
+@safe("signal_backtest")
+def signal_backtest(index: str = "NIFTY", user_id: int = Depends(login_required)):
+    u = index.upper()
+    summary = SB.get(u)
+    out = {"status": "ok" if summary else "pending", "underlying": u, "backtest_status": SB.status(u),
+           "history": HS.status(u), "rules": {"version": SG.RULES_VERSION, "params": SG.DEFAULTS}}
+    if summary:
+        out["summary"] = {k: v for k, v in summary.items() if not k.startswith("_")}
+    return out
+
+
+@router.post("/signal-backtest/run")
+@safe("signal_backtest_run")
+def signal_backtest_run(index: str = "NIFTY", user_id: int = Depends(login_required)):
+    SB.ensure_started(index.upper(), force=True)
+    return {"status": "ok", "backtest_status": SB.status(index)}
+
+
+# ── paper trading (never places orders) ──────────────────────────────
+class PaperConfigReq(BaseModel):
+    config: dict
+
+
+class PaperOpenReq(BaseModel):
+    signal_id: int
+    mode: str = "SWING"
+    lots: int = 1
+
+
+@router.get("/paper/config")
+@safe("paper_config")
+def paper_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    return {"status": "ok", "config": PAPER.load_config(db, user_id), "defaults": PAPER.DEFAULT_CONFIG,
+            "setups": SG.SETUPS, "modes": list(SG.MODES), "indices": list(SG.TRADE_UNDERLYINGS)}
+
+
+@router.post("/paper/config")
+@safe("paper_config_save")
+def paper_config_save(req: PaperConfigReq, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    return {"status": "ok", "config": PAPER.save_config(db, user_id, req.config)}
+
+
+@router.get("/paper/positions")
+@safe("paper_positions")
+def paper_positions(days: int = 30, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    return PAPER.journal(db, user_id, days)
+
+
+@router.post("/paper/open")
+@safe("paper_open")
+def paper_open(req: PaperOpenReq, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    from core.models import OILabSignal
+    broker = _broker(db, user_id)
+    if broker is None:
+        return NOT_CONNECTED
+    sig = db.query(OILabSignal).filter(OILabSignal.id == req.signal_id).first()
+    if sig is None:
+        return {"status": "error", "message": "signal not found"}
+    try:
+        row = PAPER.open_from_signal(db, user_id, broker, sig, req.mode.upper(), req.lots, "MANUAL")
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    return {"status": "ok", "position": PAPER.serialize(row)}
+
+
+@router.post("/paper/{position_id}/close")
+@safe("paper_close")
+def paper_close(position_id: int, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    broker = _broker(db, user_id)
+    try:
+        row = PAPER.close_manual(db, user_id, broker, position_id) if broker is not None else None
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    if row is None:
+        return NOT_CONNECTED
+    return {"status": "ok", "position": PAPER.serialize(row)}

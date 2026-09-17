@@ -53,7 +53,17 @@ const BLOCKS = [
     ],
   },
   {
-    title: '7. A practical routine',
+    title: '7. Signal Desk, Gann levels and paper trading (NIFTY / SENSEX)',
+    body: [
+      'Each 5-minute close the server checks four setups on the Gann grid (gann_levels.csv — the same levels Strategy 1 and 5 use): a close through a level (breakout / breakdown) and a failed test of a level with writers defending it (rejection / reclaim). OI gates block trades that fight the writers or run into a wall that very likely holds.',
+      'A signal reads "11:55 analysis → BUY NIFTY 24,350 CE at 11:56" with two plans. Swing rides to the next Gann level or wall and exits on a 5-min close back through the level or on an exit alert. Scalp uses the premium grid: next premium Gann level as target, the level under the entry as stop, 45 minutes at most.',
+      'Every setup shows how it did on unseen history (real premiums, charges, next-bar fills). On 3 years of NIFTY the OI gates cut losses by more than half versus pure Gann levels, but no variant was profitable before the holdout date — which is exactly why paper trading comes first.',
+      'Paper Trades: switch auto-paper on and the server takes fresh signals with live bid/ask prices while you are logged in to Zerodha, even with the page closed. It never places an order. Compare a few weeks of paper results with the backtest table before trusting any setup with money.',
+      'Keep uploading NIFTY and SENSEX history in the Data Ingestion Lab: each merge rebuilds the OI study and signal backtest of that index, so the odds and records on the desk sharpen as data grows.',
+    ],
+  },
+  {
+    title: '8. A practical routine',
     body: [
       '09:20–09:45 — let OI settle; note the first walls and whether writers add on puts or calls.',
       'Check the tested wall odds and the range-day probability. High range odds → fade the walls with stops beyond them; low → plan for the weaker wall to break.',
@@ -75,7 +85,7 @@ export default function Guide() {
       ))}
       <div className="lg:col-span-2 text-[11.5px] text-gray-500">
         Research and education only — nothing here places orders or is investment advice. Live data comes from your Zerodha session;
-        history comes from the Market Store (NIFTY, 3 years, 1-minute option bars).
+        history comes from the Market Store (NIFTY 3 years bundled, plus whatever you upload in the Data Ingestion Lab).
       </div>
     </div>
   );

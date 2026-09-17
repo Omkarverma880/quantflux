@@ -130,6 +130,12 @@ class Tape:
                 return
             time.sleep(0.15)
 
+    def fetch_now(self, broker, token: int, with_oi: bool = False) -> Optional[dict]:
+        """Fetch one token immediately (the signal hub needs the 5-min bar that just closed)."""
+        self._with_oi[token] = with_oi
+        self._fetch(broker, token, with_oi)
+        return self.get(token)
+
     def _run(self) -> None:
         while True:
             with self._lock:
@@ -157,14 +163,16 @@ class Tape:
             if dt is None:
                 continue
             rows.append((dt.date(), dt.hour * 60 + dt.minute + 5, float(c.get("close") or 0),
-                         float(c.get("volume") or 0), float(c.get("oi") or 0)))
+                         float(c.get("volume") or 0), float(c.get("oi") or 0),
+                         float(c.get("open") or 0), float(c.get("high") or 0), float(c.get("low") or 0)))
         if not rows:
             self._data[token] = {"fetched": time.monotonic(), "fetched_at": now, "session": None, "prev_oi": None,
                                  "prev_close": None, "bars": []}
             return
         session = rows[-1][0]
         prev = [r for r in rows if r[0] < session]
-        bars = [{"cp": r[1], "close": r[2], "volume": r[3], "oi": r[4]} for r in rows if r[0] == session]
+        bars = [{"cp": r[1], "close": r[2], "volume": r[3], "oi": r[4], "open": r[5], "high": r[6], "low": r[7]}
+                for r in rows if r[0] == session]
         self._data[token] = {
             "fetched": time.monotonic(), "fetched_at": now, "session": session,
             "prev_oi": prev[-1][4] if prev and with_oi else None,
@@ -324,7 +332,16 @@ class OILabLive:
         timeline, state_open = self._timeline(rows, spot_tape, step, dte, T, priced_at)
         feat = self._features_now(rows, spot, step, dte, cp_now, state_open, s_ohlc)
         model_walls = feat.pop("_walls", None) if feat else None
-        study, prediction, analogs, probs = HS.get(), None, None, None
+        own, model_note = HS.get(cfg["key"]), None
+        study = own if (own is not None and own.has_models) else None
+        if study is None and cfg["key"] != HS.UNDERLYING:
+            study = HS.get(HS.UNDERLYING)
+            if study is not None:
+                model_note = (f"No {cfg['key']} history with enough sessions yet" if own is None or not own.has_models else "")
+                model_note += (f" — odds borrowed from {HS.UNDERLYING} models (scale-free features, untested on "
+                               f"{cfg['key']}). Upload {cfg['key']} index + option data in the Data Ingestion Lab "
+                               "to train its own.")
+        prediction, analogs, probs = None, None, None
         if study is not None and feat is not None:
             prediction = study.predict(feat, straddle or 0)
             probs = prediction["probabilities"]
@@ -345,8 +362,10 @@ class OILabLive:
                                 "opening OI has settled"
                                 + (" — and switch to the next expiry, this one has settled." if exp <= session else "."))
         curve = None
-        if study is not None:
-            curve = {"dte_bucket": HS.dte_fine(dte), "history": study.curves.get(HS.dte_fine(dte)),
+        curve_study = own or study
+        if curve_study is not None:
+            curve = {"dte_bucket": HS.dte_fine(dte), "history": curve_study.curves.get(HS.dte_fine(dte)),
+                     "underlying": curve_study.underlying,
                      "today": [{"cp": t["cp"], "time": t["time"], "decay": t.get("decay"), "move": t.get("ret_open_abs")}
                                for t in timeline if t.get("decay") is not None]}
         ch = float(s_ohlc.get("close") or 0)
@@ -364,10 +383,9 @@ class OILabLive:
             "rows": rows, "analysis": A, "setups": S, "timeline": timeline,
             "model": {"features": {k: (round(v, 4) if v is not None and np.isfinite(v) else None) for k, v in (feat or {}).items()},
                       "prediction": prediction, "analogs": analogs, "expiry_curve": curve, "walls": model_walls,
-                      "history": HS.status(),
-                      "note": (None if cfg["key"] == HS.UNDERLYING else
-                               f"Models are trained on {HS.UNDERLYING} history. Features are scale-free, so they read "
-                               f"sensibly on {cfg['key']}, but the odds are untested on this index.")},
+                      "history": HS.status(cfg["key"]),
+                      "model_underlying": study.underlying if study is not None else None,
+                      "note": model_note},
         }
 
     @staticmethod
