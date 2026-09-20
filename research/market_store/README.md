@@ -29,6 +29,13 @@ missing months from the database onto disk. The Data tab shows "Restoring…" me
 Months found on disk but missing from the database are pushed up automatically.
 No Railway volume is required. Set `MARKET_STORE_DB_SYNC=0` to turn the database copy off.
 
+Months that are still byte-identical to `seed/market_store` are **not** copied to the database:
+the image already carries them, so a second copy would only consume the Postgres volume. As soon
+as an upload merges new rows into such a month its checksum changes and it is copied again.
+`python -m research.market_store.durable prune` removes database copies of months that are still
+identical to the bundled ones (followed by `VACUUM (FULL) market_store_blobs;` to hand the space
+back to the volume).
+
 ## Bundled history (no upload needed)
 
 `seed/market_store/` in the repo holds the 3-year NIFTY spot, NIFTY options and India VIX

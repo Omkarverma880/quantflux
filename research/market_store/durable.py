@@ -26,6 +26,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from core.logger import get_logger
 from research.market_store import store as MS
@@ -46,6 +47,10 @@ FAIL_BACKOFF_SECONDS = 300
 
 def enabled() -> bool:
     return os.environ.get("MARKET_STORE_DB_SYNC", "1") != "0"
+
+
+# Months that are still byte-identical to the bundled seed are NOT copied to the database: the
+# Docker image already carries them, so a second copy only eats volume space (see seed_copies).
 
 
 def _session():
@@ -86,6 +91,25 @@ def seed_disk() -> int:
             logger.error("market store: loading the bundled seed failed: %s", exc)
         _state["seeded"] = True
         return n
+
+
+def _checksum_of(path: Path) -> str:
+    return path.stem.replace("part-", "")
+
+
+def seed_copies() -> dict:
+    """Bundled months, by key -> checksum. They ship inside the image, so a disk file that is
+    still byte-identical to one of them is already durable and does not need a database copy."""
+    try:
+        return {k: _checksum_of(f) for k, f in _partitions_under(SEED_ROOT).items()} if SEED_ROOT.exists() else {}
+    except Exception as exc:
+        logger.debug("seed scan failed: %s", exc)
+        return {}
+
+
+def is_seed_copy(key, path: Path, seeds: Optional[dict] = None) -> bool:
+    seeds = seed_copies() if seeds is None else seeds
+    return seeds.get(key) == _checksum_of(path)
 
 
 def _partitions_under(root: Path) -> dict:
@@ -136,10 +160,15 @@ def save(records: list[dict]) -> dict:
     db = None
     try:
         db = _session()
-        n = 0
+        n = skipped = 0
+        seeds = seed_copies()
         for r in records:
-            n += _upsert(db, r["kind"], r["underlying"], r["year"], r["month"], Path(r["path"]))
-        return {"saved": n, "ok": True}
+            key = (r["kind"], r["underlying"], r["year"], r["month"])
+            if is_seed_copy(key, Path(r["path"]), seeds):
+                skipped += 1            # bundled history: the image already carries this exact file
+                continue
+            n += _upsert(db, *key, Path(r["path"]))
+        return {"saved": n, "skipped_bundled": skipped, "ok": True}
     except Exception as exc:
         if db is not None:
             db.rollback()
@@ -197,8 +226,9 @@ def hydrate(force: bool = False, push: bool = True) -> dict:
                     restored += 1
             if not push:
                 return {"restored": restored, "pushed": 0, "db_months": len(remote)}
+            seeds = seed_copies()
             for key, f in local.items():
-                if key not in remote:
+                if key not in remote and not is_seed_copy(key, f, seeds):
                     pushed += _upsert(db, *key, f)
             _state["checked_at"] = time.time()
             if restored or pushed:
@@ -252,6 +282,40 @@ def db_summary() -> dict | None:
                                  for k, r in remote.items()])
 
 
+def prune_bundled() -> dict:
+    """Remove database copies of months whose disk file is still identical to the bundled one.
+
+    Frees the space those rows take; nothing is lost, because a missing bundled month is restored
+    from the image by ``seed_disk``. Months you have uploaded into (different checksum) are kept."""
+    if not enabled():
+        return {"skipped": "database copy disabled"}
+    from core.models import MarketStoreBlob as B
+    seeds = seed_copies()
+    local = _local_partitions()
+    db = _session()
+    removed, freed, kept = [], 0, 0
+    try:
+        for key, row in _db_partitions(db).items():
+            f = local.get(key)
+            same_as_seed = seeds.get(key) == row.checksum[:16] and (f is None or is_seed_copy(key, f, seeds))
+            if not same_as_seed:
+                kept += 1
+                continue
+            db.query(B).filter(B.kind == key[0], B.underlying == key[1],
+                               B.year == key[2], B.month == key[3]).delete()
+            removed.append(f"{key[0]}/{key[1]} {key[2]}-{key[3]:02d}")
+            freed += int(row.bytes or 0)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.error("prune of bundled months failed: %s", exc)
+        return {"ok": False, "error": str(exc)[:300]}
+    finally:
+        db.close()
+    logger.info("market store: dropped %d bundled month(s) from the database (%.1f MB)", len(removed), freed / 1e6)
+    return {"ok": True, "removed": removed, "kept_rows": kept, "freed_bytes": freed}
+
+
 def _cli(argv: list[str]) -> int:
     cmd = argv[1] if len(argv) > 1 else "status"
     from core.database import Base, engine
@@ -272,6 +336,17 @@ def _cli(argv: list[str]) -> int:
         print(f"catalog rows rebuilt: {SV.rebuild_catalog()}")
     elif cmd == "pull":
         print(hydrate(force=True))
+    elif cmd == "prune":
+        # drop database copies of months the Docker image already carries (frees volume space)
+        res = prune_bundled()
+        if not res.get("ok"):
+            print(res)
+            return 1
+        print(f"removed {len(res['removed'])} bundled month(s) from the database "
+              f"({res['freed_bytes']/1e6:.1f} MB), kept {res['kept_rows']} uploaded month(s)")
+        for r in res["removed"]:
+            print(f"  - {r}")
+        print("run  VACUUM (FULL) market_store_blobs;  in psql to hand the space back to the volume")
     s = db_summary() or {}
     for kind, v in s.items():
         for und, u in v.get("by_underlying", {}).items():
