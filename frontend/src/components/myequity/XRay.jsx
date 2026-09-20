@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { api } from '../../api';
 import {
-  N, PCT, COMPACT, DAYS, signTone, Section, Stat, SensitivityMeter, CategoryChip, Empty,
+  N, PCT, COMPACT, DAYS, signTone, Section, Stat, SensitivityMeter, CategoryPicker, Empty,
 } from './ui';
 
 /**
@@ -228,11 +228,10 @@ export default function XRay({ stockId, onClose, onChanged }) {
     } finally { setSavingDate(false); }
   };
 
-  const setCategory = async () => {
-    const next = data?.category === 'INVESTMENT' ? 'SWING' : 'INVESTMENT';
+  const setCategory = async (next) => {
     await api.meUpdate(stockId, { category: next });
     onChanged?.();
-    load(1);
+    await load(1);
   };
 
   const s = data?.snapshot || {};
@@ -251,7 +250,7 @@ export default function XRay({ stockId, onClose, onChanged }) {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[18px] font-bold text-white">{data?.stock?.symbol || '…'}</span>
                 <span className="text-[10px] text-gray-500 border border-surface-3 rounded px-1">{data?.stock?.exchange}</span>
-                {data && <CategoryChip category={data.category} onClick={setCategory} />}
+                {data && <CategoryPicker category={data.category} onChange={setCategory} />}
                 {data?.ltp != null && (
                   <>
                     <span className="text-[17px] font-semibold mono text-gray-100">{N(data.ltp)}</span>

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Check, Loader2, Pencil, Trash2, X, Maximize2, Plus } from 'lucide-react';
 import { api } from '../../api';
 import {
-  N, PCT, signTone, rowTone, ROW_CLASS, LevelChips, PnLCell, NotePills, CategoryChip, Empty,
+  N, PCT, signTone, rowTone, ROW_CLASS, LevelChips, PnLCell, NotePills, CategoryPicker, Empty,
 } from './ui';
 
 /**
@@ -74,7 +74,7 @@ function SectorTag({ row, onChanged }) {
         {row.sector || 'sector?'}
       </span>
       <button onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-        className="text-gray-700 hover:text-brand-400 opacity-0 group-hover/sector:opacity-100 transition"
+        className="text-gray-600 hover:text-brand-400 transition"
         title="set the sector by hand">
         <Pencil className="w-2.5 h-2.5" />
       </button>
@@ -97,9 +97,7 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
     } finally { setRemoving(null); }
   };
 
-  const flipCategory = async (row, e) => {
-    e.stopPropagation();
-    const next = row.category === 'INVESTMENT' ? 'SWING' : 'INVESTMENT';
+  const setCategory = async (row, next) => {
     const r = await api.meUpdate(row.id, { category: next });
     if (r.status === 'ok') onChanged?.();
   };
@@ -141,7 +139,7 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
                         <div className="flex items-center gap-1.5">
                           <span className="font-semibold text-gray-100 truncate">{r.symbol}</span>
                           <span className="text-[9.5px] text-gray-500">{r.exchange}</span>
-                          <CategoryChip category={r.category} small onClick={(e) => flipCategory(r, e)} />
+                          <CategoryPicker category={r.category} small onChange={(v) => setCategory(r, v)} />
                         </div>
                         <div className="flex items-center gap-1.5 min-w-0">
                           <span className="text-[10.5px] text-gray-500 truncate max-w-[150px]">{r.company || '—'}</span>
@@ -176,11 +174,11 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
                     {editing === r.id
                       ? <EditLevels row={r} onSaved={() => { setEditing(null); onChanged?.(); }} onCancel={() => setEditing(null)} />
                       : (
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-start gap-1.5">
                           <LevelChips watch={r.watch} onEdit={() => setEditing(r.id)}
                             onToggle={(price) => toggleLevel(r, price)} />
                           <button onClick={(e) => { e.stopPropagation(); setEditing(r.id); }}
-                            className="text-gray-600 hover:text-brand-400 p-0.5" title="edit levels">
+                            className="text-gray-600 hover:text-brand-400 p-0.5 mt-0.5" title="edit levels">
                             <Pencil className="w-3 h-3" />
                           </button>
                         </div>

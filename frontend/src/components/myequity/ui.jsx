@@ -1,5 +1,5 @@
-import React from 'react';
-import { ArrowUp, ArrowDown, Check, Minus } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ArrowUp, ArrowDown, Check, Minus, ChevronDown, Loader2 } from 'lucide-react';
 
 /** Shared display pieces for My Equity Workspace — formatting, level chips, meters, pills. */
 
@@ -74,15 +74,93 @@ export function Stat({ label, value, sub, tone = 'text-gray-100', title }) {
   );
 }
 
-export function CategoryChip({ category, onClick, small }) {
-  const inv = category === 'INVESTMENT';
+export const CATEGORY_STYLE = {
+  INVESTMENT: 'bg-violet-500/15 text-violet-300 border-violet-500/40',
+  SWING: 'bg-sky-500/15 text-sky-300 border-sky-500/40',
+};
+const CATEGORY_LABEL = { INVESTMENT: 'Investment', SWING: 'Swing' };
+
+/** A read-only badge. Use ``CategoryPicker`` wherever it can be changed. */
+export function CategoryChip({ category, small }) {
+  const key = category === 'INVESTMENT' ? 'INVESTMENT' : 'SWING';
   return (
-    <button onClick={onClick} disabled={!onClick} title={onClick ? 'click to switch' : ''}
-      className={`px-1.5 py-0.5 rounded border font-semibold whitespace-nowrap ${small ? 'text-[9.5px]' : 'text-[11px]'} ${inv
-        ? 'bg-violet-500/15 text-violet-300 border-violet-500/30'
-        : 'bg-sky-500/15 text-sky-300 border-sky-500/30'} ${onClick ? 'hover:brightness-125' : ''}`}>
-      {inv ? 'Investment' : 'Swing'}
-    </button>
+    <span className={`px-1.5 py-0.5 rounded border font-semibold whitespace-nowrap ${small ? 'text-[10px]' : 'text-[11px]'} ${CATEGORY_STYLE[key]}`}>
+      {CATEGORY_LABEL[key]}
+    </span>
+  );
+}
+
+/**
+ * Investment or Swing, picked from a menu rather than toggled blindly.
+ *
+ * The caret says it opens, both options are shown with the current one ticked, and the menu is
+ * positioned fixed so the table's own scrolling never clips it.
+ */
+export function CategoryPicker({ category, onChange, small, disabled }) {
+  const key = category === 'INVESTMENT' ? 'INVESTMENT' : 'SWING';
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [at, setAt] = useState({ top: 0, left: 0 });
+  const btn = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = () => setOpen(false);
+    const esc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('keydown', esc);
+    document.addEventListener('click', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('keydown', esc);
+      document.removeEventListener('click', close);
+    };
+  }, [open]);
+
+  const toggle = (e) => {
+    e.stopPropagation();
+    if (disabled) return;
+    const r = btn.current?.getBoundingClientRect();
+    if (r) setAt({ top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 150) });
+    setOpen((o) => !o);
+  };
+
+  const pick = async (e, value) => {
+    e.stopPropagation();
+    setOpen(false);
+    if (value === key) return;
+    setBusy(true);
+    try { await onChange?.(value); } finally { setBusy(false); }
+  };
+
+  return (
+    <>
+      <button ref={btn} onClick={toggle} disabled={disabled} title="Investment or swing trade — click to change"
+        className={`inline-flex items-center gap-0.5 pl-1.5 pr-1 py-0.5 rounded border font-semibold whitespace-nowrap
+          ${small ? 'text-[10px]' : 'text-[11px]'} ${CATEGORY_STYLE[key]} hover:brightness-125 disabled:opacity-50`}>
+        {busy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}
+        {CATEGORY_LABEL[key]}
+        <ChevronDown className="w-2.5 h-2.5 opacity-70" />
+      </button>
+      {open && (
+        <div style={{ position: 'fixed', top: at.top, left: at.left, zIndex: 60 }}
+          onClick={(e) => e.stopPropagation()}
+          className="w-[150px] rounded-lg border border-surface-3 bg-surface-1 shadow-xl overflow-hidden">
+          {['SWING', 'INVESTMENT'].map((v) => (
+            <button key={v} onClick={(e) => pick(e, v)}
+              className="w-full flex items-center justify-between px-2.5 py-1.5 text-[12px] text-gray-200 hover:bg-surface-2">
+              <span>{v === 'INVESTMENT' ? 'Investment' : 'Swing trade'}</span>
+              {v === key && <Check className="w-3 h-3 text-emerald-400" />}
+            </button>
+          ))}
+          <div className="px-2.5 py-1 text-[10px] text-gray-500 border-t border-surface-3">
+            sets the horizon: 60 sessions or 10
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -103,16 +181,18 @@ export function LevelChip({ row, onToggle }) {
       ? `triggered ${row.triggered_on} · ${PCT(row.pnl_pct)} since`
       : d == null ? '' : `last trade is ${PCT(d)} ${up ? 'above' : 'below'} this level`}
       onClick={onToggle ? (e) => { e.stopPropagation(); onToggle(row.level); } : undefined}
-      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-surface-0/85 ${border}
+      className={`flex items-center justify-between gap-2 px-1.5 py-0.5 rounded border bg-surface-0/85 ${border}
         ${row.track === false ? 'opacity-45' : ''} ${onToggle ? 'cursor-pointer' : ''} whitespace-nowrap`}>
       <span className="mono text-[11px] text-gray-100">{N(row.level, 2)}</span>
-      {d != null && (
-        <span className={`inline-flex items-center text-[10px] mono font-semibold ${up ? 'text-emerald-400' : 'text-red-400'}`}>
-          {up ? <ArrowUp className="w-2.5 h-2.5" /> : <ArrowDown className="w-2.5 h-2.5" />}
-          {Math.abs(d).toFixed(1)}%
-        </span>
-      )}
-      {hit && <Check className="w-2.5 h-2.5 text-emerald-400" />}
+      <span className="inline-flex items-center gap-0.5">
+        {d != null && (
+          <span className={`inline-flex items-center text-[10px] mono font-semibold ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+            {up ? <ArrowUp className="w-2.5 h-2.5" /> : <ArrowDown className="w-2.5 h-2.5" />}
+            {Math.abs(d).toFixed(1)}%
+          </span>
+        )}
+        {hit && <Check className="w-2.5 h-2.5 text-emerald-400" />}
+      </span>
     </span>
   );
 }
@@ -125,8 +205,9 @@ export function LevelChips({ watch, onEdit, onToggle }) {
         className="text-[11px] text-gray-500 hover:text-brand-400 underline decoration-dotted">add a level</button>
     );
   }
+  // stacked, one level per line: easier to scan down a column than to read along a row
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div className="flex flex-col items-stretch gap-1 w-[122px]">
       {rows.map((r) => <LevelChip key={r.level} row={r} onToggle={onToggle} />)}
     </div>
   );
