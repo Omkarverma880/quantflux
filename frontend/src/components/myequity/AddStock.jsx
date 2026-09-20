@@ -1,12 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, Search, Loader2, X } from 'lucide-react';
+import { Plus, Search, Loader2, X, CalendarDays } from 'lucide-react';
 import { api } from '../../api';
+import { CategoryChip } from './ui';
 
-/** Add a stock you have researched: pick the symbol, write down the levels you are waiting
- *  for, the day you did the research and a note to your future self. */
+/**
+ * Add a stock you have researched.
+ *
+ * The research date is asked outright and is not assumed to be today: you may be adding work you
+ * did months ago, and every level trigger and P&L in the workspace is measured from that date.
+ */
 
 const today = () => new Date().toISOString().slice(0, 10);
-const EMPTY = { symbol: '', exchange: null, company: '', levels: '', note: '', added_on: today(), touch_pct: 0.25 };
+const EMPTY = {
+  symbol: '', exchange: null, company: '', levels: '', note: '',
+  added_on: today(), touch_pct: 0.25, category: 'SWING',
+};
 
 export default function AddStock({ onAdded, connected }) {
   const [open, setOpen] = useState(false);
@@ -18,6 +26,7 @@ export default function AddStock({ onAdded, connected }) {
   const timer = useRef(null);
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const backdated = form.added_on && form.added_on !== today();
 
   useEffect(() => {
     if (!open || !connected) return undefined;
@@ -38,12 +47,13 @@ export default function AddStock({ onAdded, connected }) {
 
   const submit = async () => {
     if (!form.symbol.trim()) { setErr('Pick a stock first'); return; }
+    if (!form.added_on) { setErr('Set the date you did this research — the P&L is measured from it'); return; }
     setBusy(true); setErr('');
     try {
       const r = await api.meAdd({
         symbol: form.symbol.trim().toUpperCase(), exchange: form.exchange,
         levels: form.levels, note: form.note, added_on: form.added_on,
-        touch_pct: Number(form.touch_pct) || 0.25,
+        touch_pct: Number(form.touch_pct) || 0.25, category: form.category,
       });
       if (r.status !== 'ok') { setErr(r.message || 'could not add'); return; }
       setForm(EMPTY); setOpen(false);
@@ -95,14 +105,37 @@ export default function AddStock({ onAdded, connected }) {
           <div className="text-[10px] uppercase tracking-wider text-gray-500">Research entry levels</div>
           <input value={form.levels} placeholder="3100, 2900" onChange={(e) => set({ levels: e.target.value })}
             className="input-field !py-1.5 mt-1 w-full mono" />
-          <div className="text-[10.5px] text-gray-500 mt-0.5">One or many — the row blinks when price reaches any of them</div>
+          <div className="text-[10.5px] text-gray-500 mt-0.5">One or many — each is tracked on its own</div>
         </label>
 
         <label className="block">
-          <div className="text-[10px] uppercase tracking-wider text-gray-500">Researched on</div>
+          <div className="text-[10px] uppercase tracking-wider text-gray-500 flex items-center gap-1">
+            <CalendarDays className="w-3 h-3" />When did you research it?
+          </div>
           <input type="date" value={form.added_on} max={today()} onChange={(e) => set({ added_on: e.target.value })}
-            className="input-field !py-1.5 mt-1 w-full" />
+            className={`input-field !py-1.5 mt-1 w-full ${backdated ? 'border-brand-500/60' : ''}`} />
+          <div className="text-[10.5px] text-gray-500 mt-0.5">
+            {backdated ? 'Back-dated — triggers before today will be found in the history'
+              : 'Researched earlier? Set the real date so the P&L is honest'}
+          </div>
         </label>
+
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-gray-500">Trade category</div>
+          <div className="flex items-center gap-2 mt-1.5">
+            {['SWING', 'INVESTMENT'].map((c) => (
+              <button key={c} onClick={() => set({ category: c })}
+                className={`px-2.5 py-1 rounded border text-[11.5px] font-semibold ${form.category === c
+                  ? (c === 'INVESTMENT' ? 'bg-violet-500/20 text-violet-200 border-violet-500/50' : 'bg-sky-500/20 text-sky-200 border-sky-500/50')
+                  : 'border-surface-3 text-gray-400 hover:text-gray-200'}`}>
+                {c === 'INVESTMENT' ? 'Investment' : 'Swing trade'}
+              </button>
+            ))}
+          </div>
+          <div className="text-[10.5px] text-gray-500 mt-1">
+            {form.category === 'INVESTMENT' ? 'Judged over 60 sessions' : 'Judged over 10 sessions'}
+          </div>
+        </div>
 
         <label className="block">
           <div className="text-[10px] uppercase tracking-wider text-gray-500">Touch tolerance</div>
@@ -111,10 +144,10 @@ export default function AddStock({ onAdded, connected }) {
               onChange={(e) => set({ touch_pct: e.target.value })} className="input-field !py-1.5 w-full" />
             <span className="text-[12px] text-gray-500">%</span>
           </div>
-          <div className="text-[10.5px] text-gray-500 mt-0.5">How close counts as a touch</div>
+          <div className="text-[10.5px] text-gray-500 mt-0.5">How close counts as being at the level</div>
         </label>
 
-        <label className="block sm:col-span-2 lg:col-span-4">
+        <label className="block sm:col-span-2 lg:col-span-3">
           <div className="text-[10px] uppercase tracking-wider text-gray-500">Why you are watching it</div>
           <input value={form.note} placeholder="breakout retest above the monthly range, results on the 28th…"
             onChange={(e) => set({ note: e.target.value })} className="input-field !py-1.5 mt-1 w-full" />
@@ -127,6 +160,9 @@ export default function AddStock({ onAdded, connected }) {
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}Add to workspace
         </button>
         <button onClick={() => { setOpen(false); setErr(''); }} className="btn-secondary !py-1.5 !px-3 text-[12.5px]">Cancel</button>
+        <span className="text-[11px] text-gray-500 flex items-center gap-1.5">
+          adding as <CategoryChip category={form.category} small />
+        </span>
       </div>
     </div>
   );

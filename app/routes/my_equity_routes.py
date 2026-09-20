@@ -21,6 +21,7 @@ from core.broker import get_user_broker
 from core.database import get_db
 from core.logger import get_logger
 from research.my_equity import cache as CACHE
+from research.my_equity import fundamentals as FN
 from research.my_equity import news as NEWS
 from research.my_equity import store as ST
 from research.my_equity.service import MyEquityService
@@ -94,18 +95,22 @@ def _service(db: Session, user_id: int) -> MyEquityService:
 class AddReq(BaseModel):
     symbol: str
     exchange: str | None = None
-    levels: list[float] | str | None = None
+    levels: list | str | None = None
     note: str | None = ""
-    added_on: str | None = None
+    added_on: str | None = None          # the research date, not the day it was typed in
     touch_pct: float | None = 0.25
+    category: str | None = "SWING"       # INVESTMENT | SWING
 
 
 class UpdateReq(BaseModel):
-    levels: list[float] | str | None = None
+    levels: list | str | None = None
     note: str | None = None
     added_on: str | None = None
     touch_pct: float | None = None
     archived: bool | None = None
+    category: str | None = None
+    sector: str | None = None
+    industry: str | None = None
 
 
 @router.get("/meta")
@@ -113,7 +118,8 @@ class UpdateReq(BaseModel):
 def meta(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     svc = _service(db, user_id)
     return {"status": "ok", "connected": svc.broker is not None,
-            "max_stocks": ST.MAX_STOCKS, "max_levels": ST.MAX_LEVELS}
+            "max_stocks": ST.MAX_STOCKS, "max_levels": ST.MAX_LEVELS,
+            "categories": list(ST.CATEGORIES)}
 
 
 @router.get("/search")
@@ -145,11 +151,14 @@ def add_stock(req: AddReq, user_id: int = Depends(login_required), db: Session =
     if svc.broker and hit is None:
         return {"status": "error",
                 "message": f"{symbol} is not listed as a cash equity on NSE or BSE"}
-    row = ST.add(db, user_id, symbol=symbol,
-                 exchange=(hit or {}).get("exchange") or (req.exchange or "NSE"),
+    exchange = (hit or {}).get("exchange") or (req.exchange or "NSE")
+    sector, industry = FN.sector_of(symbol, exchange)          # cached; failure just leaves it blank
+    row = ST.add(db, user_id, symbol=symbol, exchange=exchange,
                  token=(hit or {}).get("token"), company=(hit or {}).get("company"),
                  levels=req.levels, note=req.note or "", added_on=req.added_on,
-                 touch_pct=req.touch_pct if req.touch_pct is not None else 0.25)
+                 touch_pct=req.touch_pct if req.touch_pct is not None else 0.25,
+                 category=req.category or "SWING", sector=sector, industry=industry)
+    svc._rows_cache.pop(user_id, None)
     return {"status": "ok", "stock": ST.to_dict(row)}
 
 
@@ -158,6 +167,7 @@ def add_stock(req: AddReq, user_id: int = Depends(login_required), db: Session =
 def update_stock(stock_id: int, req: UpdateReq, user_id: int = Depends(login_required),
                  db: Session = Depends(get_db)):
     row = ST.update(db, user_id, stock_id, **req.model_dump(exclude_none=True))
+    _service(db, user_id)._rows_cache.pop(user_id, None)       # the table must show the edit at once
     return {"status": "ok", "stock": ST.to_dict(row)}
 
 
@@ -172,11 +182,26 @@ def remove_stock(stock_id: int, user_id: int = Depends(login_required),
 
 @router.get("/xray/{stock_id}")
 @safe("xray")
-def xray(stock_id: int, news: int = 1, intraday: int = 1, refresh: int = 1,
+def xray(stock_id: int, news: int = 1, fundamentals: int = 1, refresh: int = 1,
          user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     svc = _service(db, user_id)
     return svc.xray(db, user_id, stock_id, with_news=bool(news),
-                    with_intraday=bool(intraday), refresh=bool(refresh))
+                    with_fundamentals=bool(fundamentals), refresh=bool(refresh))
+
+
+@router.post("/fundamentals/{stock_id}/refresh")
+@safe("refresh_fundamentals")
+def refresh_fundamentals(stock_id: int, user_id: int = Depends(login_required),
+                         db: Session = Depends(get_db)):
+    """Re-fetch the company data, and adopt the sector unless you set it by hand."""
+    row = ST.get(db, user_id, stock_id)
+    if row is None:
+        return {"status": "error", "message": "that stock is not in your workspace"}
+    data = FN.fetch(row.symbol, row.exchange, force=True)
+    if data.get("sector") and row.sector_source != "manual":
+        ST.update(db, user_id, stock_id, sector=data["sector"],
+                  industry=data.get("industry"), sector_source="auto")
+    return {"status": "ok", "fundamentals": data}
 
 
 @router.get("/news/{stock_id}")

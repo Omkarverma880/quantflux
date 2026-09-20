@@ -263,3 +263,119 @@ def snapshot(d: pd.DataFrame, ltp: Optional[float] = None) -> dict:
         "vs_vwap": _pct(px, r["vwap"]),
         "last_session": str(r["date"]),
     }
+
+
+# ── the deeper read: performance, risk, seasonality, pivots ──────────
+WINDOWS = [("1W", 5), ("1M", 21), ("3M", 63), ("6M", 126), ("1Y", 252), ("3Y", 756), ("5Y", 1260)]
+
+
+def performance(d: pd.DataFrame, ltp: Optional[float] = None) -> dict:
+    """Return over the standard windows, plus this calendar year, measured to the last price."""
+    if d.empty:
+        return {}
+    px = _f(ltp) or _f(d["close"].iloc[-1])
+    closes = d["close"].to_numpy(float)
+    out = {"windows": []}
+    for label, n in WINDOWS:
+        if len(closes) > n:
+            out["windows"].append({"label": label, "sessions": n, "pct": _pct(px, closes[-1 - n])})
+    yr = d[pd.to_datetime(d["date"]).dt.year == pd.Timestamp(d["date"].iloc[-1]).year]
+    if len(yr) > 1:
+        out["ytd"] = _pct(px, yr["close"].iloc[0])
+    out["since_listing"] = _pct(px, closes[0])
+    return out
+
+
+def risk_stats(d: pd.DataFrame, ltp: Optional[float] = None) -> dict:
+    """How wild the stock is: volatility, drawdown from the lifetime high, best and worst days."""
+    if len(d) < 30:
+        return {}
+    px = _f(ltp) or _f(d["close"].iloc[-1])
+    rets = d["close"].pct_change().dropna() * 100
+    last_year = rets.tail(TRADING_DAYS_YEAR)
+    peak = d["close"].cummax()
+    dd = (d["close"] / peak - 1) * 100
+    worst_i, best_i = rets.tail(TRADING_DAYS_YEAR).idxmin(), rets.tail(TRADING_DAYS_YEAR).idxmax()
+    atr_pct = _pct(_f(d["atr"].iloc[-1]) + px, px) if "atr" in d.columns else None
+    return {
+        "volatility_annual": _f(last_year.std(ddof=0) * np.sqrt(TRADING_DAYS_YEAR)),
+        "avg_daily_move": _f(last_year.abs().mean()),
+        "atr_pct": atr_pct,
+        "max_drawdown": _f(dd.min()),
+        "drawdown_now": _f(dd.iloc[-1]),
+        "up_days_pct": _f((last_year > 0).mean() * 100),
+        "best_day": {"date": str(d.loc[best_i, "date"]), "pct": _f(rets.loc[best_i])},
+        "worst_day": {"date": str(d.loc[worst_i, "date"]), "pct": _f(rets.loc[worst_i])},
+        "gap_ups": int((d["open"].tail(TRADING_DAYS_YEAR) > d["high"].shift(1).tail(TRADING_DAYS_YEAR)).sum()),
+        "gap_downs": int((d["open"].tail(TRADING_DAYS_YEAR) < d["low"].shift(1).tail(TRADING_DAYS_YEAR)).sum()),
+    }
+
+
+def relative_strength(d: pd.DataFrame, index_df: Optional[pd.DataFrame], windows=(21, 63, 252)) -> list[dict]:
+    """The stock's return against the index over the same window — who is carrying whom."""
+    if d.empty or index_df is None or index_df.empty:
+        return []
+    idx = index_df.rename(columns={"timestamp": "date"}).copy()
+    idx["date"] = pd.to_datetime(idx["date"]).dt.date
+    idx = idx.groupby("date", as_index=False)["close"].last()
+    merged = pd.merge(d[["date", "close"]], idx, on="date", how="inner", suffixes=("", "_idx"))
+    out = []
+    for n in windows:
+        if len(merged) > n:
+            s = _pct(merged["close"].iloc[-1], merged["close"].iloc[-1 - n])
+            i = _pct(merged["close_idx"].iloc[-1], merged["close_idx"].iloc[-1 - n])
+            if s is not None and i is not None:
+                out.append({"label": f"{n}d", "stock": s, "index": i, "excess": round(s - i, 2)})
+    return out
+
+
+def seasonality(d: pd.DataFrame, years: int = 10) -> list[dict]:
+    """Average return by calendar month over the recent years — a habit, not a promise."""
+    if len(d) < 400:
+        return []
+    f = d.copy()
+    f["ts"] = pd.to_datetime(f["date"])
+    f = f[f["ts"] >= f["ts"].max() - pd.DateOffset(years=years)]
+    g = f.groupby([f["ts"].dt.year.rename("y"), f["ts"].dt.month.rename("m")])["close"]
+    monthly = pd.DataFrame({"first": g.first(), "last": g.last()}).reset_index()
+    monthly["ret"] = (monthly["last"] / monthly["first"] - 1) * 100
+    return [{"month": int(m), "avg": _f(grp["ret"].mean()),
+             "positive_pct": _f((grp["ret"] > 0).mean() * 100), "samples": int(len(grp))}
+            for m, grp in monthly.groupby("m")]
+
+
+def pivots(d: pd.DataFrame) -> dict:
+    """Classic floor-trader pivots from the last completed session."""
+    if d.empty:
+        return {}
+    r = d.iloc[-1]
+    h, l, c = float(r["high"]), float(r["low"]), float(r["close"])
+    p = (h + l + c) / 3
+    return {"date": str(r["date"]), "pivot": round(p, 2),
+            "r1": round(2 * p - l, 2), "r2": round(p + (h - l), 2), "r3": round(h + 2 * (p - l), 2),
+            "s1": round(2 * p - h, 2), "s2": round(p - (h - l), 2), "s3": round(l - 2 * (h - p), 2)}
+
+
+def order_book(quote: dict) -> dict:
+    """The live order book from the quote: five levels a side, the spread and the day's limits."""
+    depth = (quote or {}).get("depth") or {}
+    buy, sell = depth.get("buy") or [], depth.get("sell") or []
+    if not buy and not sell:
+        return {"available": False}
+    bid = _f(buy[0]["price"]) if buy else None
+    ask = _f(sell[0]["price"]) if sell else None
+    tot_buy = float(quote.get("buy_quantity") or sum(b.get("quantity", 0) for b in buy))
+    tot_sell = float(quote.get("sell_quantity") or sum(s.get("quantity", 0) for s in sell))
+    return {
+        "available": True, "bid": bid, "ask": ask,
+        "spread": round(ask - bid, 2) if bid and ask else None,
+        "spread_pct": _pct(ask, bid) if bid and ask else None,
+        "buy_quantity": tot_buy, "sell_quantity": tot_sell,
+        "pressure": round(tot_buy / (tot_buy + tot_sell) * 100, 1) if (tot_buy + tot_sell) else None,
+        "buy": [{"price": _f(b.get("price")), "quantity": b.get("quantity"), "orders": b.get("orders")} for b in buy[:5]],
+        "sell": [{"price": _f(s.get("price")), "quantity": s.get("quantity"), "orders": s.get("orders")} for s in sell[:5]],
+        "upper_circuit": _f(quote.get("upper_circuit_limit")),
+        "lower_circuit": _f(quote.get("lower_circuit_limit")),
+        "last_trade_time": str(quote.get("last_trade_time") or "") or None,
+        "average_price": _f(quote.get("average_price")),
+    }

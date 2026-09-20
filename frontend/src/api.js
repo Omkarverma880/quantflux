@@ -631,6 +631,9 @@ export const api = {
   meXray: (id, p) => request(`/equity-strategy/my-workspace/xray/${id}?${new URLSearchParams(p || {})}`),
   meNews: (id, force = 0) => request(`/equity-strategy/my-workspace/news/${id}?force=${force}`),
   meRebuild: (id) => request(`/equity-strategy/my-workspace/cache/${id}/rebuild`, { method: 'POST' }),
+  meFundamentals: (id) => request(`/equity-strategy/my-workspace/fundamentals/${id}/refresh`, { method: 'POST' }),
+  // Equity order from the workspace — the same desk (and risk fence) as Manual Trading
+  equityOrder: (body) => request('/manual/order', { method: 'POST', body: JSON.stringify(body) }),
   wsMeta: () => request('/equity-strategy/workspace/meta'),
   wsScan: (body) => request('/equity-strategy/workspace/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
   wsConfig: () => request('/equity-strategy/workspace/config'),

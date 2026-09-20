@@ -157,7 +157,7 @@ def _zone(kind: str, label: str, lo: float, hi: float, ltp: float, why: str,
 
 
 def entry_zones(d: pd.DataFrame, ltp: float, user_levels: Optional[list[float]] = None,
-                lookback: int = 750) -> dict:
+                lookback: int = 750, horizon: int = HORIZON) -> dict:
     """Every zone worth watching below and above price, each with its tested record.
 
     ``d`` must already carry the indicator columns from ``metrics.enrich``.
@@ -174,7 +174,7 @@ def entry_zones(d: pd.DataFrame, ltp: float, user_levels: Optional[list[float]] 
     supports.sort(key=lambda z: (-z["touches"], abs(z["price"] - ltp)))
     resistances.sort(key=lambda z: (-z["touches"], abs(z["price"] - ltp)))
 
-    stats = {k: _split_stats(d, m) for k, m in _masks(d, supports[:6], resistances[:6]).items()}
+    stats = {k: _split_stats(d, m, horizon) for k, m in _masks(d, supports[:6], resistances[:6]).items()}
     zones: list[dict] = []
 
     for lv in sorted(set(float(x) for x in (user_levels or []))):
@@ -207,10 +207,11 @@ def entry_zones(d: pd.DataFrame, ltp: float, user_levels: Optional[list[float]] 
 
     zones.sort(key=lambda z: abs(z["distance_pct"]))
     return {"status": "ok", "zones": zones, "setups": stats, "atr": round(atr, 2),
-            "horizon": HORIZON, "min_samples": MIN_SAMPLES}
+            "horizon": horizon, "min_samples": MIN_SAMPLES}
 
 
-def best_entry(d: pd.DataFrame, ltp: float, zones: list[dict], sens: Optional[dict] = None) -> dict:
+def best_entry(d: pd.DataFrame, ltp: float, zones: list[dict], sens: Optional[dict] = None,
+               horizon: int = HORIZON) -> dict:
     """The one zone to watch, with a plan built from this stock's own numbers.
 
     Picked among zones at or below price (an equity buyer's entry), preferring a tested setup
@@ -244,12 +245,12 @@ def best_entry(d: pd.DataFrame, ltp: float, zones: list[dict], sens: Optional[di
     lines = [f"{z['label']} — {z['why']}"]
     if st.get("tested"):
         lines.append(f"Over {st['samples']} past triggers on this stock, price was higher "
-                     f"{HORIZON} sessions later {st['win_rate']}% of the time "
+                     f"{horizon} sessions later {st['win_rate']}% of the time "
                      f"(median {st['median_return']:+.2f}%, median dip first {st['median_mae']:.2f}%).")
         rec = st.get("recent") or {}
         if rec.get("samples"):
             lines.append(f"In the most recent fifth of the history: {rec['samples']} triggers, "
-                         f"{rec['win_rate']}% higher after {HORIZON} sessions "
+                         f"{rec['win_rate']}% higher after {horizon} sessions "
                          f"(median {rec['median_return']:+.2f}%).")
         else:
             lines.append("No trigger in the most recent fifth of the history — the record is older data.")

@@ -1,39 +1,34 @@
-import React, { useMemo, useState } from 'react';
-import { Check, Loader2, Pencil, Trash2, X, ArrowUpDown, Maximize2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { Check, Loader2, Pencil, Trash2, X, Maximize2, Plus } from 'lucide-react';
 import { api } from '../../api';
-import { N, PCT, COMPACT, signTone, RSI_TONE, VolumeSparkline, SensitivityMeter, LevelChips, AlertPills } from './ui';
+import {
+  N, PCT, signTone, rowTone, ROW_CLASS, LevelChips, PnLCell, NotePills, CategoryChip, Empty,
+} from './ui';
 
-/** The workspace table. A row blinks while price is sitting on one of its research levels. */
+/**
+ * The workspace table.
+ *
+ * Row colour says one thing at a time: amber and blinking while price sits on a research level,
+ * green when RSI is 30 or below, red when it is 80 or above, plain otherwise. Everything inside
+ * a row keeps its own dark chip background, so the level arrows stay readable whatever the row
+ * is doing — the tint never swallows the data.
+ */
 
 const COLS = [
-  ['symbol', 'Stock', 'left'],
+  ['stock', 'Stock', 'left'],
   ['ltp', 'LTP', 'right'],
   ['high52', '52w high', 'right'],
   ['rsi', 'RSI', 'right'],
-  ['life', 'Lifetime high / low', 'right'],
-  ['volume', 'Volume · latest vs older', 'left'],
-  ['sensitivity', 'Sensitivity', 'left'],
-  ['added_on', 'Added', 'right'],
   ['levels', 'Research levels', 'left'],
-  ['alerts', 'Watch', 'left'],
+  ['pnl', 'P&L since trigger', 'left'],
+  ['added', 'Researched', 'right'],
+  ['notes', 'What is happening', 'left'],
   ['actions', '', 'right'],
 ];
-
-const value = (r, key) => ({
-  symbol: r.symbol,
-  ltp: r.ltp,
-  high52: r.extremes?.from_52w_high,
-  rsi: r.rsi,
-  life: r.extremes?.from_life_high,
-  volume: r.volume?.vs_avg20,
-  sensitivity: r.sensitivity?.score,
-  added_on: r.added_on,
-  levels: r.watch?.nearest?.distance_pct == null ? null : Math.abs(r.watch.nearest.distance_pct),
-  alerts: (r.alerts || []).length,
-}[key]);
+const ALIGN = { left: 'text-left', right: 'text-right' };
 
 function EditLevels({ row, onSaved, onCancel }) {
-  const [text, setText] = useState((row.levels || []).join(', '));
+  const [text, setText] = useState((row.levels || []).map((l) => l.price).join(', '));
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
@@ -55,36 +50,46 @@ function EditLevels({ row, onSaved, onCancel }) {
   );
 }
 
-export default function StockTable({ rows = [], onOpen, onChanged, loading }) {
-  const [sort, setSort] = useState({ key: 'added_on', dir: 'desc' });
+function SectorTag({ row, onChanged }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(row.sector || '');
+  const save = async (e) => {
+    e.stopPropagation();
+    const r = await api.meUpdate(row.id, { sector: text || ' ' });
+    if (r.status === 'ok') { setEditing(false); onChanged?.(); }
+  };
+  if (editing) {
+    return (
+      <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        <input autoFocus value={text} onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') save(e); if (e.key === 'Escape') setEditing(false); }}
+          placeholder="Banking" className="input-field !py-0.5 !px-1.5 text-[10.5px] w-28" />
+        <button onClick={save} className="text-emerald-400"><Check className="w-3 h-3" /></button>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 group/sector">
+      <span className={`text-[10px] ${row.sector ? 'text-gray-400' : 'text-gray-600 italic'}`}>
+        {row.sector || 'sector?'}
+      </span>
+      <button onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        className="text-gray-700 hover:text-brand-400 opacity-0 group-hover/sector:opacity-100 transition"
+        title="set the sector by hand">
+        <Pencil className="w-2.5 h-2.5" />
+      </button>
+    </span>
+  );
+}
+
+export default function StockTable({ rows = [], onOpen, onChanged, onTrade, loading, dense }) {
   const [editing, setEditing] = useState(null);
   const [removing, setRemoving] = useState(null);
-
-  const sorted = useMemo(() => {
-    const d = sort.dir === 'asc' ? 1 : -1;
-    return [...rows].sort((a, b) => {
-      const av = value(a, sort.key); const bv = value(b, sort.key);
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      if (typeof av === 'string') return av < bv ? -d : av > bv ? d : 0;
-      return (Number(av) - Number(bv)) * d;
-    });
-  }, [rows, sort]);
-
-  // Tailwind only ships classes it can see in the source, so map instead of interpolating.
-  const ALIGN = { left: 'text-left', right: 'text-right' };
-  const head = (key, label, align) => (
-    <th key={key} className={`px-2.5 py-2 font-medium ${ALIGN[align]} ${key === 'actions' ? '' : 'cursor-pointer select-none hover:text-gray-300'}`}
-      onClick={() => key !== 'actions' && setSort((s) => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }))}>
-      <span className="inline-flex items-center gap-1">{label}
-        {sort.key === key && key !== 'actions' && <ArrowUpDown className="w-3 h-3 text-brand-400" />}</span>
-    </th>
-  );
+  const pad = dense ? 'px-2.5 py-1' : 'px-2.5 py-2';
 
   const remove = async (row, e) => {
     e.stopPropagation();
-    if (!window.confirm(`Remove ${row.symbol} from your workspace? Your levels and note go with it.`)) return;
+    if (!window.confirm(`Remove ${row.symbol} from your workspace? Your levels, research date and note go with it.`)) return;
     setRemoving(row.id);
     try {
       const r = await api.meRemove(row.id);
@@ -92,14 +97,24 @@ export default function StockTable({ rows = [], onOpen, onChanged, loading }) {
     } finally { setRemoving(null); }
   };
 
+  const flipCategory = async (row, e) => {
+    e.stopPropagation();
+    const next = row.category === 'INVESTMENT' ? 'SWING' : 'INVESTMENT';
+    const r = await api.meUpdate(row.id, { category: next });
+    if (r.status === 'ok') onChanged?.();
+  };
+
+  const toggleLevel = async (row, price) => {
+    const levels = (row.levels || []).map((l) => (l.price === price ? { ...l, track: !l.track } : l));
+    const r = await api.meUpdate(row.id, { levels });
+    if (r.status === 'ok') onChanged?.();
+  };
+
   if (!rows.length) {
     return (
-      <div className="card text-center py-12">
-        <div className="text-[14px] text-gray-300 font-semibold">Your workspace is empty</div>
-        <div className="text-[12.5px] text-gray-500 mt-1">
-          Add the stocks you research, with the levels you are waiting for. Prices, RSI, extremes,
-          volume flow and the level watch fill in automatically.
-        </div>
+      <div className="card">
+        <Empty icon={Plus} title="Nothing to show here"
+          hint="Add the stocks you research with the levels you are waiting for, or clear the filters above." />
       </div>
     );
   }
@@ -107,31 +122,36 @@ export default function StockTable({ rows = [], onOpen, onChanged, loading }) {
   return (
     <div className="card !p-0 overflow-hidden">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1180px] text-[12px]">
+        <table className="w-full min-w-[1150px] text-[12px]">
           <thead>
             <tr className="text-[10px] uppercase tracking-wider text-gray-500 border-b border-surface-3">
-              {COLS.map(([k, l, a]) => head(k, l, a))}
+              {COLS.map(([k, l, a]) => <th key={k} className={`${pad} font-medium ${ALIGN[a]}`}>{l}</th>)}
             </tr>
           </thead>
           <tbody>
-            {sorted.map((r) => {
-              const blink = !!r.watch?.touched;
-              const ext = r.extremes || {};
+            {rows.map((r) => {
+              const tone = rowTone(r);
               return (
                 <tr key={r.id} onClick={() => onOpen?.(r)}
-                  className={`border-b border-surface-3/40 cursor-pointer transition-colors ${blink ? 'row-blink' : 'hover:bg-surface-2/60'}`}>
-                  <td className="px-2.5 py-2">
+                  className={`border-b border-surface-3/40 cursor-pointer transition-colors ${ROW_CLASS[tone]}`}>
+                  <td className={pad}>
                     <div className="flex items-center gap-1.5">
-                      {blink && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 dot-blink shrink-0" />}
+                      {tone === 'blink' && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 dot-blink shrink-0" />}
                       <div className="min-w-0">
-                        <div className="font-semibold text-gray-100 truncate">{r.symbol}
-                          <span className="ml-1 text-[9.5px] text-gray-500">{r.exchange}</span></div>
-                        <div className="text-[10.5px] text-gray-500 truncate max-w-[170px]">{r.company || '—'}</div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-gray-100 truncate">{r.symbol}</span>
+                          <span className="text-[9.5px] text-gray-500">{r.exchange}</span>
+                          <CategoryChip category={r.category} small onClick={(e) => flipCategory(r, e)} />
+                        </div>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-[10.5px] text-gray-500 truncate max-w-[150px]">{r.company || '—'}</span>
+                          <SectorTag row={r} onChanged={onChanged} />
+                        </div>
                       </div>
                     </div>
                   </td>
 
-                  <td className="px-2.5 py-2 text-right mono whitespace-nowrap">
+                  <td className={`${pad} text-right mono whitespace-nowrap`}>
                     {r.history === false && !r.ltp ? <span className="text-gray-600">—</span> : (
                       <>
                         <div className="text-gray-100 font-semibold">{N(r.ltp)}</div>
@@ -140,50 +160,25 @@ export default function StockTable({ rows = [], onOpen, onChanged, loading }) {
                     )}
                   </td>
 
-                  <td className="px-2.5 py-2 text-right mono whitespace-nowrap">
-                    <div className="text-gray-200">{N(ext.high_52w)}</div>
-                    <div className={`text-[10.5px] ${signTone(ext.from_52w_high)}`}>{PCT(ext.from_52w_high, 1)}</div>
+                  <td className={`${pad} text-right mono whitespace-nowrap`}>
+                    <div className="text-gray-200">{N(r.high_52w)}</div>
+                    <div className={`text-[10.5px] ${signTone(r.from_52w_high)}`}>{PCT(r.from_52w_high, 1)}</div>
                   </td>
 
-                  <td className="px-2.5 py-2 text-right mono whitespace-nowrap">
-                    <span className={`${RSI_TONE[r.rsi_state] || 'text-gray-300'} ${r.rsi_state === 'oversold' ? 'dot-blink' : ''}`}>
+                  <td className={`${pad} text-right mono whitespace-nowrap`}>
+                    <span className={`text-[13px] font-semibold ${r.rsi == null ? 'text-gray-600'
+                      : r.rsi <= 30 ? 'text-emerald-400' : r.rsi >= 80 ? 'text-red-400' : 'text-gray-300'}`}>
                       {r.rsi == null ? '—' : r.rsi.toFixed(1)}
                     </span>
                   </td>
 
-                  <td className="px-2.5 py-2 text-right mono whitespace-nowrap"
-                    title={ext.high_life_on ? `high on ${ext.high_life_on} · low on ${ext.low_life_on} · ${ext.sessions} sessions from ${ext.first_session}` : ''}>
-                    <div className="text-gray-200">{N(ext.high_life)}</div>
-                    <div className="text-[10.5px] text-gray-500">{N(ext.low_life)}</div>
-                  </td>
-
-                  <td className="px-2.5 py-2">
-                    <div className="flex items-center gap-2">
-                      <VolumeSparkline bars={r.volume?.bars || []} />
-                      <div className="leading-tight whitespace-nowrap">
-                        <div className="text-gray-200 mono text-[11.5px]">{COMPACT(r.volume?.latest)}</div>
-                        <div className={`text-[10.5px] ${(r.volume?.vs_avg20 || 0) >= 1.5 ? 'text-emerald-400' : 'text-gray-500'}`}>
-                          {r.volume?.vs_avg20 ? `${r.volume.vs_avg20}× 20d` : '—'}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-
-                  <td className="px-2.5 py-2"><SensitivityMeter sens={r.sensitivity} /></td>
-
-                  <td className="px-2.5 py-2 text-right whitespace-nowrap">
-                    <div className="text-gray-300 mono text-[11.5px]">{r.added_on || '—'}</div>
-                    <div className="text-[10.5px] text-gray-500">
-                      {r.days_since_added == null ? '' : r.days_since_added === 0 ? 'today' : `${r.days_since_added}d ago`}
-                    </div>
-                  </td>
-
-                  <td className="px-2.5 py-2" onClick={(e) => { if (editing === r.id) e.stopPropagation(); }}>
+                  <td className={pad}>
                     {editing === r.id
                       ? <EditLevels row={r} onSaved={() => { setEditing(null); onChanged?.(); }} onCancel={() => setEditing(null)} />
                       : (
                         <div className="flex items-center gap-1.5">
-                          <LevelChips watch={r.watch} onEdit={() => setEditing(r.id)} />
+                          <LevelChips watch={r.watch} onEdit={() => setEditing(r.id)}
+                            onToggle={(price) => toggleLevel(r, price)} />
                           <button onClick={(e) => { e.stopPropagation(); setEditing(r.id); }}
                             className="text-gray-600 hover:text-brand-400 p-0.5" title="edit levels">
                             <Pencil className="w-3 h-3" />
@@ -192,21 +187,38 @@ export default function StockTable({ rows = [], onOpen, onChanged, loading }) {
                       )}
                   </td>
 
-                  <td className="px-2.5 py-2 max-w-[230px]">
-                    {r.error ? <span className="text-[10.5px] text-red-400">{r.error}</span>
-                      : r.history === false ? <span className="text-[10.5px] text-gray-500">{r.message}</span>
-                        : <AlertPills alerts={r.alerts} />}
+                  <td className={pad}><PnLCell watch={r.watch} /></td>
+
+                  <td className={`${pad} text-right whitespace-nowrap`}>
+                    <div className="text-gray-300 mono text-[11.5px]">{r.added_on || '—'}</div>
+                    <div className="text-[10.5px] text-gray-500">
+                      {r.days_since_added == null ? '' : r.days_since_added === 0 ? 'today' : `${r.days_since_added}d ago`}
+                    </div>
                   </td>
 
-                  <td className="px-2.5 py-2 text-right whitespace-nowrap">
-                    <button onClick={(e) => { e.stopPropagation(); onOpen?.(r); }}
-                      className="text-gray-500 hover:text-brand-400 p-1" title="open the X-ray">
-                      <Maximize2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={(e) => remove(r, e)} disabled={removing === r.id}
-                      className="text-gray-600 hover:text-red-400 p-1" title="remove from workspace">
-                      {removing === r.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                    </button>
+                  <td className={`${pad} max-w-[260px]`}>
+                    {r.error ? <span className="text-[10.5px] text-red-400">{r.error}</span>
+                      : r.history === false ? <span className="text-[10.5px] text-gray-500">{r.message}</span>
+                        : <NotePills notes={r.notes} />}
+                  </td>
+
+                  <td className={`${pad} text-right whitespace-nowrap`}>
+                    <div className="inline-flex items-center gap-1">
+                      <button onClick={(e) => { e.stopPropagation(); onTrade?.(r, 'BUY'); }}
+                        className="px-1.5 py-0.5 rounded border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15 text-[10.5px] font-bold"
+                        title="buy this stock">BUY</button>
+                      <button onClick={(e) => { e.stopPropagation(); onTrade?.(r, 'SELL'); }}
+                        className="px-1.5 py-0.5 rounded border border-red-500/40 text-red-400 hover:bg-red-500/15 text-[10.5px] font-bold"
+                        title="sell this stock">SELL</button>
+                      <button onClick={(e) => { e.stopPropagation(); onOpen?.(r); }}
+                        className="text-gray-500 hover:text-brand-400 p-1" title="open the X-ray">
+                        <Maximize2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={(e) => remove(r, e)} disabled={removing === r.id}
+                        className="text-gray-600 hover:text-red-400 p-1" title="remove from workspace">
+                        {removing === r.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

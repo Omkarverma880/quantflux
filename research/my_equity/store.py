@@ -12,12 +12,21 @@ from typing import Optional
 
 from core.logger import get_logger
 from core.models import MyEquityStock
+from research.my_equity import levels as LV
 
 logger = get_logger("research.my_equity.store")
 
-MAX_STOCKS = 200
-MAX_LEVELS = 12
+MAX_STOCKS = 500
+MAX_LEVELS = LV.MAX_LEVELS
+CATEGORIES = ("INVESTMENT", "SWING")
 _SYMBOL_RE = re.compile(r"^[A-Z0-9&\-\.]{1,32}$")
+
+
+def clean_category(raw) -> str:
+    c = str(raw or "SWING").strip().upper().replace(" ", "_")
+    if c.startswith("INVEST"):
+        return "INVESTMENT"
+    return "SWING"
 
 
 def clean_symbol(raw: str) -> str:
@@ -27,27 +36,26 @@ def clean_symbol(raw: str) -> str:
     return s
 
 
-def parse_levels(raw) -> list[float]:
-    """Accept a list, or text like '3100, 2900' / '3100 2900' — the way you would type it."""
+def parse_levels(raw) -> list[dict]:
+    """Accept a list of numbers or level objects, or text like '3100, 2900' — however you type it.
+
+    Stored shape is always ``[{"price": 3100.0, "track": True}, …]``; ``track`` says whether the
+    level counts towards the P&L, so you can keep a level on the chart without following it.
+    """
     if raw is None:
         return []
-    items = raw if isinstance(raw, (list, tuple)) else re.split(r"[\s,;|]+", str(raw))
-    out: list[float] = []
-    for it in items:
-        try:
-            v = round(float(str(it).replace(",", "").strip()), 2)
-        except (TypeError, ValueError):
-            continue
-        if v > 0 and v not in out:
-            out.append(v)
-    return sorted(out)[:MAX_LEVELS]
+    if isinstance(raw, str):
+        raw = [p for p in re.split(r"[\s,;|]+", raw) if p]
+    return LV.normalise(raw)
 
 
 def to_dict(row: MyEquityStock) -> dict:
     return {
         "id": row.id, "symbol": row.symbol, "exchange": row.exchange, "company": row.company,
         "token": row.token, "added_on": row.added_on.isoformat() if row.added_on else None,
-        "levels": [float(x) for x in (row.levels or [])], "note": row.note or "",
+        "levels": LV.normalise(row.levels), "level_prices": LV.prices(row.levels),
+        "category": clean_category(row.category), "sector": row.sector, "industry": row.industry,
+        "sector_source": row.sector_source, "note": row.note or "",
         "touch_pct": float(row.touch_pct if row.touch_pct is not None else 0.25),
         "archived": bool(row.archived),
         "last_touch_at": row.last_touch_at.strftime("%Y-%m-%d %H:%M") if row.last_touch_at else None,
@@ -76,20 +84,24 @@ def find(db, user_id: int, symbol: str, exchange: str) -> Optional[MyEquityStock
 
 def add(db, user_id: int, *, symbol: str, exchange: str = "NSE", token: Optional[int] = None,
         company: Optional[str] = None, levels=None, note: str = "",
-        added_on: Optional[date] = None, touch_pct: float = 0.25) -> MyEquityStock:
+        added_on: Optional[date] = None, touch_pct: float = 0.25,
+        category: str = "SWING", sector: Optional[str] = None,
+        industry: Optional[str] = None) -> MyEquityStock:
     symbol = clean_symbol(symbol)
     exchange = (exchange or "NSE").upper()
     existing = find(db, user_id, symbol, exchange)
     if existing:
         # adding the same stock again means "update my research", not an error
         return update(db, user_id, existing.id, levels=levels, note=note or existing.note,
-                      added_on=added_on, touch_pct=touch_pct, archived=False)
+                      added_on=added_on, touch_pct=touch_pct, archived=False, category=category)
     if db.query(MyEquityStock).filter(MyEquityStock.user_id == user_id).count() >= MAX_STOCKS:
         raise ValueError(f"the workspace holds at most {MAX_STOCKS} stocks")
     row = MyEquityStock(
         user_id=user_id, symbol=symbol, exchange=exchange, token=token, company=company,
         added_on=added_on or date.today(), levels=parse_levels(levels), note=(note or "").strip()[:2000],
         touch_pct=max(0.01, min(float(touch_pct or 0.25), 10.0)), archived=False,
+        category=clean_category(category), sector=sector, industry=industry,
+        sector_source="auto" if sector else None,
     )
     db.add(row)
     db.commit()
@@ -113,6 +125,12 @@ def update(db, user_id: int, stock_id: int, **fields) -> MyEquityStock:
         row.touch_pct = max(0.01, min(float(fields["touch_pct"]), 10.0))
     if fields.get("archived") is not None:
         row.archived = bool(fields["archived"])
+    if fields.get("category") is not None:
+        row.category = clean_category(fields["category"])
+    if fields.get("sector") is not None:
+        row.sector = str(fields["sector"]).strip()[:60] or None
+        row.industry = (str(fields.get("industry") or "").strip()[:90] or None) or row.industry
+        row.sector_source = fields.get("sector_source") or "manual"
     for key in ("token", "company"):
         if fields.get(key) is not None:
             setattr(row, key, fields[key])

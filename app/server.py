@@ -365,6 +365,12 @@ async def lifespan(app: FastAPI):
             "type": "VARCHAR(10) DEFAULT 'line'",
             "anchor": "VARCHAR(20)",
         })
+        _ensure_columns(engine, "my_equity_stocks", {
+            "category": "VARCHAR(12) DEFAULT 'SWING'",
+            "sector": "VARCHAR(60)",
+            "industry": "VARCHAR(90)",
+            "sector_source": "VARCHAR(8)",
+        })
     except Exception as e:
         print(f"[LIFESPAN] DB init error (non-fatal): {e}", flush=True)
 

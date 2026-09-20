@@ -1203,8 +1203,12 @@ class MyEquityStock(Base):
     exchange = Column(String(8), default="NSE")
     token = Column(Integer)
     company = Column(String(120))                   # from the instrument dump, used for news search
-    added_on = Column(Date)                         # the day the research was done
-    levels = Column(JSONB, default=list)            # research entry levels, e.g. [3100, 2900]
+    added_on = Column(Date)                         # the day the research was done, not the day it was typed in
+    levels = Column(JSONB, default=list)            # [{"price": 3100, "track": true}, …]
+    category = Column(String(12), default="SWING")  # INVESTMENT | SWING
+    sector = Column(String(60))
+    industry = Column(String(90))
+    sector_source = Column(String(8))               # auto (looked up) | manual (you edited it)
     note = Column(Text)
     touch_pct = Column(Float, default=0.25)         # how close counts as "touched", in %
     archived = Column(Boolean, default=False)
