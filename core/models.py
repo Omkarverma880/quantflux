@@ -1212,6 +1212,8 @@ class MyEquityStock(Base):
     note = Column(Text)
     touch_pct = Column(Float, default=0.25)         # how close counts as "touched", in %
     archived = Column(Boolean, default=False)
+    alerts_on = Column(Boolean, default=True)       # send Telegram alerts for this stock
+    alert_state = Column(JSONB, default=dict)       # {alert key: date sent} — one alert per day
     last_touch_at = Column(DateTime)                # last time price touched one of the levels
     last_touch_level = Column(Numeric(12, 2))
 

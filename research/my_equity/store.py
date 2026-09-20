@@ -57,7 +57,7 @@ def to_dict(row: MyEquityStock) -> dict:
         "category": clean_category(row.category), "sector": row.sector, "industry": row.industry,
         "sector_source": row.sector_source, "note": row.note or "",
         "touch_pct": float(row.touch_pct if row.touch_pct is not None else 0.25),
-        "archived": bool(row.archived),
+        "archived": bool(row.archived), "alerts_on": bool(getattr(row, "alerts_on", True)),
         "last_touch_at": row.last_touch_at.strftime("%Y-%m-%d %H:%M") if row.last_touch_at else None,
         "last_touch_level": float(row.last_touch_level) if row.last_touch_level is not None else None,
     }
@@ -127,6 +127,8 @@ def update(db, user_id: int, stock_id: int, **fields) -> MyEquityStock:
         row.archived = bool(fields["archived"])
     if fields.get("category") is not None:
         row.category = clean_category(fields["category"])
+    if fields.get("alerts_on") is not None:
+        row.alerts_on = bool(fields["alerts_on"])
     if fields.get("sector") is not None:
         row.sector = str(fields["sector"]).strip()[:60] or None
         row.industry = (str(fields.get("industry") or "").strip()[:90] or None) or row.industry

@@ -304,6 +304,21 @@ def _run_strategies_for_user(uid: int):
                 _oi_paper.check(uid, broker)
             except Exception as exc:
                 print(f"[BG] OI Lab paper engine error user {uid}: {exc}", flush=True)
+
+        # My Equity Workspace: level / target / stop alerts and the two daily digests.
+        # Also warms a few stocks' daily candles so the page itself never waits on Zerodha.
+        # Both are rate-limited inside (30s for alerts, 60s for the warmer), so this loop's
+        # one-second cadence never turns into a stream of Zerodha calls.
+        if authenticated:
+            try:
+                from app.routes.my_equity_routes import _service as _me_service
+                from research.my_equity import alerts as _me_alerts
+                _me_svc = _me_service(db, uid)
+                if _me_svc.broker is not None:
+                    _me_alerts.tick(db, uid, _me_svc)
+                    _me_svc.warm(db, uid, limit=2)
+            except Exception as exc:
+                print(f"[BG] My Equity Workspace error user {uid}: {exc}", flush=True)
     finally:
         db.close()
 
@@ -370,6 +385,8 @@ async def lifespan(app: FastAPI):
             "sector": "VARCHAR(60)",
             "industry": "VARCHAR(90)",
             "sector_source": "VARCHAR(8)",
+            "alerts_on": "BOOLEAN DEFAULT TRUE",
+            "alert_state": "JSONB DEFAULT '{}'::jsonb",
         })
     except Exception as e:
         print(f"[LIFESPAN] DB init error (non-fatal): {e}", flush=True)

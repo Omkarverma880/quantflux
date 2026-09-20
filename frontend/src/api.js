@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback } from 'react';
 
 const BASE = '/api';
+export const API_BASE = BASE;   // for downloads that bypass the JSON helper
 
 function getAuthHeaders() {
   const token = localStorage.getItem('app_token');
@@ -632,6 +633,11 @@ export const api = {
   meNews: (id, force = 0) => request(`/equity-strategy/my-workspace/news/${id}?force=${force}`),
   meRebuild: (id) => request(`/equity-strategy/my-workspace/cache/${id}/rebuild`, { method: 'POST' }),
   meFundamentals: (id) => request(`/equity-strategy/my-workspace/fundamentals/${id}/refresh`, { method: 'POST' }),
+  meAlertsConfig: () => request('/equity-strategy/my-workspace/alerts/config'),
+  meAlertsSave: (body) => request('/equity-strategy/my-workspace/alerts/config', { method: 'POST', body: JSON.stringify(body || {}) }),
+  meAlertsTest: () => request('/equity-strategy/my-workspace/alerts/test', { method: 'POST' }),
+  meImport: (body) => request('/equity-strategy/my-workspace/import', { method: 'POST', body: JSON.stringify(body) }),
+  meImportFile: (file, dry = 1) => { const fd = new FormData(); fd.append('file', file); return requestUpload(`/equity-strategy/my-workspace/import/file?dry_run=${dry ? 1 : 0}`, fd); },
   // Equity order from the workspace — the same desk (and risk fence) as Manual Trading
   equityOrder: (body) => request('/manual/order', { method: 'POST', body: JSON.stringify(body) }),
   wsMeta: () => request('/equity-strategy/workspace/meta'),

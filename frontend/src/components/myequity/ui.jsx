@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, ArrowDown, Check, Minus, ChevronDown, Loader2 } from 'lucide-react';
+import { ArrowUp, ArrowDown, Check, Minus, ChevronDown, Loader2, Bell, BellOff, Target, ShieldAlert } from 'lucide-react';
 
 /** Shared display pieces for My Equity Workspace — formatting, level chips, meters, pills. */
 
@@ -185,6 +185,7 @@ export function LevelChip({ row, onToggle }) {
         ${row.track === false ? 'opacity-45' : ''} ${onToggle ? 'cursor-pointer' : ''} whitespace-nowrap`}>
       <span className="mono text-[11px] text-gray-100">{N(row.level, 2)}</span>
       <span className="inline-flex items-center gap-0.5">
+        {row.target && <Target className="w-2.5 h-2.5 text-gray-500" />}
         {d != null && (
           <span className={`inline-flex items-center text-[10px] mono font-semibold ${up ? 'text-emerald-400' : 'text-red-400'}`}>
             {up ? <ArrowUp className="w-2.5 h-2.5" /> : <ArrowDown className="w-2.5 h-2.5" />}
@@ -213,6 +214,39 @@ export function LevelChips({ watch, onEdit, onToggle }) {
   );
 }
 
+/** How far a triggered level has travelled from the entry towards the target you wrote down. */
+export function TargetProgress({ row, width = 108 }) {
+  if (!row?.target) return null;
+  const pct = Math.max(0, Math.min(100, row.progress_pct ?? 0));
+  const done = row.state === 'target reached';
+  const dead = row.state === 'stopped out';
+  return (
+    <div className="mt-0.5" title={`entry ${N(row.level)} → target ${N(row.target)}${row.stop ? ` · stop ${N(row.stop)}` : ''}`}>
+      <div className="relative h-1 rounded-full bg-surface-4 overflow-hidden" style={{ width }}>
+        <div className={`absolute inset-y-0 left-0 rounded-full ${dead ? 'bg-red-500' : done ? 'bg-emerald-500' : 'bg-brand-500'}`}
+          style={{ width: `${done ? 100 : pct}%` }} />
+      </div>
+      <div className="text-[9.5px] text-gray-500 mt-0.5 whitespace-nowrap">
+        {dead ? <span className="text-red-400">stopped out at {LVL(row.stop)}</span>
+          : done ? <span className="text-emerald-400">target {LVL(row.target)} reached</span>
+            : <>{pct.toFixed(0)}% to {LVL(row.target)}</>}
+      </div>
+    </div>
+  );
+}
+
+/** Alerts for one stock — the bell is the switch. */
+export function AlertBell({ on, onToggle, busy }) {
+  return (
+    <button onClick={(e) => { e.stopPropagation(); onToggle?.(!on); }} disabled={busy}
+      title={on ? 'alerts on — click to mute this stock' : 'alerts muted — click to turn them on'}
+      className={`p-1 transition ${on ? 'text-brand-400 hover:text-brand-300' : 'text-gray-600 hover:text-gray-400'}`}>
+      {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        : on ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+    </button>
+  );
+}
+
 /** The P&L a research level has produced since it triggered. */
 export function PnLCell({ watch }) {
   const p = watch?.primary;
@@ -231,11 +265,16 @@ export function PnLCell({ watch }) {
   const extra = watch.extra || [];
   return (
     <div className="whitespace-nowrap">
-      <div className={`text-[13px] font-bold mono ${signTone(p.pnl_pct)}`}>{PCT(p.pnl_pct)}</div>
+      <div className="flex items-center gap-1">
+        <span className={`text-[13px] font-bold mono ${signTone(p.pnl_pct)}`}>{PCT(p.pnl_pct)}</span>
+        {p.state === 'stopped out' && <ShieldAlert className="w-3 h-3 text-red-400" />}
+        {p.state === 'target reached' && <Check className="w-3 h-3 text-emerald-400" />}
+      </div>
       <div className="text-[10.5px] text-gray-500">
         from {LVL(p.level)} · {DAYS(p.days_since)}
         {extra.length > 0 && <span className="ml-1 text-brand-400">+{extra.length}</span>}
       </div>
+      <TargetProgress row={p} />
     </div>
   );
 }

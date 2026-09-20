@@ -32,6 +32,13 @@ logger = get_logger("research.my_equity.service")
 QUOTE_CHUNK = 200
 ROWS_TTL_S = 20             # a re-render within this window reuses the last build
 SECTOR_FILLS_PER_CALL = 3   # look up a few missing sectors per refresh, never the whole list
+# Daily candles cost one Zerodha call per stock and Zerodha allows ~3 a second, so a hundred
+# stocks must never all refresh on one page load. Each call refreshes only the few stalest
+# names; the rest are served from the Parquet cache with today's bar rebuilt from the quote,
+# which is exact and free. A background warmer keeps the cache fresh between visits.
+MAX_DAILY_REFRESH_PER_CALL = 8
+DAILY_FRESH_S = 1800        # a symbol refreshed within half an hour is fresh enough
+WARM_EVERY_S = 60           # the background warmer runs at most once a minute per user
 # An investment is judged over quarters and a swing over days, so the entry-zone history is
 # replayed over the horizon that matches what you said you are doing with the stock.
 HORIZON_BY_CATEGORY = {"INVESTMENT": 60, "SWING": 10}
@@ -51,6 +58,8 @@ class MyEquityService:
         self._rows_cache: dict[int, tuple[float, dict]] = {}
         self._index_cache = None                  # NIFTY closes for relative strength
         self._index_at = 0.0
+        self._daily_at: dict[str, float] = {}     # exchange:symbol -> last candle refresh
+        self._warm_at = 0.0
 
     # ── instruments ──────────────────────────────────────────────────
     def _equities(self, exchange: str) -> dict:
@@ -130,7 +139,40 @@ class MyEquityService:
     def _daily(self, symbol: str, token: int, exchange: str, refresh: bool) -> pd.DataFrame:
         if not token or (refresh and self.broker is None):
             refresh = False
+        if refresh:
+            self._daily_at[f"{exchange}:{symbol}"] = time.time()
         return CACHE.daily(self.broker, symbol, token, exchange, refresh=refresh)
+
+    def _stale(self, stocks, limit: int) -> set[int]:
+        """The ids whose daily history gets refreshed on this call — the stalest first."""
+        now = time.time()
+        ages = sorted(((now - self._daily_at.get(f"{s.exchange}:{s.symbol}", 0.0), s.id)
+                       for s in stocks), reverse=True)
+        return {sid for age, sid in ages[:max(0, limit)] if age >= DAILY_FRESH_S}
+
+    def warm(self, db, user_id: int, limit: int = 3) -> int:
+        """Refresh a few stocks' daily history in the background, so page loads stay instant.
+
+        Called from a one-second loop, so it holds itself to one pass a minute: a hundred-name
+        workspace is fully refreshed in under an hour of market time without ever competing
+        with the page for Zerodha's rate limit.
+        """
+        if self.broker is None or time.time() - self._warm_at < WARM_EVERY_S:
+            return 0
+        self._warm_at = time.time()
+        stocks = ST.list_stocks(db, user_id)
+        done = 0
+        for s in stocks:
+            if s.id not in self._stale(stocks, limit):
+                continue
+            try:
+                self._daily(s.symbol, self.token_for(s), s.exchange, True)
+                done += 1
+            except Exception as exc:
+                logger.debug("warm failed for %s: %s", s.symbol, exc)
+        if done:
+            self._rows_cache.pop(user_id, None)
+        return done
 
     # ── the table ────────────────────────────────────────────────────
     def rows(self, db, user_id: int, refresh: bool = True, force: bool = False) -> dict:
@@ -144,10 +186,13 @@ class MyEquityService:
         quotes = self.quotes([_q(s.exchange, s.symbol) for s in stocks]) if self.broker else {}
         if refresh:
             self._fill_sectors(db, stocks)
+        # one bulk quote covers every stock; only the stalest few also refresh their candles
+        fetching = self._stale(stocks, MAX_DAILY_REFRESH_PER_CALL) if refresh else set()
         rows, problems = [], []
         for s in stocks:
             try:
-                rows.append(self._row(db, s, quotes.get(_q(s.exchange, s.symbol)) or {}, refresh))
+                rows.append(self._row(db, s, quotes.get(_q(s.exchange, s.symbol)) or {},
+                                      s.id in fetching))
             except Exception as exc:
                 logger.error("row failed for %s: %s", s.symbol, exc)
                 problems.append(f"{s.symbol}: {str(exc)[:120]}")
@@ -155,6 +200,7 @@ class MyEquityService:
         out = {"status": "ok", "rows": rows, "count": len(rows), "problems": problems,
                "connected": self.broker is not None, "summary": _summary(rows),
                "sectors": sorted({r.get("sector") for r in rows if r.get("sector")}),
+               "history_refreshed": len(fetching), "pending_history": max(0, len(stocks) - len(fetching)),
                "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         self._rows_cache[user_id] = (time.time(), out)
         return out
@@ -176,7 +222,7 @@ class MyEquityService:
         token = self.token_for(s)
         if token and token != s.token:
             ST.update(db, s.user_id, s.id, token=token)
-        raw = self._daily(s.symbol, token, s.exchange, refresh)
+        raw = _with_quote_today(self._daily(s.symbol, token, s.exchange, refresh), quote)
         ltp = float(quote.get("last_price") or 0) or None
         day = quote.get("ohlc") or {}
         if raw.empty:
@@ -229,7 +275,7 @@ class MyEquityService:
         if self.broker:
             quote = (self.quotes([_q(s.exchange, s.symbol)]) or {}).get(_q(s.exchange, s.symbol)) or {}
         token = self.token_for(s)
-        raw = self._daily(s.symbol, token, s.exchange, refresh)
+        raw = _with_quote_today(self._daily(s.symbol, token, s.exchange, refresh), quote)
         if raw.empty:
             return {"status": "error", "message": "no daily history for this stock yet",
                     "stock": ST.to_dict(s)}
@@ -283,6 +329,28 @@ class MyEquityService:
             self._index_cache = None
         self._index_at = time.time()
         return self._index_cache
+
+
+def _with_quote_today(d: pd.DataFrame, quote: dict) -> pd.DataFrame:
+    """Add today's bar from the live quote when the cached history stops yesterday.
+
+    The quote already carries today's open, high, low and volume, so a level touched this
+    morning is picked up with no extra historical call — which is what lets a long list refresh
+    inside Zerodha's rate limit.
+    """
+    day = (quote or {}).get("ohlc") or {}
+    ltp = float(quote.get("last_price") or 0) if quote else 0
+    open_ = float(day.get("open") or 0)
+    if d.empty or not ltp or not open_:
+        return d
+    today = date.today()
+    if pd.Timestamp(d["date"].iloc[-1]).date() >= today:
+        return d
+    bar = {"date": today, "open": open_,
+           "high": max(float(day.get("high") or 0), ltp, open_),
+           "low": min(float(day.get("low") or ltp) or ltp, ltp, open_),
+           "close": ltp, "volume": float(quote.get("volume") or 0)}
+    return pd.concat([d, pd.DataFrame([bar])], ignore_index=True)
 
 
 def _summary(rows: list[dict]) -> dict:

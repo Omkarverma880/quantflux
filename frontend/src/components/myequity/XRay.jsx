@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   X, Loader2, RefreshCw, Newspaper, AlertTriangle, ExternalLink, ArrowUp, ArrowDown,
+  Pencil, Check, Wand2,
 } from 'lucide-react';
 import { api } from '../../api';
 import {
-  N, PCT, COMPACT, DAYS, signTone, Section, Stat, SensitivityMeter, CategoryPicker, Empty,
+  N, LVL, PCT, COMPACT, DAYS, signTone, Section, Stat, SensitivityMeter, CategoryPicker, Empty,
+  TargetProgress,
 } from './ui';
 
 /**
@@ -64,15 +66,60 @@ function StatsLine({ st, horizon }) {
   );
 }
 
-/** Your levels: what triggered, when, and what it has earned since. */
-function LevelLedger({ watch, horizon }) {
+/** Set (or clear) the target and stop for one level. */
+function EditExit({ stockId, levels, level, suggestion, onSaved, onCancel }) {
+  const current = (levels || []).find((l) => l.price === level) || {};
+  const [target, setTarget] = useState(current.target ?? '');
+  const [stop, setStop] = useState(current.stop ?? '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const save = async () => {
+    const t = Number(target) || null;
+    const s = Number(stop) || null;
+    if (t && t <= level) { setErr('the target must be above the level'); return; }
+    if (s && s >= level) { setErr('the stop must be below the level'); return; }
+    setBusy(true); setErr('');
+    try {
+      const next = (levels || []).map((l) => (l.price === level
+        ? { ...l, target: t || undefined, stop: s || undefined } : l));
+      const r = await api.meUpdate(stockId, { levels: next });
+      if (r.status === 'ok') onSaved?.(); else setErr(r.message || 'could not save');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <input autoFocus type="number" step="0.05" value={target} onChange={(e) => setTarget(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onCancel(); }}
+        placeholder="target" className="input-field !py-0.5 !px-1.5 text-[11.5px] mono w-20" />
+      <input type="number" step="0.05" value={stop} onChange={(e) => setStop(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onCancel(); }}
+        placeholder="stop" className="input-field !py-0.5 !px-1.5 text-[11.5px] mono w-20" />
+      {suggestion?.target && (
+        <button onClick={() => { setTarget(suggestion.target); setStop(suggestion.stop); }}
+          title={`use the entry zone's pair: ${N(suggestion.target)} / ${N(suggestion.stop)}`}
+          className="text-gray-500 hover:text-brand-400 p-0.5"><Wand2 className="w-3 h-3" /></button>
+      )}
+      <button onClick={save} disabled={busy} className="text-emerald-400 hover:text-emerald-300 p-0.5">
+        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+      </button>
+      <button onClick={onCancel} className="text-gray-500 hover:text-gray-300 p-0.5"><X className="w-3 h-3" /></button>
+      {err && <span className="text-[10.5px] text-red-400">{err}</span>}
+    </span>
+  );
+}
+
+/** Your levels: what triggered, when, what it has earned since, and where it is heading. */
+function LevelLedger({ watch, horizon, stockId, levels, suggestion, onChanged }) {
   const rows = watch?.rows || [];
+  const [editing, setEditing] = useState(null);
   if (!rows.length) return <Empty title="No research levels on this stock yet" hint="Add them from the table to start tracking." />;
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[640px] text-[12px]">
         <thead><tr className="text-[10px] uppercase tracking-wider text-gray-500 border-b border-surface-3">
-          {['Level', 'Status', 'Triggered', 'Held', 'P&L now', 'Best', 'Worst'].map((h) => <th key={h} className="text-left px-2 py-1 font-medium">{h}</th>)}
+          {['Level', 'Status', 'Triggered', 'Held', 'P&L now', 'Target / stop', 'Best', 'Worst'].map((h) => <th key={h} className="text-left px-2 py-1 font-medium">{h}</th>)}
         </tr></thead>
         <tbody>
           {rows.map((r) => (
@@ -99,6 +146,26 @@ function LevelLedger({ watch, horizon }) {
                 {r.triggered && r.pnl_per_share != null && (
                   <span className="text-[10px] text-gray-500 ml-1">{r.pnl_per_share > 0 ? '+' : ''}{N(r.pnl_per_share)}/sh</span>
                 )}
+                {r.triggered ? <TargetProgress row={r} width={96} />
+                  : r.target ? <div className="text-[9.5px] text-gray-500 mt-0.5 whitespace-nowrap">
+                    plan: {PCT(r.target_pct, 1)} to target{r.stop_pct != null ? `, ${PCT(r.stop_pct, 1)} risk` : ''}
+                  </div> : null}
+              </td>
+              <td className="px-2 py-1.5">
+                {editing === r.level ? (
+                  <EditExit stockId={stockId} levels={levels} level={r.level} suggestion={suggestion}
+                    onSaved={() => { setEditing(null); onChanged?.(); }} onCancel={() => setEditing(null)} />
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                    <span className="mono text-[11.5px]">
+                      {r.target ? <span className="text-emerald-400">{LVL(r.target)}</span> : <span className="text-gray-600">no target</span>}
+                      <span className="text-gray-600"> / </span>
+                      {r.stop ? <span className="text-red-400">{LVL(r.stop)}</span> : <span className="text-gray-600">no stop</span>}
+                    </span>
+                    <button onClick={() => setEditing(r.level)} className="text-gray-600 hover:text-brand-400"
+                      title="set a target and a stop for this level"><Pencil className="w-3 h-3" /></button>
+                  </span>
+                )}
               </td>
               <td className="px-2 py-1.5 mono text-emerald-400/80">{r.triggered ? PCT(r.max_gain_pct) : '—'}</td>
               <td className="px-2 py-1.5 mono text-red-400/80">{r.triggered ? PCT(r.max_drawdown_pct) : '—'}</td>
@@ -109,7 +176,8 @@ function LevelLedger({ watch, horizon }) {
       {watch.primary && (
         <div className="text-[11px] text-gray-500 mt-2">
           The P&L runs from the level to the last trade — the trade you would have had if you bought your own
-          level on the day price reached it. {watch.extra?.length ? 'A second tracked level that triggered keeps its own row and its own numbers.' : ''}
+          level on the day price reached it. A target and a stop are optional on every level; the wand fills in the
+          pair the entry zone suggests. {watch.extra?.length ? 'A second tracked level that triggered keeps its own numbers.' : ''}
         </div>
       )}
     </div>
@@ -293,7 +361,9 @@ export default function XRay({ stockId, onClose, onChanged }) {
           <div className="p-4 space-y-4">
             <Section title="Your research levels"
               right={<span className="text-[10.5px] text-gray-500">P&L measured from the level, per share</span>}>
-              <LevelLedger watch={data.watch} horizon={data.horizon} />
+              <LevelLedger watch={data.watch} horizon={data.horizon} stockId={stockId}
+                levels={data.stock?.levels} onChanged={() => { onChanged?.(); load(1); }}
+                suggestion={entry.status === 'ok' ? { target: entry.target, stop: entry.stop } : null} />
             </Section>
 
             <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">

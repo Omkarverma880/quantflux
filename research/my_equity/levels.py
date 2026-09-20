@@ -25,27 +25,44 @@ import pandas as pd
 MAX_LEVELS = 12
 
 
+def _num(v) -> Optional[float]:
+    try:
+        f = round(float(str(v).replace(",", "").strip()), 2)
+    except (TypeError, ValueError):
+        return None
+    return f if f > 0 else None
+
+
 def normalise(raw) -> list[dict]:
-    """Accept 3100, '3100', {'price': 3100, 'track': False} — always return the dict form."""
+    """Accept 3100, '3100', or {'price': 3100, 'track': False, 'target': 3400, 'stop': 2950}.
+
+    Always returns the dict form. ``target`` and ``stop`` are optional — they are where you
+    said you would take the money and where you would admit the idea was wrong.
+    """
     if raw is None:
         return []
     items = raw if isinstance(raw, (list, tuple)) else [raw]
     out: list[dict] = []
     seen: set[float] = set()
     for it in items:
-        track = True
+        track, target, stop = True, None, None
         if isinstance(it, dict):
-            price, track = it.get("price"), bool(it.get("track", True))
+            price = it.get("price")
+            track = bool(it.get("track", True))
+            target, stop = _num(it.get("target")), _num(it.get("stop"))
         else:
             price = it
-        try:
-            p = round(float(str(price).replace(",", "").strip()), 2)
-        except (TypeError, ValueError):
-            continue
-        if p <= 0 or p in seen:
+        p = _num(price)
+        if p is None or p in seen:
             continue
         seen.add(p)
-        out.append({"price": p, "track": track})
+        row = {"price": p, "track": track}
+        # a target below the level, or a stop above it, is a typo — drop it rather than mislead
+        if target and target > p:
+            row["target"] = target
+        if stop and stop < p:
+            row["stop"] = stop
+        out.append(row)
     return sorted(out, key=lambda x: x["price"], reverse=True)[:MAX_LEVELS]
 
 
@@ -92,6 +109,13 @@ def evaluate(d: pd.DataFrame, raw_levels, research_date, ltp: Optional[float],
     for lv in levels:
         level = lv["price"]
         row = {"level": level, "track": lv["track"], "triggered": False}
+        # the target and stop are part of the plan, so they show whether or not it has triggered
+        if lv.get("target"):
+            row["target"] = lv["target"]
+            row["target_pct"] = round((lv["target"] - level) / level * 100, 2)
+        if lv.get("stop"):
+            row["stop"] = lv["stop"]
+            row["stop_pct"] = round((lv["stop"] - level) / level * 100, 2)
         if px:
             row["distance_pct"] = round((px - level) / level * 100, 2)
             row["side"] = "above" if px > level else "below" if px < level else "at"
@@ -115,6 +139,7 @@ def evaluate(d: pd.DataFrame, raw_levels, research_date, ltp: Optional[float],
                     "max_drawdown_pct": round((low - level) / level * 100, 2),
                     "high_since": round(high, 2), "low_since": round(low, 2),
                 })
+                row.update(_exit_state(row, lv, after, px))
                 out["triggered_count"] += 1
         rows.append(row)
 
@@ -146,6 +171,31 @@ def evaluate(d: pd.DataFrame, raw_levels, research_date, ltp: Optional[float],
     return out
 
 
+def _exit_state(row: dict, lv: dict, after, px: Optional[float]) -> dict:
+    """Where the trade stands against the target and stop you wrote down for this level."""
+    level = lv["price"]
+    target, stop = lv.get("target"), lv.get("stop")
+    out: dict = {"state": "running"}
+    if target:
+        reached = after[after["high"] >= target]
+        out["target_hit"] = bool(len(reached))
+        out["target_hit_on"] = _as_date(reached.iloc[0]["date"]).isoformat() if len(reached) else None
+        if px:
+            span = target - level
+            out["progress_pct"] = round(max(0.0, min(150.0, (px - level) / span * 100)), 1) if span else None
+    if stop:
+        broken = after[after["low"] <= stop]
+        out["stop_hit"] = bool(len(broken))
+        out["stop_hit_on"] = _as_date(broken.iloc[0]["date"]).isoformat() if len(broken) else None
+    # whichever came first decides how the trade reads
+    t_on, s_on = out.get("target_hit_on"), out.get("stop_hit_on")
+    if t_on and (not s_on or t_on <= s_on):
+        out["state"] = "target reached"
+    elif s_on:
+        out["state"] = "stopped out"
+    return out
+
+
 def summary_line(watch: dict) -> Optional[str]:
     """One plain sentence for the table's Watch column."""
     p = watch.get("primary")
@@ -153,8 +203,17 @@ def summary_line(watch: dict) -> Optional[str]:
         n = len(watch.get("extra") or [])
         more = f" (+{n} more level{'s' if n > 1 else ''} hit)" if n else ""
         word = "up" if (p.get("pnl_pct") or 0) >= 0 else "down"
+        state = p.get("state")
+        if state == "target reached":
+            tail = f" · target {p['target']:g} reached on {p['target_hit_on']}"
+        elif state == "stopped out":
+            tail = f" · stopped out at {p['stop']:g} on {p['stop_hit_on']}"
+        elif p.get("progress_pct") is not None:
+            tail = f" · {p['progress_pct']:.0f}% of the way to {p['target']:g}"
+        else:
+            tail = ""
         return (f"Level {p['level']:g} hit on {p['triggered_on']} · {word} "
-                f"{abs(p.get('pnl_pct') or 0):.1f}% in {p['days_since']} days{more}")
+                f"{abs(p.get('pnl_pct') or 0):.1f}% in {p['days_since']} days{more}{tail}")
     if watch.get("status") == "waiting" and watch.get("waiting_for") is not None:
         d = watch.get("waiting_distance_pct")
         if d is None:

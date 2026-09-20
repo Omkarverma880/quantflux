@@ -12,7 +12,8 @@ import traceback
 from functools import wraps
 
 import numpy as np
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -20,9 +21,11 @@ from core.auth import login_required
 from core.broker import get_user_broker
 from core.database import get_db
 from core.logger import get_logger
+from research.my_equity import alerts as AL
 from research.my_equity import cache as CACHE
 from research.my_equity import fundamentals as FN
 from research.my_equity import news as NEWS
+from research.my_equity import portable as PORT
 from research.my_equity import store as ST
 from research.my_equity.service import MyEquityService
 
@@ -111,6 +114,12 @@ class UpdateReq(BaseModel):
     category: str | None = None
     sector: str | None = None
     industry: str | None = None
+    alerts_on: bool | None = None
+
+
+class ImportReq(BaseModel):
+    text: str
+    dry_run: bool = True
 
 
 @router.get("/meta")
@@ -119,7 +128,9 @@ def meta(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     svc = _service(db, user_id)
     return {"status": "ok", "connected": svc.broker is not None,
             "max_stocks": ST.MAX_STOCKS, "max_levels": ST.MAX_LEVELS,
-            "categories": list(ST.CATEGORIES)}
+            "categories": list(ST.CATEGORIES),
+            "alerts": AL.load_config(db, user_id),
+            "telegram_ready": AL.telegram_ready(AL.load_config(db, user_id)["bot"])}
 
 
 @router.get("/search")
@@ -212,6 +223,94 @@ def news(stock_id: int, force: int = 0, user_id: int = Depends(login_required),
     if row is None:
         return {"status": "error", "message": "that stock is not in your workspace"}
     return NEWS.headlines(row.symbol, row.company, force=bool(force))
+
+
+@router.get("/alerts/config")
+@safe("alerts_config")
+def alerts_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    cfg = AL.load_config(db, user_id)
+    return {"status": "ok", "config": cfg, "telegram_ready": AL.telegram_ready(cfg["bot"])}
+
+
+@router.post("/alerts/config")
+@safe("save_alerts_config")
+def save_alerts_config(payload: dict | None = None, user_id: int = Depends(login_required),
+                       db: Session = Depends(get_db)):
+    cfg = AL.save_config(db, user_id, payload or {})
+    return {"status": "ok", "config": cfg, "telegram_ready": AL.telegram_ready(cfg["bot"])}
+
+
+@router.post("/alerts/test")
+@safe("test_alert")
+def test_alert(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Send the morning digest right now, so you can see what the alerts look like."""
+    svc = _service(db, user_id)
+    cfg = AL.load_config(db, user_id)
+    if not AL.telegram_ready(cfg["bot"]):
+        return {"status": "error", "message": "Telegram is not configured — set it up in Settings."}
+    text = AL.morning_text(svc.rows(db, user_id, refresh=False), cfg)
+    if not text:
+        return {"status": "error", "message": "nothing to report yet — add a stock first"}
+    ok = AL._send(text, cfg["bot"])
+    return {"status": "ok" if ok else "error", "sent": ok, "preview": text,
+            "message": None if ok else "Telegram refused the message"}
+
+
+@router.get("/export.csv")
+@safe("export_csv")
+def export_csv(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    svc = _service(db, user_id)
+    body = PORT.export_csv(db, user_id, svc.rows(db, user_id, refresh=False))
+    return PlainTextResponse(body, media_type="text/csv", headers={
+        "Content-Disposition": 'attachment; filename="my-equity-workspace.csv"'})
+
+
+@router.get("/import/template.csv")
+@safe("import_template")
+def import_template(user_id: int = Depends(login_required)):
+    return PlainTextResponse(PORT.template_csv(), media_type="text/csv", headers={
+        "Content-Disposition": 'attachment; filename="workspace-template.csv"'})
+
+
+@router.post("/import")
+@safe("import_rows")
+def import_rows(req: ImportReq, user_id: int = Depends(login_required),
+                db: Session = Depends(get_db)):
+    """Parse a pasted CSV; ``dry_run`` shows what would happen before anything is written."""
+    svc = _service(db, user_id)
+    rows, problems = PORT.parse(req.text)
+    if not rows:
+        return {"status": "error", "message": problems[0] if problems else "no rows found",
+                "problems": problems}
+    out = PORT.apply(db, user_id, rows, svc, dry_run=req.dry_run)
+    out["problems"] = problems
+    if not req.dry_run:
+        svc._rows_cache.pop(user_id, None)
+    return out
+
+
+@router.post("/import/file")
+@safe("import_file")
+async def import_file(file: UploadFile = File(...), dry_run: int = 1,
+                      user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    raw = await file.read()
+    if len(raw) > 2_000_000:
+        return {"status": "error", "message": "that file is larger than 2 MB"}
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", errors="replace")
+    svc = _service(db, user_id)
+    rows, problems = PORT.parse(text)
+    if not rows:
+        return {"status": "error", "message": problems[0] if problems else "no rows found",
+                "problems": problems}
+    out = PORT.apply(db, user_id, rows, svc, dry_run=bool(dry_run))
+    out["problems"] = problems
+    out["filename"] = file.filename
+    if not dry_run:
+        svc._rows_cache.pop(user_id, None)
+    return out
 
 
 @router.post("/cache/{stock_id}/rebuild")

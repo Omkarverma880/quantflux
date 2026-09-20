@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Briefcase, RefreshCw, Loader2, AlertTriangle, Info } from 'lucide-react';
+import { Briefcase, RefreshCw, Loader2, AlertTriangle, Info, Bell, FileSpreadsheet } from 'lucide-react';
 import { api } from '../../api';
 import AddStock from '../../components/myequity/AddStock';
 import StockTable from '../../components/myequity/StockTable';
 import Toolbar, { Summary } from '../../components/myequity/Toolbar';
 import OrderTicket from '../../components/myequity/OrderTicket';
+import AlertsPanel from '../../components/myequity/AlertsPanel';
+import Transfer from '../../components/myequity/Transfer';
 import XRay from '../../components/myequity/XRay';
 
 /**
@@ -69,6 +71,7 @@ export default function MyEquityWorkspace() {
   const [auto, setAuto] = useState(true);
   const [open, setOpen] = useState(null);
   const [ticket, setTicket] = useState(null);
+  const [panel, setPanel] = useState(null);          // 'alerts' | 'transfer'
   const [view, setViewRaw] = useState(readView);
   const timer = useRef(null);
 
@@ -162,9 +165,18 @@ export default function MyEquityWorkspace() {
             <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="accent-brand-500" />
             auto-refresh
           </label>
+          <button onClick={() => setPanel('alerts')} title="Telegram alerts and digests"
+            className="btn-secondary !py-2 !px-3 text-[12.5px] flex items-center gap-1.5">
+            <Bell className="w-4 h-4" /><span className="hidden sm:inline">Alerts</span>
+          </button>
+          <button onClick={() => setPanel('transfer')} title="import or export as CSV"
+            className="btn-secondary !py-2 !px-3 text-[12.5px] flex items-center gap-1.5">
+            <FileSpreadsheet className="w-4 h-4" /><span className="hidden sm:inline">CSV</span>
+          </button>
           <button onClick={() => load({ refresh: 1, force: 1 })} disabled={loading}
             className="btn-secondary !py-2 !px-3 text-[12.5px] flex items-center gap-1.5">
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}Refresh
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            <span className="hidden sm:inline">Refresh</span>
           </button>
           <AddStock connected={meta?.connected} onAdded={() => load({ refresh: 1, force: 1 })} />
         </div>
@@ -224,9 +236,13 @@ export default function MyEquityWorkspace() {
         <div>• <span className="text-gray-200">P&L since trigger</span> runs from the level to the last trade, per share, with the days held. Tracking several levels is fine: the first to trigger leads, and any other tracked level that triggers keeps its own row in the X-ray. Click a level chip to stop tracking it.</div>
         <div>• <span className="text-gray-200">Row colour</span> means one thing at a time — amber and blinking at a level, green at RSI 30 or below, red at RSI 80 or above.</div>
         <div>• <span className="text-gray-200">Investment or Swing</span> changes the horizon the entry zones are tested over: 60 sessions against 10. Click the chip to switch.</div>
+        <div>• <span className="text-gray-200">Targets and stops</span> are optional on every level. Set them in the X-ray and a triggered row shows how far it has run towards your target, and says so when it gets there or breaks the stop.</div>
+        <div>• <span className="text-gray-200">Alerts</span> reach you on Telegram while the market is open — a level reached, a target hit, a stop broken — plus a morning and a closing digest. Mute any stock with the bell on its row.</div>
         <div>• <span className="text-gray-200">BUY and SELL</span> open an order ticket that goes to the same desk as Manual Trading, with its risk fence and order log. Nothing is sent until you confirm.</div>
       </div>
 
+      {panel === 'alerts' && <AlertsPanel onClose={() => setPanel(null)} />}
+      {panel === 'transfer' && <Transfer onClose={() => setPanel(null)} onImported={() => load({ refresh: 1, force: 1 })} />}
       {open != null && <XRay stockId={open} onClose={() => setOpen(null)} onChanged={() => load({ refresh: 1, force: 1 })} />}
       {ticket && (
         <OrderTicket row={ticket.row} side={ticket.side} onClose={() => setTicket(null)}

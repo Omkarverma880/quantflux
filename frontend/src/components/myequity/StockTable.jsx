@@ -3,6 +3,7 @@ import { Check, Loader2, Pencil, Trash2, X, Maximize2, Plus } from 'lucide-react
 import { api } from '../../api';
 import {
   N, PCT, signTone, rowTone, ROW_CLASS, LevelChips, PnLCell, NotePills, CategoryPicker, Empty,
+  AlertBell,
 } from './ui';
 
 /**
@@ -102,6 +103,11 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
     if (r.status === 'ok') onChanged?.();
   };
 
+  const toggleAlerts = async (row, on) => {
+    const r = await api.meUpdate(row.id, { alerts_on: on });
+    if (r.status === 'ok') onChanged?.();
+  };
+
   const toggleLevel = async (row, price) => {
     const levels = (row.levels || []).map((l) => (l.price === price ? { ...l, track: !l.track } : l));
     const r = await api.meUpdate(row.id, { levels });
@@ -117,8 +123,86 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
     );
   }
 
+  const card = (r) => {
+    const tone = rowTone(r);
+    return (
+      <div key={r.id} onClick={() => onOpen?.(r)}
+        className={`card !p-3 cursor-pointer space-y-2 ${tone === 'blink' ? 'row-blink border-amber-500/30'
+          : tone === 'oversold' ? 'border-emerald-500/30 bg-emerald-500/5'
+            : tone === 'overbought' ? 'border-red-500/30 bg-red-500/5' : ''}`}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {tone === 'blink' && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 dot-blink shrink-0" />}
+              <span className="text-[14px] font-bold text-gray-100">{r.symbol}</span>
+              <span className="text-[9.5px] text-gray-500">{r.exchange}</span>
+              <CategoryPicker category={r.category} small onChange={(v) => setCategory(r, v)} />
+            </div>
+            <div className="text-[11px] text-gray-500 truncate">{r.company || '—'}{r.sector ? ` · ${r.sector}` : ''}</div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-[15px] font-bold mono text-gray-100">{N(r.ltp)}</div>
+            <div className={`text-[11px] mono ${signTone(r.change_pct)}`}>{PCT(r.change_pct)}</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-[11px]">
+          <div>
+            <div className="text-[9.5px] uppercase tracking-wider text-gray-500">RSI</div>
+            <div className={`mono font-semibold ${r.rsi == null ? 'text-gray-600'
+              : r.rsi <= 30 ? 'text-emerald-400' : r.rsi >= 80 ? 'text-red-400' : 'text-gray-300'}`}>
+              {r.rsi == null ? '—' : r.rsi.toFixed(1)}
+            </div>
+          </div>
+          <div>
+            <div className="text-[9.5px] uppercase tracking-wider text-gray-500">52w high</div>
+            <div className="mono text-gray-300">{N(r.high_52w, 0)}<span className={`ml-1 ${signTone(r.from_52w_high)}`}>{PCT(r.from_52w_high, 0)}</span></div>
+          </div>
+          <div>
+            <div className="text-[9.5px] uppercase tracking-wider text-gray-500">Researched</div>
+            <div className="mono text-gray-300">{r.added_on || '—'}</div>
+          </div>
+        </div>
+
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[9.5px] uppercase tracking-wider text-gray-500 mb-1">Levels</div>
+            <LevelChips watch={r.watch} onEdit={() => setEditing(r.id)} onToggle={(price) => toggleLevel(r, price)} />
+          </div>
+          <div className="text-right">
+            <div className="text-[9.5px] uppercase tracking-wider text-gray-500 mb-1">P&L since trigger</div>
+            <PnLCell watch={r.watch} />
+          </div>
+        </div>
+
+        {!!(r.notes || []).length && <NotePills notes={r.notes} max={2} />}
+
+        <div className="flex items-center gap-2 pt-1 border-t border-surface-3">
+          <button onClick={(e) => { e.stopPropagation(); onTrade?.(r, 'BUY'); }}
+            className="flex-1 py-1 rounded border border-emerald-500/40 text-emerald-400 text-[11.5px] font-bold">BUY</button>
+          <button onClick={(e) => { e.stopPropagation(); onTrade?.(r, 'SELL'); }}
+            className="flex-1 py-1 rounded border border-red-500/40 text-red-400 text-[11.5px] font-bold">SELL</button>
+          <button onClick={(e) => { e.stopPropagation(); setEditing(r.id); }}
+            className="p-1 text-gray-500" title="edit levels"><Pencil className="w-3.5 h-3.5" /></button>
+          <AlertBell on={r.alerts_on !== false} onToggle={(v) => toggleAlerts(r, v)} />
+          <button onClick={(e) => remove(r, e)} className="p-1 text-gray-600"><Trash2 className="w-3.5 h-3.5" /></button>
+        </div>
+
+        {editing === r.id && (
+          <div className="pt-1" onClick={(e) => e.stopPropagation()}>
+            <EditLevels row={r} onSaved={() => { setEditing(null); onChanged?.(); }} onCancel={() => setEditing(null)} />
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="card !p-0 overflow-hidden">
+    <>
+      {/* phones get cards: the same information without a sideways scroll */}
+      <div className="grid gap-2 md:hidden">{rows.map(card)}</div>
+
+      <div className="card !p-0 overflow-hidden hidden md:block">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1150px] text-[12px]">
           <thead>
@@ -212,6 +296,7 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
                         className="text-gray-500 hover:text-brand-400 p-1" title="open the X-ray">
                         <Maximize2 className="w-3.5 h-3.5" />
                       </button>
+                      <AlertBell on={r.alerts_on !== false} onToggle={(v) => toggleAlerts(r, v)} />
                       <button onClick={(e) => remove(r, e)} disabled={removing === r.id}
                         className="text-gray-600 hover:text-red-400 p-1" title="remove from workspace">
                         {removing === r.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
@@ -229,6 +314,7 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
           <Loader2 className="w-3 h-3 animate-spin" />refreshing prices…
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
