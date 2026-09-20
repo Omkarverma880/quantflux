@@ -92,6 +92,34 @@ def telegram_ready(bot: str = "a") -> bool:
         return False
 
 
+def bots() -> list[dict]:
+    """Both Telegram bots and how usable each one is, without exposing any secrets.
+
+    The workspace does not configure Telegram — Settings does. This only reports what is there,
+    so the panel can say which bot to pick and exactly what is missing from the other.
+    """
+    out = []
+    try:
+        from core import notify
+        for key, label in notify._LABELS.items():
+            cfg = notify.load_config(key)
+            has_token, has_chat = bool(cfg.get("bot_token")), bool(cfg.get("chat_id"))
+            if has_token and has_chat and cfg.get("enabled"):
+                state, why = "ready", None
+            elif has_token and has_chat:
+                why, state = "set up in Settings but switched off there", "off"
+            elif has_token or has_chat:
+                why = f"missing the {'chat id' if has_token else 'bot token'} in Settings"
+                state = "incomplete"
+            else:
+                why, state = "not set up in Settings yet", "empty"
+            out.append({"key": key, "label": label, "state": state, "ready": state == "ready",
+                        "why": why})
+    except Exception as exc:
+        logger.debug("bot status failed: %s", exc)
+    return out
+
+
 def _fired(row, key: str, today: str) -> bool:
     return (row.alert_state or {}).get(key) == today
 

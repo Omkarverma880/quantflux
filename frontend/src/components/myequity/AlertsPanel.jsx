@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Loader2, Bell, Send, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { X, Loader2, Bell, Send, AlertTriangle, CheckCircle2, Check } from 'lucide-react';
 import { api } from '../../api';
 
 /**
@@ -27,15 +27,23 @@ const Toggle = ({ on, onChange, disabled }) => (
   </button>
 );
 
+const STATE_TONE = {
+  ready: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10',
+  off: 'text-amber-500 border-amber-500/40 bg-amber-500/10',
+  incomplete: 'text-amber-500 border-amber-500/40 bg-amber-500/10',
+  empty: 'text-gray-500 border-surface-4',
+};
+
 export default function AlertsPanel({ onClose }) {
   const [cfg, setCfg] = useState(null);
+  const [bots, setBots] = useState([]);
   const [ready, setReady] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
   useEffect(() => {
     api.meAlertsConfig().then((r) => {
-      if (r.status === 'ok') { setCfg(r.config); setReady(r.telegram_ready); }
+      if (r.status === 'ok') { setCfg(r.config); setReady(r.telegram_ready); setBots(r.bots || []); }
     }).catch(() => {});
   }, []);
 
@@ -45,7 +53,7 @@ export default function AlertsPanel({ onClose }) {
     setBusy(true);
     try {
       const r = await api.meAlertsSave(patch);
-      if (r.status === 'ok') { setCfg(r.config); setReady(r.telegram_ready); }
+      if (r.status === 'ok') { setCfg(r.config); setReady(r.telegram_ready); setBots(r.bots || bots); }
     } finally { setBusy(false); }
   };
 
@@ -53,6 +61,7 @@ export default function AlertsPanel({ onClose }) {
     setBusy(true); setMsg(null);
     try {
       const r = await api.meAlertsTest();
+      if (r.bots) setBots(r.bots);
       setMsg(r.status === 'ok'
         ? { tone: 'ok', text: 'Sent — check Telegram.', preview: r.preview }
         : { tone: 'err', text: r.message || 'could not send' });
@@ -76,13 +85,33 @@ export default function AlertsPanel({ onClose }) {
 
         {!cfg ? <div className="py-8 text-center text-gray-500"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></div> : (
           <>
-            {!ready && (
-              <div className="text-[12px] text-amber-500 flex items-start gap-1.5 border border-amber-500/30 bg-amber-500/10 rounded-lg p-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
-                Telegram is not connected yet — add the bot token and chat id in Settings, then come back. Everything
-                here stays silent until then.
+            {/* which bot the workspace speaks through — Settings owns the tokens, this only picks one */}
+            <div className="rounded-lg border border-surface-3 p-2.5 space-y-2">
+              <div className="text-[10px] uppercase tracking-wider text-gray-500">Send through</div>
+              <div className="flex flex-wrap gap-2">
+                {(bots.length ? bots : [{ key: 'a', label: 'Bot A', state: 'empty', why: 'checking…' }]).map((b) => (
+                  <button key={b.key} onClick={() => save({ bot: b.key })} disabled={busy}
+                    className={`px-2.5 py-1.5 rounded-lg border text-left transition disabled:opacity-50 ${cfg.bot === b.key
+                      ? 'border-brand-500 bg-brand-500/10' : 'border-surface-3 hover:border-surface-4'}`}>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[12.5px] font-semibold text-gray-100">{b.label}</span>
+                      <span className={`text-[9.5px] px-1 py-px rounded border ${STATE_TONE[b.state] || STATE_TONE.empty}`}>
+                        {b.state === 'ready' ? 'ready' : b.state === 'off' ? 'switched off' : b.state === 'incomplete' ? 'incomplete' : 'not set up'}
+                      </span>
+                      {cfg.bot === b.key && <Check className="w-3 h-3 text-brand-400" />}
+                    </div>
+                    {b.why && <div className="text-[10.5px] text-gray-500 mt-0.5 max-w-[240px]">{b.why}</div>}
+                  </button>
+                ))}
               </div>
-            )}
+              {!ready && (
+                <div className="text-[11.5px] text-amber-500 flex items-start gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                  {(bots.find((b) => b.key === cfg.bot)?.why) || 'this bot is not usable yet'} — pick the other bot,
+                  or fix it in Settings → Telegram. Nothing is sent until one is ready.
+                </div>
+              )}
+            </div>
 
             <div className="rounded-lg border border-surface-3 px-3">
               <Row label="Send alerts" hint="the master switch for this workspace">
@@ -119,7 +148,7 @@ export default function AlertsPanel({ onClose }) {
             </div>
 
             <div className="flex items-center gap-2">
-              <button onClick={test} disabled={busy || !ready}
+              <button onClick={test} disabled={busy}
                 className="btn-secondary !py-1.5 !px-3 text-[12.5px] flex items-center gap-1.5 disabled:opacity-50">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
                 Send me the morning digest now

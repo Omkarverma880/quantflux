@@ -126,11 +126,12 @@ class ImportReq(BaseModel):
 @safe("meta")
 def meta(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     svc = _service(db, user_id)
+    alerts_cfg = AL.load_config(db, user_id)
     return {"status": "ok", "connected": svc.broker is not None,
             "max_stocks": ST.MAX_STOCKS, "max_levels": ST.MAX_LEVELS,
             "categories": list(ST.CATEGORIES),
-            "alerts": AL.load_config(db, user_id),
-            "telegram_ready": AL.telegram_ready(AL.load_config(db, user_id)["bot"])}
+            "alerts": alerts_cfg, "bots": AL.bots(),
+            "telegram_ready": AL.telegram_ready(alerts_cfg["bot"])}
 
 
 @router.get("/search")
@@ -229,7 +230,8 @@ def news(stock_id: int, force: int = 0, user_id: int = Depends(login_required),
 @safe("alerts_config")
 def alerts_config(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     cfg = AL.load_config(db, user_id)
-    return {"status": "ok", "config": cfg, "telegram_ready": AL.telegram_ready(cfg["bot"])}
+    return {"status": "ok", "config": cfg, "telegram_ready": AL.telegram_ready(cfg["bot"]),
+            "bots": AL.bots()}
 
 
 @router.post("/alerts/config")
@@ -237,7 +239,8 @@ def alerts_config(user_id: int = Depends(login_required), db: Session = Depends(
 def save_alerts_config(payload: dict | None = None, user_id: int = Depends(login_required),
                        db: Session = Depends(get_db)):
     cfg = AL.save_config(db, user_id, payload or {})
-    return {"status": "ok", "config": cfg, "telegram_ready": AL.telegram_ready(cfg["bot"])}
+    return {"status": "ok", "config": cfg, "telegram_ready": AL.telegram_ready(cfg["bot"]),
+            "bots": AL.bots()}
 
 
 @router.post("/alerts/test")
@@ -247,7 +250,11 @@ def test_alert(user_id: int = Depends(login_required), db: Session = Depends(get
     svc = _service(db, user_id)
     cfg = AL.load_config(db, user_id)
     if not AL.telegram_ready(cfg["bot"]):
-        return {"status": "error", "message": "Telegram is not configured — set it up in Settings."}
+        this = next((b for b in AL.bots() if b["key"] == cfg["bot"]), None)
+        label = this["label"] if this else cfg["bot"].upper()
+        return {"status": "error", "bots": AL.bots(),
+                "message": f"{label} is {this['why'] if this else 'not configured'} — "
+                           "pick the other bot above, or fix it in Settings → Telegram."}
     text = AL.morning_text(svc.rows(db, user_id, refresh=False), cfg)
     if not text:
         return {"status": "error", "message": "nothing to report yet — add a stock first"}
