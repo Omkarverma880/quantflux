@@ -1183,3 +1183,34 @@ class OILabPaperPosition(Base):
         Index("idx_oi_lab_paper_user_date", "user_id", "trade_date"),
         Index("idx_oi_lab_paper_status", "status"),
     )
+
+
+class MyEquityStock(Base):
+    """A stock the user is researching in My Equity Workspace.
+
+    One row per (user, symbol): the day it was added, the research entry levels to watch
+    (the row blinks when price touches one) and a free-text note. Research only — nothing
+    here places an order. Auto-created via ``create_all``.
+    """
+    __tablename__ = "my_equity_stocks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+    symbol = Column(String(32), nullable=False)
+    exchange = Column(String(8), default="NSE")
+    token = Column(Integer)
+    company = Column(String(120))                   # from the instrument dump, used for news search
+    added_on = Column(Date)                         # the day the research was done
+    levels = Column(JSONB, default=list)            # research entry levels, e.g. [3100, 2900]
+    note = Column(Text)
+    touch_pct = Column(Float, default=0.25)         # how close counts as "touched", in %
+    archived = Column(Boolean, default=False)
+    last_touch_at = Column(DateTime)                # last time price touched one of the levels
+    last_touch_level = Column(Numeric(12, 2))
+
+    __table_args__ = (
+        Index("uq_my_equity_stock", "user_id", "symbol", "exchange", unique=True),
+    )

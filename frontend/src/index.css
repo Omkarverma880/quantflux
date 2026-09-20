@@ -137,3 +137,24 @@ html.light .bg-brand-600\/15 { background-color: rgb(17 137 252 / 0.12); }
 .animate-skeleton {
   animation: skeleton-pulse 1.5s ease-in-out infinite;
 }
+
+/* ── Level-touch blink (My Equity Workspace) ──
+   A row blinks while price sits on one of your research levels. Held to a gentle
+   background wash so a whole screen of rows never becomes unreadable. */
+@keyframes qf-row-blink {
+  0%, 100% { background-color: rgb(245 158 11 / 0.05); }
+  50%      { background-color: rgb(245 158 11 / 0.22); }
+}
+.row-blink {
+  animation: qf-row-blink 1.3s ease-in-out infinite;
+}
+@keyframes qf-dot-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.15; }
+}
+.dot-blink {
+  animation: qf-dot-blink 1s steps(1, end) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .row-blink, .dot-blink { animation: none; background-color: rgb(245 158 11 / 0.14); }
+}

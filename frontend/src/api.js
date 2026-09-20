@@ -621,6 +621,16 @@ export const api = {
   hbPositions: (date) => request(`/equity-strategy/hammer-breakout/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
 
   // Equity Strategy Workspace — consolidated multi-strategy screener (read-only)
+  // My Equity Workspace — personal research desk
+  meMeta: () => request('/equity-strategy/my-workspace/meta'),
+  meSearch: (q, limit = 15) => request(`/equity-strategy/my-workspace/search?${new URLSearchParams({ q, limit })}`),
+  meStocks: (p) => request(`/equity-strategy/my-workspace/stocks?${new URLSearchParams(p || {})}`),
+  meAdd: (body) => request('/equity-strategy/my-workspace/stocks', { method: 'POST', body: JSON.stringify(body) }),
+  meUpdate: (id, body) => request(`/equity-strategy/my-workspace/stocks/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  meRemove: (id) => request(`/equity-strategy/my-workspace/stocks/${id}`, { method: 'DELETE' }),
+  meXray: (id, p) => request(`/equity-strategy/my-workspace/xray/${id}?${new URLSearchParams(p || {})}`),
+  meNews: (id, force = 0) => request(`/equity-strategy/my-workspace/news/${id}?force=${force}`),
+  meRebuild: (id) => request(`/equity-strategy/my-workspace/cache/${id}/rebuild`, { method: 'POST' }),
   wsMeta: () => request('/equity-strategy/workspace/meta'),
   wsScan: (body) => request('/equity-strategy/workspace/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
   wsConfig: () => request('/equity-strategy/workspace/config'),
