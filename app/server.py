@@ -49,6 +49,7 @@ from app.routes.vwap_options_routes import router as vwap_options_router
 from app.routes.index_straddle_routes import router as index_straddle_router
 from app.routes.market_store_routes import router as market_store_router
 from app.routes.options_lab_routes import router as options_lab_router
+from app.routes.flux_lab_routes import router as flux_lab_router
 from app.routes.oi_lab_routes import router as oi_lab_router
 from app.routes.data_ingestion_routes import router as data_ingestion_router
 from app.routes.portfolio_routes import router as portfolio_router
@@ -305,6 +306,15 @@ def _run_strategies_for_user(uid: int):
             except Exception as exc:
                 print(f"[BG] OI Lab paper engine error user {uid}: {exc}", flush=True)
 
+        # Flux Strategy Test Lab: live paper trading with the same engine the backtest uses.
+        # Rate-limited inside (20s) and PAPER only — this module has no order path at all.
+        if authenticated:
+            try:
+                from research.flux_lab.live import ENGINE as _flux_paper
+                _flux_paper.check(db, uid, broker)
+            except Exception as exc:
+                print(f"[BG] Flux Lab paper error user {uid}: {exc}", flush=True)
+
         # My Equity Workspace: level / target / stop alerts and the two daily digests.
         # Also warms a few stocks' daily candles so the page itself never waits on Zerodha.
         # Both are rate-limited inside (30s for alerts, 60s for the warmer), so this loop's
@@ -497,6 +507,7 @@ app.include_router(index_straddle_router, prefix="/api/index-strategy/straddle",
 app.include_router(market_store_router, prefix="/api/market-store", tags=["MarketStore"])
 app.include_router(options_lab_router, prefix="/api/index-strategy/options-lab", tags=["Index-OptionsLab"])
 app.include_router(oi_lab_router, prefix="/api/index-strategy/oi-lab", tags=["Index-OILab"])
+app.include_router(flux_lab_router, prefix="/api/index-strategy/flux-lab", tags=["Index-FluxLab"])
 app.include_router(data_ingestion_router, prefix="/api/data-ingestion", tags=["DataIngestion"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])

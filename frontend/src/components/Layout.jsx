@@ -78,6 +78,7 @@ const NAV = [
       { to: '/index-strategy/straddle', label: '3. Index Straddle Engine' },
       { to: '/index-strategy/options-lab', label: '4. Options Lab (real premiums)' },
       { to: '/index-strategy/oi-lab', label: '5. OI Lab (option X-ray)' },
+      { to: '/index-strategy/flux-lab', label: '6. Flux Strategy Test Lab' },
     ],
   },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },

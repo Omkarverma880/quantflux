@@ -622,6 +622,23 @@ export const api = {
   hbPositions: (date) => request(`/equity-strategy/hammer-breakout/positions${date ? `?date=${encodeURIComponent(date)}` : ''}`),
 
   // Equity Strategy Workspace — consolidated multi-strategy screener (read-only)
+  // Flux Strategy Test Lab — backtest, validate, replay, paper trade
+  flMeta: (u = 'NIFTY') => request(`/index-strategy/flux-lab/meta?underlying=${u}`),
+  flDataCheck: (body) => request('/index-strategy/flux-lab/data-check', { method: 'POST', body: JSON.stringify(body) }),
+  flBacktest: (body) => request('/index-strategy/flux-lab/backtest', { method: 'POST', body: JSON.stringify(body) }),
+  flResearch: (mode, body) => request(`/index-strategy/flux-lab/research/${mode}`, { method: 'POST', body: JSON.stringify(body) }),
+  flJob: (id) => request(`/index-strategy/flux-lab/job/${id}`),
+  flRuns: (limit = 50) => request(`/index-strategy/flux-lab/runs?limit=${limit}`),
+  flRun: (id) => request(`/index-strategy/flux-lab/runs/${id}`),
+  flRunTrades: (id, limit = 2000) => request(`/index-strategy/flux-lab/runs/${id}/trades?limit=${limit}`),
+  flDeleteRun: (id) => request(`/index-strategy/flux-lab/runs/${id}`, { method: 'DELETE' }),
+  flReplay: (body) => request('/index-strategy/flux-lab/replay', { method: 'POST', body: JSON.stringify(body) }),
+  flMePaper: () => request('/index-strategy/flux-lab/paper'),
+  flPaperConfig: (body) => request('/index-strategy/flux-lab/paper/config', { method: 'POST', body: JSON.stringify(body) }),
+  flPaperCheck: () => request('/index-strategy/flux-lab/paper/check', { method: 'POST' }),
+  flPaperSignals: (limit = 100) => request(`/index-strategy/flux-lab/paper/signals?limit=${limit}`),
+  flCompare: (runId) => request(`/index-strategy/flux-lab/paper/compare/${runId}`),
+
   // My Equity Workspace — personal research desk
   meMeta: () => request('/equity-strategy/my-workspace/meta'),
   meSearch: (q, limit = 15) => request(`/equity-strategy/my-workspace/search?${new URLSearchParams({ q, limit })}`),

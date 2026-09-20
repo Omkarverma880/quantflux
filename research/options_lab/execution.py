@@ -122,7 +122,11 @@ class DayBook:
             s = o.drop_duplicates("m").set_index("m")["spot"]
             self.spot = s.reindex(self.grid).ffill().bfill().values
         self.by_key: dict = {}
+        self.by_key_expiry: dict = {}          # (type, strike, expiry) -> contract
+        self.expiries: list = []
         self.meta: dict = {}
+        has_vol = "volume" in o.columns
+        has_oi = "oi" in o.columns
         for con, g in o.groupby("contract"):
             s = g.set_index("m")[["open", "high", "low", "close"]].reindex(self.grid)
             miss = s["close"].isna().values
@@ -132,24 +136,41 @@ class DayBook:
                 a[np.isnan(a)] = cl[np.isnan(a)]
             r = g.iloc[0]
             typ = str(r["option_type"]).upper().replace("CALL", "CE").replace("PUT", "PE")
+            expiry = str(r["expiry_date"])[:10]
             key = (typ, float(r["strike"]))
             self.by_key[key] = con
-            self.meta[con] = {"op": op, "hi": hi, "lo": lo, "cl": cl, "miss": miss,
-                              "strike": float(r["strike"]), "expiry": str(r["expiry_date"])[:10],
-                              "type": typ}
+            self.by_key_expiry[(typ, float(r["strike"]), expiry)] = con
+            meta = {"op": op, "hi": hi, "lo": lo, "cl": cl, "miss": miss,
+                    "strike": float(r["strike"]), "expiry": expiry, "type": typ}
+            # liquidity, when the stored rows carry it — used by the Flux Lab's filters
+            if has_vol:
+                meta["vol"] = g.set_index("m")["volume"].reindex(self.grid).fillna(0).values
+            if has_oi:
+                meta["oi"] = g.set_index("m")["oi"].reindex(self.grid).ffill().fillna(0).values
+            self.meta[con] = meta
+        self.expiries = sorted({m["expiry"] for m in self.meta.values()})
 
     def idx(self, minute: int) -> int:
         return int(minute - SESSION_OPEN)
 
 
-def resolve_contract(book: DayBook, sig: Signal, underlying: str = "NIFTY") -> Optional[str]:
+def resolve_contract(book: DayBook, sig: Signal, underlying: str = "NIFTY",
+                     expiry: Optional[str] = None, at_minute: Optional[int] = None) -> Optional[str]:
+    """The contract this signal buys.
+
+    ``expiry`` pins the series (the Flux Lab chooses it per its expiry rule); without it the
+    behaviour is unchanged — whichever expiry the day's data holds for that strike.
+    ``at_minute`` lets the caller price the ATM off the fill bar rather than the decision bar.
+    """
     step = STEP.get(underlying, 50)
-    t = book.idx(sig.minute)
+    t = book.idx(at_minute if at_minute is not None else sig.minute)
     if book.spot is None or t < 0 or t >= len(book.grid):
         return None
     atm = round(float(book.spot[t]) / step) * step
     sgn = 1 if sig.side == "CE" else -1
     strike = atm + sgn * sig.moneyness * step
+    if expiry:
+        return book.by_key_expiry.get((sig.side, float(strike), str(expiry)[:10]))
     return book.by_key.get((sig.side, float(strike)))
 
 

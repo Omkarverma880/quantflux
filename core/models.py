@@ -1220,3 +1220,117 @@ class MyEquityStock(Base):
     __table_args__ = (
         Index("uq_my_equity_stock", "user_id", "symbol", "exchange", unique=True),
     )
+
+
+class FluxLabRun(Base):
+    """One Flux Lab backtest / research run — the reproducibility record.
+
+    Everything needed to repeat a run exactly is stored: the full configuration, a hash of it,
+    the engine version and the data range actually covered. Results live in ``flux_lab_trades``
+    so the ledger stays queryable; this row carries the headline statistics only.
+    Auto-created via ``create_all``.
+    """
+    __tablename__ = "flux_lab_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    label = Column(String(120))
+    kind = Column(String(16), default="backtest")     # backtest | walkforward | sweep | robustness
+    underlying = Column(String(20), default="NIFTY")
+    strategy_name = Column(String(120))
+    start_date = Column(Date)
+    end_date = Column(Date)
+    timeframe = Column(Integer, default=5)
+    config = Column(JSONB, default=dict)              # the exact RunConfig that produced this
+    config_hash = Column(String(16), index=True)      # same hash = same run, byte for byte
+    engine_version = Column(String(16))
+    status = Column(String(12), default="ok")         # ok | error | running
+    message = Column(Text)
+    sessions = Column(Integer, default=0)
+    signals_count = Column(Integer, default=0)
+    trades_count = Column(Integer, default=0)
+    seconds = Column(Float, default=0)
+    summary = Column(JSONB, default=dict)             # headline stats, breakdowns, skips, warnings
+
+    __table_args__ = (Index("idx_flux_run_user", "user_id", "created_at"),)
+
+
+class FluxLabTrade(Base):
+    """One simulated (or paper) trade, with the reasoning that produced it.
+
+    Index points and option rupees are stored in separate columns and never summed — the whole
+    point of the lab is that they are different things. Auto-created via ``create_all``.
+    """
+    __tablename__ = "flux_lab_trades"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("flux_lab_runs.id", ondelete="CASCADE"), index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    mode = Column(String(10), default="BACKTEST")     # BACKTEST | REPLAY | PAPER
+    trade_no = Column(Integer)
+    trade_date = Column(Date)
+    signal_time = Column(String(5))
+    entry_time = Column(String(5))
+    exit_time = Column(String(5))
+    side = Column(String(2))                          # CE | PE
+    contract = Column(String(60))
+    strike = Column(Numeric(12, 2))
+    expiry = Column(Date)
+    dte = Column(Integer)
+    lots = Column(Integer)
+    qty = Column(Integer)
+    option_entry = Column(Numeric(12, 2))
+    option_exit = Column(Numeric(12, 2))
+    spot_entry = Column(Numeric(12, 2))
+    spot_exit = Column(Numeric(12, 2))
+    spot_move_pts = Column(Numeric(12, 2))            # index points — NOT P&L
+    spot_mfe_pts = Column(Numeric(12, 2))
+    spot_mae_pts = Column(Numeric(12, 2))
+    option_mfe_pct = Column(Numeric(12, 2))
+    option_mae_pct = Column(Numeric(12, 2))
+    gross_pts = Column(Numeric(12, 2))                # option premium points
+    charges = Column(Numeric(12, 2))
+    pnl = Column(Numeric(14, 2))                      # rupees, after charges
+    exit_reason = Column(String(12))
+    held_min = Column(Integer)
+    bucket = Column(String(16))
+    dow = Column(Integer)
+    month = Column(String(8))
+    year = Column(Integer)
+    regime = Column(JSONB, default=dict)
+    reasons = Column(JSONB, default=list)             # every condition and its value at entry
+    indicators = Column(JSONB, default=dict)
+    ladder = Column(JSONB, default=dict)              # bars taken to reach each point milestone
+    status = Column(String(8), default="CLOSED")      # OPEN (live paper) | CLOSED
+
+    __table_args__ = (Index("idx_flux_trade_run", "run_id", "trade_no"),
+                      Index("idx_flux_trade_user_mode", "user_id", "mode", "trade_date"))
+
+
+class FluxLabSignal(Base):
+    """Live/paper signal audit — every decision the engine made in real time, taken or not.
+
+    This is what makes a backtest-versus-paper discrepancy debuggable instead of mysterious.
+    Auto-created via ``create_all``.
+    """
+    __tablename__ = "flux_lab_signals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    mode = Column(String(10), default="PAPER")
+    trade_date = Column(Date)
+    bar_time = Column(String(5))
+    strategy_name = Column(String(120))
+    side = Column(String(2))
+    spot = Column(Numeric(12, 2))
+    fired = Column(Boolean, default=False)
+    acted = Column(Boolean, default=False)
+    skip_reason = Column(String(120))
+    reasons = Column(JSONB, default=list)
+    indicators = Column(JSONB, default=dict)
+    regime = Column(JSONB, default=dict)
+    trade_id = Column(Integer, ForeignKey("flux_lab_trades.id", ondelete="SET NULL"))
+
+    __table_args__ = (Index("idx_flux_signal_user_date", "user_id", "trade_date"),)
