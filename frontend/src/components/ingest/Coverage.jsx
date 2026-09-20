@@ -7,6 +7,8 @@ import { api } from '../../api';
  * weekdays (holidays or not uploaded yet) and removal of a wrongly uploaded month.
  */
 
+// India VIX and futures are stored as bars only — they are context, not an OI Lab underlying
+const REFERENCE = /^(INDIAVIX|.*FUT)$/;
 const N = (v) => Number(v || 0).toLocaleString('en-IN');
 const MB = (b) => `${(Number(b || 0) / 1e6).toFixed(1)} MB`;
 
@@ -54,7 +56,8 @@ export default function Coverage({ data, reload }) {
           <div key={u.underlying} className="card !p-3 space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="text-[14px] font-bold text-gray-100">{u.underlying}</span>
-              {u.oi_lab_ready ? <span className="badge-green !text-[10px]">OI Lab ready</span> : <span className="badge !text-[10px] text-gray-400">no options</span>}
+              {u.oi_lab_ready ? <span className="badge-green !text-[10px]">OI Lab ready</span>
+                : <span className="badge !text-[10px] text-gray-400">{REFERENCE.test(u.underlying) ? 'reference series' : 'no options'}</span>}
             </div>
             {[['Index / spot', u.has_spot, u.sessions_spot], ['Options', u.has_options, u.sessions_options]].map(([k, ok, n]) => (
               <div key={k} className="flex items-center gap-1.5 text-[12px]">

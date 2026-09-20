@@ -714,6 +714,9 @@ export const api = {
   diExploreContracts: (p) => request(`/data-ingestion/explore/contracts?${new URLSearchParams(p)}`),
   diExploreOption: (p) => request(`/data-ingestion/explore/option?${new URLSearchParams(p)}`),
   diExploreChain: (p) => request(`/data-ingestion/explore/chain?${new URLSearchParams(p)}`),
+  diPullPlan: (p) => request(`/data-ingestion/pull/plan?${new URLSearchParams(p)}`),
+  diPull: (body) => request('/data-ingestion/pull', { method: 'POST', body: JSON.stringify(body) }),
+  diPullLast: () => request('/data-ingestion/pull/last'),
   diDownloader: () => request('/data-ingestion/downloader'),
   diDownloaderStage: (id) => request(`/data-ingestion/downloader/${id}/stage`, { method: 'POST' }),
 

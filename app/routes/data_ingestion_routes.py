@@ -14,9 +14,12 @@ from functools import wraps
 import numpy as np
 from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from core.auth import login_required
+from core.broker import get_user_broker
+from core.database import get_db
 from core.logger import get_logger
 from research.data_ingestion import service as SV
 
@@ -83,12 +86,37 @@ class JobReq(BaseModel):
     mapping: dict
 
 
+class PullReq(BaseModel):
+    indices: list[str] | None = None
+    days: int | None = None
+    strikes: int | None = None
+    expiries: int | None = None
+    include_index: bool | None = None
+    include_vix: bool | None = None
+    include_futures: bool | None = None
+
+
 class DeleteReq(BaseModel):
     kind: str
     underlying: str
     year: int
     month: int
     confirm: str
+
+
+def _broker(db: Session, user_id: int):
+    """The user's Zerodha session, or None when they are not connected."""
+    from core.auth import UserZerodhaAuth
+    try:
+        if not UserZerodhaAuth.is_authenticated(db, user_id):
+            return None
+    except Exception:
+        return None
+    return get_user_broker(db, user_id)
+
+
+NOT_CONNECTED = {"status": "error", "code": "not_connected",
+                 "message": "Connect Zerodha to pull live data. Uploading files works without it."}
 
 
 @router.post("/stage")
@@ -167,6 +195,36 @@ def job(job_id: str, user_id: int = Depends(login_required)):
     if j is None:
         return {"status": "error", "message": "job not found"}
     return {"status": "ok", "job": {k: v for k, v in j.items() if k != "user_id"}}
+
+
+@router.get("/pull/plan")
+@safe("pull_plan")
+def pull_plan(indices: str | None = None, days: int | None = None, strikes: int | None = None,
+              expiries: int | None = None, user_id: int = Depends(login_required),
+              db: Session = Depends(get_db)):
+    """What a pull would fetch right now — no market data is downloaded here."""
+    broker = _broker(db, user_id)
+    if broker is None:
+        return {**NOT_CONNECTED, "last_pull": SV.pull_last()}
+    cfg = {"indices": [i.strip().upper() for i in indices.split(",") if i.strip()] if indices else None,
+           "days": days, "strikes": strikes, "expiries": expiries}
+    return SV.pull_plan(broker, cfg)
+
+
+@router.post("/pull")
+@safe("pull")
+def pull(req: PullReq, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Fetch today's listed option chains, index, VIX and futures into the Market Store."""
+    broker = _broker(db, user_id)
+    if broker is None:
+        return NOT_CONNECTED
+    return {"status": "ok", "job": SV.start_pull_job(broker, req.model_dump(exclude_none=True), user_id)}
+
+
+@router.get("/pull/last")
+@safe("pull_last")
+def pull_last(user_id: int = Depends(login_required)):
+    return {"status": "ok", "last_pull": SV.pull_last()}
 
 
 @router.get("/coverage")

@@ -418,6 +418,48 @@ def get_job(job_id: str, user_id: int) -> Optional[dict]:
     return j if j and j["user_id"] == user_id else None
 
 
+# ── one-click pull from Zerodha ──────────────────────────────────────
+PULL_STAGE = "zerodha-pull"
+
+
+def pull_last() -> Optional[dict]:
+    from research.data_ingestion import kite_pull as KP
+    return KP.last_pull()
+
+
+def pull_plan(broker, cfg: Optional[dict] = None) -> dict:
+    from research.data_ingestion import kite_pull as KP
+    return KP.plan(broker, cfg)
+
+
+def start_pull_job(broker, cfg: Optional[dict], user_id: int) -> dict:
+    """Fetch every listed series from Zerodha in the background (the UI polls ``get_job``)."""
+    from research.data_ingestion import kite_pull as KP
+    for j in _jobs.values():
+        if j["stage_id"] == PULL_STAGE and j["status"] == "running":
+            return j                                   # one pull at a time is plenty
+    jid = uuid.uuid4().hex[:12]
+    job = {"id": jid, "action": "pull", "stage_id": PULL_STAGE, "user_id": user_id, "status": "running",
+           "progress": "asking Zerodha what is listed", "started": time.time(), "result": None, "error": None}
+    with _jobs_lock:
+        _jobs[jid] = job
+
+    def run():
+        try:
+            job["result"] = KP.run(broker, cfg, lambda m: job.__setitem__("progress", m), user_id)
+            job["status"] = "done" if job["result"].get("status") == "ok" else "error"
+            job["error"] = job["result"].get("message") if job["status"] == "error" else None
+            _invalidate_coverage()
+        except Exception as exc:
+            logger.error("zerodha pull failed: %s | %s", exc, traceback.format_exc())
+            job["status"] = "error"
+            job["error"] = str(exc)[:500]
+        job["seconds"] = round(time.time() - job["started"], 1)
+
+    threading.Thread(target=run, daemon=True, name=f"ingest-pull-{jid}").start()
+    return job
+
+
 # ── coverage ─────────────────────────────────────────────────────────
 _coverage_cache: dict = {}
 

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { UploadCloud, LayoutGrid, CandlestickChart, Download, Info, Loader2 } from 'lucide-react';
+import { UploadCloud, LayoutGrid, CandlestickChart, Download, Info, Loader2, RefreshCw } from 'lucide-react';
 import { api } from '../api';
+import PullPanel from '../components/ingest/PullPanel';
 import StagedFile from '../components/ingest/StagedFile';
 import Coverage from '../components/ingest/Coverage';
 import Explorer from '../components/ingest/Explorer';
@@ -12,6 +13,7 @@ import Explorer from '../components/ingest/Explorer';
  */
 
 const TABS = [
+  ['pull', 'Refresh from Zerodha', RefreshCw],
   ['upload', 'Upload & validate', UploadCloud],
   ['coverage', 'Coverage', LayoutGrid],
   ['explore', 'Explorer', CandlestickChart],
@@ -64,7 +66,8 @@ function Imports({ onStaged }) {
 }
 
 export default function DataIngestion() {
-  const [tab, setTab] = useState('upload');
+  const [tab, setTab] = useState('pull');
+  const [pullSignal, setPullSignal] = useState(0);
   const [staged, setStaged] = useState([]);
   const [errors, setErrors] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -98,11 +101,18 @@ export default function DataIngestion() {
 
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-[1400px] mx-auto">
-      <div>
-        <h1 className="text-xl sm:text-2xl font-bold text-white">Data Ingestion Lab</h1>
-        <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-          Index and option history for NIFTY, SENSEX and any other underlying → one shared Market Store that feeds the OI Lab, Signal Desk and Options Lab
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-white">Data Ingestion Lab</h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+            Index and option history for NIFTY, SENSEX and any other underlying → one shared Market Store that feeds the OI Lab, Signal Desk and Options Lab
+          </p>
+        </div>
+        {/* one click from anywhere on the page: fetch today's listed data and show the progress */}
+        <button onClick={() => { setTab('pull'); setPullSignal((n) => n + 1); }}
+          className="btn-primary !py-2 !px-4 text-[13px] flex items-center gap-2 shrink-0">
+          <RefreshCw className="w-4 h-4" />Refresh from Zerodha
+        </button>
       </div>
 
       <div className="flex gap-1 border-b border-surface-3 overflow-x-auto">
@@ -138,6 +148,7 @@ export default function DataIngestion() {
           </div>
         </div>
       )}
+      {tab === 'pull' && <PullPanel startSignal={pullSignal} onDone={loadCoverage} />}
       {tab === 'coverage' && <Coverage data={coverage} reload={loadCoverage} />}
       {tab === 'explore' && <Explorer coverage={coverage} />}
       {tab === 'imports' && <Imports onStaged={addStaged} />}
