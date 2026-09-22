@@ -24,6 +24,23 @@ from research.flux_lab import strategy as ST
 
 logger = get_logger("research.flux_lab.service")
 
+
+def clean(o):
+    """NumPy scalars → plain Python, everywhere, before anything reaches the database.
+
+    psycopg2 renders a NumPy scalar as ``np.float64(1.5)``, which PostgreSQL rejects, and
+    ``json.dumps`` refuses them outright in a JSONB column. SQLite accepts them silently, so this
+    has to be enforced here rather than discovered in production.
+    """
+    if isinstance(o, dict):
+        return {str(k): clean(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple, set)):
+        return [clean(v) for v in o]
+    if hasattr(o, "item") and hasattr(o, "dtype"):      # any NumPy scalar
+        return o.item()
+    return o
+
+
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 
@@ -78,7 +95,8 @@ def run_backtest(db, user_id: int, start: str, end: str, lots: int, label: str =
 
 
 def save_run(db, user_id: int, cfg: dict, res: dict, label: str = "") -> int:
-    s = res["summary"]
+    s = clean(res["summary"])
+    cfg = clean(cfg)
     run = FluxLabRun(
         user_id=user_id, label=label or None, kind="backtest", underlying="NIFTY",
         strategy_name=ST.STRATEGY_NAME, start_date=date.fromisoformat(res["start"]),
@@ -97,6 +115,7 @@ def save_run(db, user_id: int, cfg: dict, res: dict, label: str = "") -> int:
 
 def trade_row(t: dict, user_id: int, mode: str, run_id: Optional[int] = None,
               trade_no: Optional[int] = None, status: str = "CLOSED") -> FluxLabTrade:
+    t = clean(t)
     d = date.fromisoformat(t["date"])
     return FluxLabTrade(
         run_id=run_id, user_id=user_id, mode=mode, trade_no=trade_no, trade_date=d,

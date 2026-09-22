@@ -79,7 +79,8 @@ def _load_month(start: str, end: str) -> dict:
         printed = cl.notna()
         cl = cl.ffill()
         op = op.where(printed).fillna(cl)          # a minute with no print trades at the last price
-        days[d] = {"closes": closes.to_dict(), "op": op, "cl": cl, "printed": printed,
+        # plain Python floats: NumPy scalars travel badly into JSON and into the database
+        days[d] = {"closes": {int(k): float(v) for k, v in closes.items()}, "op": op, "cl": cl, "printed": printed,
                    "expiry": g["expiry_date"].iloc[0]}
     return days
 
@@ -140,7 +141,7 @@ def simulate_day(d: date, day: dict, lots: int = 1, rule: ST.Rule = ST.RULE) -> 
         "date": str(d), "month": str(d)[:7], "signal_time": sig["time"], "entry_time": ST.hhmm(fill),
         "exit_time": ST.hhmm(exit_min), "exit_reason": reason, "held_min": exit_min - fill,
         "expiry": str(day["expiry"]), "dte": (day["expiry"] - d).days,
-        "atm": legs[0]["strike"], "spot_entry": round(float(sig["spot"]), 2),
+        "atm": float(legs[0]["strike"]), "spot_entry": round(float(sig["spot"]), 2),
         "spot_exit": round(float(spot_exit), 2) if spot_exit else None,
         "credit": round(credit, 2), "debit": round(debit, 2), "gross_pts": round(credit - debit, 2),
         "lots": lots, "qty": qty, "gross": round(gross, 2), "charges": round(charges, 2),
@@ -179,7 +180,8 @@ def summarise(trades: list[dict], sessions: int, skipped: list[dict]) -> dict:
         "worst_month": round(float(months.net.min()), 2), "best_month": round(float(months.net.max()), 2),
         "monthly": monthly,
         "yearly": [{"year": y, "trades": int(r["size"]), "net": round(float(r["sum"]), 2)} for y, r in years.iterrows()],
-        "skip_reasons": pd.Series([s["skipped"] for s in skipped]).value_counts().to_dict() if skipped else {},
+        "skip_reasons": {str(k): int(v) for k, v in
+                         pd.Series([s["skipped"] for s in skipped]).value_counts().items()} if skipped else {},
     }
 
 
