@@ -1,230 +1,192 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCw, ShieldCheck, AlertTriangle, Activity } from 'lucide-react';
+import { Loader2, RefreshCw, Power, ShieldCheck, Radio } from 'lucide-react';
 import { api } from '../../api';
-import { Section, Stat, StatTable, Note, N, N0, PCT, RS, tone } from './ui';
+import {
+  Section, Stat, Note, Legs, TradeTable, MonthTiles, N, N0, RS, PCT, tone, input,
+} from './ui';
 
 /**
- * Live paper trading — the same engine, fed by the live session instead of stored candles.
- *
- * PAPER is the only mode here. The backend module that runs this has no order path in it at
- * all, and the banner says so on every screen, because the one mistake this lab must never make
- * is sending a real order while you believe you are testing.
+ * Live PAPER trading of the failed-breakout iron fly. The background loop checks every 20 seconds
+ * while this is switched on; this panel just shows what it is doing. No order is ever sent.
  */
-
-export default function Paper({ cfg, runId }) {
-  const [data, setData] = useState(null);
+export default function Paper() {
+  const [d, setD] = useState(null);
   const [signals, setSignals] = useState([]);
-  const [compare, setCompare] = useState(null);
+  const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
+  const [lots, setLots] = useState(1);
 
   const load = useCallback(async () => {
     try {
-      const [d, s] = await Promise.all([api.flMePaper(), api.flPaperSignals(60)]);
-      if (d.status === 'ok') setData(d);
-      if (s.status === 'ok') setSignals(s.signals || []);
-    } catch (e) { setMsg(String(e.message || e)); }
+      const [r, s] = await Promise.all([api.flMePaper(), api.flPaperSignals(50)]);
+      if (r.status !== 'ok') throw new Error(r.message || 'could not load paper desk');
+      setD(r);
+      setLots(r.lots || 1);
+      setSignals(s.signals || []);
+      setErr('');
+    } catch (e) { setErr(String(e.message || e)); }
   }, []);
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 20000);
+    const t = setInterval(load, 15000);
     return () => clearInterval(t);
   }, [load]);
 
   const save = async (patch) => {
-    setBusy(true); setMsg('');
+    setBusy(true);
     try {
       const r = await api.flPaperConfig(patch);
-      if (r.status === 'ok') await load(); else setMsg(r.message || 'could not save');
-    } finally { setBusy(false); }
+      if (r.status !== 'ok') throw new Error(r.message);
+      await load();
+    } catch (e) { setErr(String(e.message || e)); } finally { setBusy(false); }
   };
 
-  const tick = async () => {
-    setBusy(true); setMsg('');
+  const checkNow = async () => {
+    setBusy(true);
     try {
       const r = await api.flPaperCheck();
-      setMsg(r.status === 'ok'
-        ? `checked: ${r.result?.skipped || (r.result?.opened ? `opened ${r.result.opened.contract} at ${r.result.opened.entry}` : r.result?.signal ? 'signal, no fill' : 'no signal on the last settled bar')}`
-        : r.message || 'could not run');
+      if (r.status !== 'ok') throw new Error(r.message);
       await load();
-    } finally { setBusy(false); }
+    } catch (e) { setErr(String(e.message || e)); } finally { setBusy(false); }
   };
 
-  const loadCompare = async () => {
-    if (!runId) return;
-    const r = await api.flCompare(runId);
-    setCompare(r);
-  };
+  if (!d) {
+    return <div className="py-10 text-center text-gray-500 text-sm">
+      {err ? <span className="text-red-400">{err}</span> : <><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Loading the paper desk…</>}
+    </div>;
+  }
 
-  const st = data?.today_stats || {};
-  const open = data?.open_positions || [];
+  const t = d.today || {};
+  const pos = (d.open_positions || [])[0];
+  const bt = d.backtest;
+  const tot = d.totals || {};
+  const expectMonth = bt?.summary?.avg_month != null && bt?.lots ? (bt.summary.avg_month / bt.lots) * (d.lots || 1) : null;
+  const closed = (d.trades || []).filter((x) => x.status === 'CLOSED');
+  const progress = pos && pos.unrealised != null && pos.target_rs && pos.stop_rs
+    ? Math.max(0, Math.min(100, ((pos.unrealised - pos.stop_rs) / (pos.target_rs - pos.stop_rs)) * 100)) : null;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">
-        <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-        <span className="text-[12.5px] text-emerald-300 font-semibold">PAPER MODE</span>
-        <span className="text-[12px] text-gray-300">
-          No order reaches the broker. Positions here are recorded by the lab, priced from live quotes.
-        </span>
+      <Section title="Paper trading" right={
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full ${d.connected ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
+            <Radio className="w-3 h-3" />{d.connected ? 'Zerodha connected' : 'Zerodha not connected'}
+          </span>
+          <span className={`text-[11px] px-2 py-0.5 rounded-full ${d.market_open ? 'bg-emerald-500/15 text-emerald-400' : 'bg-surface-3 text-gray-400'}`}>
+            {d.market_open ? 'market open' : 'market closed'}
+          </span>
+          <span className="text-[11px] text-gray-500 mono">{d.now}</span>
+        </div>}>
+        <div className="flex flex-wrap items-end gap-3">
+          <button disabled={busy} onClick={() => save({ enabled: !d.enabled })}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-semibold ${d.enabled
+              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-surface-2 text-gray-300 border border-surface-3'}`}>
+            <Power className="w-4 h-4" />{d.enabled ? 'Paper trading ON' : 'Paper trading OFF'}
+          </button>
+          <div className="w-24">
+            <label className="block text-[10px] uppercase tracking-wider text-gray-500">Lots</label>
+            <input type="number" min={1} max={50} value={lots} onChange={(e) => setLots(e.target.value)}
+              onBlur={() => Number(lots) !== d.lots && save({ lots: Number(lots) || 1 })} className={input} />
+          </div>
+          <button disabled={busy || !d.connected} onClick={checkNow}
+            className="btn-secondary !py-1.5 !px-3 text-[12px] flex items-center gap-1.5">
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Check now
+          </button>
+          <div className="flex items-center gap-1.5 text-[11.5px] text-gray-400 ml-auto">
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />Paper only — this lab has no order path; nothing is sent to Zerodha.
+          </div>
+        </div>
+        {err && <div className="text-[12px] text-red-400 mt-2">{err}</div>}
+      </Section>
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        <Section title="Today">
+          <div className="text-[13.5px] text-gray-100 font-medium mb-2">{t.state || '—'}</div>
+          <div className="grid grid-cols-3 gap-3 mb-2">
+            <Stat label="Range high" value={N(t.or_high)} />
+            <Stat label="Range low" value={N(t.or_low)} />
+            <Stat label="NIFTY" value={N(t.spot)} sub={t.last_minute ? `close of ${t.last_minute}` : null} />
+          </div>
+          {(t.events || []).length > 0 && (
+            <div className="border-t border-surface-3 pt-2 space-y-0.5">
+              {t.events.map((e, i) => (
+                <div key={i} className="text-[11.5px] text-gray-300"><span className="mono text-gray-500 mr-2">{e.time}</span>{e.text}</div>
+              ))}
+            </div>
+          )}
+        </Section>
+
+        <Section title="Open position">
+          {!pos ? <Note>No open paper position.</Note> : (
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-3">
+                <Stat label="Credit taken" value={`${N(pos.credit)} pts`} sub={`${pos.lots} lot · qty ${pos.qty}`} />
+                <Stat label="Cost to close now" value={pos.debit_now != null ? `${N(pos.debit_now)} pts` : '—'} />
+                <Stat label="Unrealised" value={RS(pos.unrealised)} tone={tone(pos.unrealised)} sub="before charges" />
+              </div>
+              {progress != null && (
+                <div>
+                  <div className="flex justify-between text-[10.5px] text-gray-500 mb-0.5">
+                    <span>stop {RS(pos.stop_rs)}</span><span>target {RS(pos.target_rs)}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-surface-3 relative overflow-hidden">
+                    <div className="absolute inset-y-0 left-1/2 w-px bg-white/30" />
+                    <div className={`h-full ${pos.unrealised >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${progress}%` }} />
+                  </div>
+                </div>
+              )}
+              <Legs legs={pos.legs} live />
+              <div className="text-[11px] text-gray-500">
+                Opened {pos.entry_time} on the {pos.signal_time} signal · expiry {pos.expiry} · exits at 60% of credit captured,
+                60% lost, or 15:15.
+              </div>
+            </div>
+          )}
+        </Section>
       </div>
 
-      <Section title="Desk" right={
-        <div className="flex items-center gap-2">
-          <button onClick={tick} disabled={busy} className="btn-secondary !py-1.5 !px-3 text-[12px] flex items-center gap-1.5">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}Check now
-          </button>
-          <button onClick={load} className="btn-secondary !py-1.5 !px-2"><RefreshCw className="w-3.5 h-3.5" /></button>
-        </div>}>
-        <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 lg:grid-cols-6">
-          <Stat label="Paper trading" value={data?.enabled ? 'ON' : 'OFF'}
-            tone={data?.enabled ? 'text-emerald-400' : 'text-gray-400'} />
-          <Stat label="Market" value={data?.market_open ? 'open' : 'closed'} />
-          <Stat label="Strategy" value={data?.strategy || '—'} sub={`${data?.side || ''} · ${data?.timeframe || ''}m`} />
-          <Stat label="NIFTY" value={N(data?.spot)} />
-          <Stat label="Today" value={`${st.trades || 0} trades`} sub={`limit ${data?.max_trades_per_day ?? '—'}`} />
-          <Stat label="Realised" value={RS(st.realised)} tone={tone(st.realised)}
-            sub={st.win_rate == null ? '' : `${PCT(st.win_rate, 0)} of ${st.closed}`} />
+      <Section title="Paper results so far">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-3">
+          <Stat label="Trades" value={N0(tot.trades)} />
+          <Stat label="Win rate" value={tot.trades ? PCT((tot.wins / tot.trades) * 100, 0) : '—'} />
+          <Stat label="Net P&L" value={RS(tot.net)} tone={tone(tot.net)} sub="after charges" />
+          <Stat label="Green months" value={tot.months ? `${tot.green_months}/${tot.months}` : '—'} />
+          <Stat label="Backtest expects" value={expectMonth != null ? `${RS(expectMonth)}/mo` : '—'}
+            sub={bt ? `avg month · run #${bt.id} scaled to ${d.lots} lot` : 'run a backtest to compare'} />
         </div>
-        <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-surface-3">
-          <label className="flex items-center gap-2 text-[12.5px] text-gray-300">
-            <input type="checkbox" checked={!!data?.enabled} disabled={busy}
-              onChange={(e) => save({ enabled: e.target.checked })} className="accent-brand-500" />
-            run this strategy on live data (paper)
-          </label>
-          <label className="flex items-center gap-1.5 text-[12px] text-gray-400">
-            max trades/day
-            <input type="number" min={1} value={data?.max_trades_per_day ?? 3} disabled={busy}
-              onChange={(e) => save({ max_trades_per_day: Number(e.target.value) })}
-              className="input-field !py-1 !px-2 w-16 text-[12px]" />
-          </label>
-          <label className="flex items-center gap-1.5 text-[12px] text-gray-400">
-            lots
-            <input type="number" min={1} value={data?.lots ?? 1} disabled={busy}
-              onChange={(e) => save({ lots: Number(e.target.value) })}
-              className="input-field !py-1 !px-2 w-14 text-[12px]" />
-          </label>
-          <button onClick={() => save({ config: cfg })} disabled={busy}
-            className="btn-secondary !py-1.5 !px-3 text-[12px]">Use the configuration from Setup</button>
-        </div>
-        {!data?.conditions?.length && (
-          <Note tone="warn">No strategy is loaded into the paper desk yet — press “Use the
-            configuration from Setup”, then switch it on.</Note>
-        )}
-        {!!data?.conditions?.length && (
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            {data.conditions.map((c) => (
-              <span key={c} className="px-1.5 py-0.5 rounded border border-surface-3 bg-surface-2/60 text-[11px] text-gray-400">{c}</span>
-            ))}
-          </div>
-        )}
-        {msg && <div className="text-[12px] text-gray-400 mt-2">{msg}</div>}
-      </Section>
-
-      <Section title={`Open position${open.length === 1 ? '' : 's'} · ${open.length}`}>
-        {!open.length ? <Note>Nothing open. A signal on a settled bar opens one.</Note> : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {open.map((p) => (
-              <div key={p.id} className="rounded-lg border border-brand-500/30 bg-brand-500/5 p-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-[13px] font-semibold text-gray-100">{p.side} {p.contract}</span>
-                  <span className={`text-[13px] font-bold mono ${tone(p.unrealised)}`}>{RS(p.unrealised)}</span>
-                </div>
-                <div className="grid grid-cols-3 gap-2 mt-2">
-                  <Stat label="Entry" value={N(p.option_entry)} sub={p.entry_time} />
-                  <Stat label="Now" value={N(p.ltp)} />
-                  <Stat label="Target / stop" value={`${N(p.ladder?.target, 0)} / ${N(p.ladder?.stop, 0)}`} />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Section>
-
-      <Section title="Today's paper trades">
-        <StatTable rows={[]} empty="" />
-        <div className="overflow-x-auto">
-          <table className="w-full text-[12px] min-w-[760px]">
-            <thead><tr className="text-[10px] uppercase tracking-wider text-gray-500 border-b border-surface-3">
-              {['Signal', 'Side', 'Contract', 'Entry', 'Exit', 'Reason', 'Index move', 'Net P&L', 'Status'].map((h) => (
-                <th key={h} className="text-left px-2 py-1 font-medium">{h}</th>))}
-            </tr></thead>
-            <tbody>
-              {(data?.today || []).map((t) => (
-                <tr key={t.id} className="border-b border-surface-3/40">
-                  <td className="px-2 py-1 mono text-gray-400">{t.time}</td>
-                  <td className="px-2 py-1">{t.side}</td>
-                  <td className="px-2 py-1 mono text-gray-300">{t.contract}</td>
-                  <td className="px-2 py-1 mono text-gray-300">{N(t.option_entry)}</td>
-                  <td className="px-2 py-1 mono text-gray-300">{N(t.option_exit)}</td>
-                  <td className="px-2 py-1 text-gray-400">{t.exit_reason || '—'}</td>
-                  <td className={`px-2 py-1 mono ${tone(t.spot_move_pts)}`}>{t.spot_move_pts == null ? '—' : `${N(t.spot_move_pts, 1)} pts`}</td>
-                  <td className={`px-2 py-1 mono font-semibold ${tone(t.pnl)}`}>{RS(t.pnl)}</td>
-                  <td className="px-2 py-1 text-[11px] text-gray-400">{t.status}</td>
-                </tr>
-              ))}
-              {!(data?.today || []).length && (
-                <tr><td colSpan={9} className="px-2 py-4 text-center text-gray-500 text-[12px]">nothing yet today</td></tr>
-              )}
-            </tbody>
-          </table>
+        <MonthTiles months={[...(d.monthly || [])].reverse()} />
+        <div className="text-[11px] text-gray-500 mt-2">
+          Paper fills use the live order book (sold at the bid, bought at the ask) and real charges, so they should
+          come in a little below the backtest. A large gap after a few months means the edge is not holding live.
         </div>
       </Section>
 
-      <Section title="Live signal audit" right={<span className="text-[10.5px] text-gray-500">
-        every decision the engine made, taken or not</span>}>
-        <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
-          <table className="w-full text-[12px] min-w-[680px]">
-            <thead className="sticky top-0 bg-surface-1"><tr className="text-[10px] uppercase tracking-wider text-gray-500 border-b border-surface-3">
-              {['When', 'Bar', 'Spot', 'Fired', 'Acted', 'Why not', 'Conditions met'].map((h) => (
-                <th key={h} className="text-left px-2 py-1 font-medium">{h}</th>))}
-            </tr></thead>
-            <tbody>
-              {signals.map((s) => (
-                <tr key={s.id} className="border-b border-surface-3/40">
-                  <td className="px-2 py-1 mono text-gray-500">{s.at}</td>
-                  <td className="px-2 py-1 mono text-gray-400">{s.bar}</td>
-                  <td className="px-2 py-1 mono text-gray-300">{N(s.spot)}</td>
-                  <td className={`px-2 py-1 ${s.fired ? 'text-emerald-400' : 'text-gray-600'}`}>{s.fired ? 'yes' : 'no'}</td>
-                  <td className={`px-2 py-1 ${s.acted ? 'text-brand-300' : 'text-gray-600'}`}>{s.acted ? 'yes' : 'no'}</td>
-                  <td className="px-2 py-1 text-[11px] text-gray-500">{s.skip_reason || ''}</td>
-                  <td className="px-2 py-1 text-[11px] text-gray-400">
-                    {(s.reasons || []).filter((r) => r.passed).length}/{(s.reasons || []).length}
-                  </td>
-                </tr>
-              ))}
-              {!signals.length && <tr><td colSpan={7} className="px-2 py-4 text-center text-gray-500 text-[12px]">no live signals logged yet</td></tr>}
-            </tbody>
-          </table>
-        </div>
+      <Section title={`Paper trades · ${closed.length}`}>
+        <TradeTable trades={d.trades || []} empty="No paper trades yet — they appear here as signals fire." />
       </Section>
 
-      <Section title="Paper against backtest" right={
-        <button onClick={loadCompare} disabled={!runId} className="btn-secondary !py-1 !px-2 text-[11.5px] disabled:opacity-50">
-          compare with the last stored run
-        </button>}>
-        {!compare ? <Note>Run a backtest, then compare it with what paper trading actually did.</Note>
-          : compare.paper_trades === 0 ? <Note tone="warn">{compare.message}</Note> : (
-            <>
-              <div className="grid gap-4 sm:grid-cols-2">
-                {[['Backtest', compare.backtest], ['Paper', compare.paper]].map(([label, b]) => (
-                  <div key={label} className="rounded-lg border border-surface-3 p-3">
-                    <div className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">{label}</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Stat label="Trades" value={N0(b?.trades)} />
-                      <Stat label="Win rate" value={PCT(b?.win_rate)} />
-                      <Stat label="Net P&L" value={RS(b?.net_pnl)} tone={tone(b?.net_pnl)} />
-                      <Stat label="Avg trade" value={RS(b?.avg_trade)} />
-                      <Stat label="Avg index MFE" value={b?.avg_spot_mfe == null ? '—' : `${N(b.avg_spot_mfe, 1)} pts`} />
-                      <Stat label="Avg hold" value={b?.avg_hold_min == null ? '—' : `${Math.round(b.avg_hold_min)} min`} />
-                    </div>
-                  </div>
+      <Section title="Signal log">
+        {!signals.length ? <Note>No signals recorded yet.</Note> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12px] min-w-[560px]">
+              <thead><tr className="text-[10px] uppercase tracking-wider text-gray-500 border-b border-surface-3">
+                {['Date', 'Signal', 'NIFTY', 'What happened', 'Outcome'].map((h) => <th key={h} className="text-left px-2 py-1 font-medium">{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {signals.map((s) => (
+                  <tr key={s.id} className="border-b border-surface-3/40">
+                    <td className="px-2 py-1 mono text-gray-300">{s.date}</td>
+                    <td className="px-2 py-1 mono text-gray-400">{s.time}</td>
+                    <td className="px-2 py-1 mono text-gray-300">{N(s.spot)}</td>
+                    <td className="px-2 py-1 text-gray-300">{s.direction}</td>
+                    <td className={`px-2 py-1 ${s.acted ? 'text-emerald-400' : 'text-amber-500'}`}>{s.acted ? 'paper fly opened' : s.skip_reason}</td>
+                  </tr>
                 ))}
-              </div>
-              <Note tone="warn">{compare.note}</Note>
-            </>
-          )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Section>
     </div>
   );
