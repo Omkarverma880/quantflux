@@ -52,8 +52,13 @@ def run(broker, progress: Optional[Callable[[str], None]] = None, refresh_univer
         df = bars.get(s["symbol"])
         if df is None:
             continue
-        d = PT.indicators(df)
-        c = PT.classify(d, params)
+        try:
+            d = PT.indicators(df)
+            c = PT.classify(d, params)
+        except Exception as exc:                      # one odd stock can never end the whole scan
+            logger.warning("hunter: %s could not be measured: %s", s["symbol"], exc)
+            skipped.append({"symbol": s["symbol"], "reason": f"{type(exc).__name__}: {exc}"[:120]})
+            continue
         rows.append({**{k: s[k] for k in ("symbol", "name", "industry", "token", "exchange")}, **c,
                      "date": str(pd.Timestamp(d["date"].iloc[-1]).date())})
 

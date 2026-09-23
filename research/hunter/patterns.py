@@ -88,6 +88,27 @@ def relative_strength(d: pd.DataFrame) -> float | None:
     return round(0.4 * q[0] + 0.2 * q[1] + 0.2 * q[2] + 0.2 * q[3], 2)
 
 
+def pct_of(a: float, b: float) -> float | None:
+    """(a / b − 1) as a percentage, or None when b cannot be divided by."""
+    try:
+        b = float(b)
+        if not np.isfinite(b) or b == 0:
+            return None
+        return round((float(a) / b - 1) * 100, 2)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def ratio(a: float, b: float, nd: int = 2) -> float | None:
+    try:
+        b = float(b)
+        if not np.isfinite(b) or b == 0:
+            return None
+        return round(float(a) / b, nd)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
 def trend_ok(row: pd.Series, p: Params = P) -> tuple[bool, list[dict]]:
     """The leadership filter, with every condition and its value, for the card."""
     c = float(row["close"])
@@ -183,20 +204,21 @@ def screens(d: pd.DataFrame, trend: bool, p: Params = P) -> dict:
     v, av = float(row["volume"]), float(row["vol50"])
     sma50 = float(row["sma50"])
 
-    near = abs(c / sma50 - 1) * 100
+    near_pct = pct_of(c, sma50)
+    near = abs(near_pct) if near_pct is not None else 999.0
     out["pullback_50"] = {
-        "hit": bool(trend and c >= sma50 and near <= 3.0),
+        "hit": bool(trend and sma50 > 0 and c >= sma50 and near <= 3.0),
         "why": f"{near:.1f}% from its 50-day average at {sma50:,.1f}, still above it",
     }
     hi250 = float(d["high"].rolling(250, min_periods=60).max().iloc[-1])
     out["high_52w"] = {
-        "hit": bool(trend and c >= hi250 * 0.999 and v >= 1.3 * av),
-        "why": f"closed at a new 52-week high on {v / max(av, 1):.1f}× its usual trading",
+        "hit": bool(trend and hi250 > 0 and c >= hi250 * 0.999 and v >= 1.3 * av),
+        "why": f"closed at a new 52-week high on {v / max(av, 1.0):.1f}× its usual trading",
     }
     atr_now = float(row["atr_pct"])
     atr_floor = float(d["atr_pct"].tail(126).min())
     out["squeeze"] = {
-        "hit": bool(trend and atr_now <= atr_floor * 1.05),
+        "hit": bool(trend and np.isfinite(atr_floor) and atr_floor > 0 and atr_now <= atr_floor * 1.05),
         "why": f"daily range {atr_now:.2f}% — the quietest it has been in six months",
     }
     tail = d.tail(11).iloc[:-1]
@@ -204,7 +226,7 @@ def screens(d: pd.DataFrame, trend: bool, p: Params = P) -> dict:
     biggest_down = float(down_vol.max()) if len(down_vol) else 0.0
     out["pocket_pivot"] = {
         "hit": bool(trend and c > float(d["close"].iloc[-2]) and c > sma50 and biggest_down > 0 and v > biggest_down),
-        "why": f"up day on {v / max(biggest_down, 1):.1f}× the biggest down-day volume of the last ten",
+        "why": f"up day on {v / max(biggest_down, 1.0):.1f}× the biggest down-day volume of the last ten",
     }
     return out
 
@@ -289,6 +311,11 @@ def classify(d: pd.DataFrame, p: Params = P) -> dict:
         return {"stage": "NONE", "why": "not enough history yet"}
     row = d.iloc[-1]
     close = float(row["close"])
+    # a suspended or badly recorded stock can carry zeros; nothing below can divide by those
+    needed = [close, float(row["sma50"]), float(row["sma150"]), float(row["sma200"]),
+              float(row["high_52w"]), float(row["low_52w"])]
+    if any((not np.isfinite(x)) or x <= 0 for x in needed):
+        return {"stage": "NONE", "why": "prices for this stock are zero or missing in the stored candles"}
     ok, checks = trend_ok(row, p)
     bo = last_breakout(d, p)
     base = find_base(d, p)
@@ -296,14 +323,14 @@ def classify(d: pd.DataFrame, p: Params = P) -> dict:
         "close": round(close, 2), "trend_ok": ok, "trend_checks": checks,
         "atr_pct": round(float(row["atr_pct"]), 2),
         "turnover_cr": round(float(row["turnover_cr"]), 2) if pd.notna(row["turnover_cr"]) else None,
-        "from_52w_high_pct": round((close / float(row["high_52w"]) - 1) * 100, 2),
-        "above_50dma_pct": round((close / float(row["sma50"]) - 1) * 100, 2),
-        "volume_x": round(float(row["volume"]) / max(float(row["vol50"]), 1), 2),
+        "from_52w_high_pct": pct_of(close, row["high_52w"]),
+        "above_50dma_pct": pct_of(close, row["sma50"]),
+        "volume_x": ratio(row["volume"], max(float(row["vol50"]), 1.0)),
         "rs_raw": relative_strength(d), "base": base, "breakout": bo,
         "day": {"date": str(pd.Timestamp(row["date"]).date()), "open": round(float(row["open"]), 2),
                 "high": round(float(row["high"]), 2), "low": round(float(row["low"]), 2),
                 "close": round(close, 2), "volume": float(row["volume"]),
-                "change_pct": round((close / float(d["close"].iloc[-2]) - 1) * 100, 2) if len(d) > 1 else None},
+                "change_pct": pct_of(close, d["close"].iloc[-2]) if len(d) > 1 else None},
         **extra_measures(d, base, p),
     }
     hist = breakout_history(d, p)
