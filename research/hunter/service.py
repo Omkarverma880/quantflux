@@ -22,7 +22,10 @@ from research.hunter import store as STORE
 logger = get_logger("research.hunter.service")
 
 CONFIG_NAME = "hunter"
-DEFAULTS = {"auto_scan": True, "min_rs": 70, "scan_after_min": 16 * 60}   # 16:00 IST
+DEFAULTS = {"auto_scan": True, "min_rs": 60, "scan_after_min": 16 * 60,   # 16:00 IST
+            "universe": "nifty500",          # or "nse_liquid" — every ordinary NSE equity
+            "base_max_depth": 35.0, "near_pivot_pct": 12.0, "base_min": 10, "base_max": 60,
+            "strict_base": False, "min_turnover_cr": 2.0}
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
 _last_auto: dict[int, str] = {}
@@ -49,7 +52,15 @@ def save_config(db, user_id: int, updates: dict) -> dict:
 
 
 # ── jobs ──
-def start_scan(broker, user_id: int, min_rs: float = SCAN.MIN_RS, refresh_universe: bool = False) -> dict:
+def params_from(cfg: dict):
+    """The tuning the user has set, as the parameter object the scan understands."""
+    from research.hunter import patterns as PT
+    keys = ("base_max_depth", "near_pivot_pct", "base_min", "base_max", "strict_base", "min_turnover_cr")
+    return PT.Params(**{k: type(getattr(PT.P, k))(cfg[k]) for k in keys if cfg.get(k) is not None})
+
+
+def start_scan(broker, user_id: int, min_rs: float = SCAN.MIN_RS, refresh_universe: bool = False,
+               cfg: Optional[dict] = None) -> dict:
     jid = uuid.uuid4().hex[:12]
     job = {"id": jid, "user_id": user_id, "status": "running", "progress": "starting",
            "started": time.time(), "result": None, "error": None}
@@ -60,7 +71,9 @@ def start_scan(broker, user_id: int, min_rs: float = SCAN.MIN_RS, refresh_univer
 
     def work():
         try:
-            res = SCAN.run(broker, lambda m: job.__setitem__("progress", m), refresh_universe, min_rs)
+            c = cfg or {}
+            res = SCAN.run(broker, lambda m: job.__setitem__("progress", m), refresh_universe, min_rs,
+                           params_from(c), c.get("universe", "nifty500"))
             job["result"] = {"status": res.get("status"), "meta": res.get("meta"), "message": res.get("message")}
             job["status"] = "done" if res.get("status") == "ok" else "error"
             job["error"] = res.get("message")
@@ -149,7 +162,7 @@ def one(symbol: str, scan_date: Optional[str] = None) -> Optional[dict]:
     return next((r for r in rows if r["symbol"] == symbol.upper()), None)
 
 
-def chart(symbol: str, bars: int = 140) -> Optional[dict]:
+def chart(symbol: str, bars: int = 140, timeframe: str = "day") -> Optional[dict]:
     """Candles for one card, straight from the cached daily file — no broker call, no refetch."""
     from research.hunter import patterns as PT
     from research.my_equity import cache as CACHE
@@ -160,7 +173,12 @@ def chart(symbol: str, bars: int = 140) -> Optional[dict]:
     if df is None or df.empty:
         return None
     d = PT.indicators(df)
-    return {"symbol": row["symbol"], **PT.chart_payload(d, row.get("base"), row.get("breakout"), bars)}
+    if timeframe == "week":
+        wk = PT.to_weekly(df)
+        return {"symbol": row["symbol"], "timeframe": "week",
+                **PT.chart_payload(wk, None, None, max(60, bars // 5))}
+    return {"symbol": row["symbol"], "timeframe": "day",
+            **PT.chart_payload(d, row.get("base"), row.get("breakout"), bars)}
 
 
 # ── the automatic daily scan ──
@@ -181,5 +199,5 @@ def tick(db, user_id: int, broker) -> Optional[str]:
         return None
     _last_auto[user_id] = today
     logger.info("hunter: starting the daily scan for user %s", user_id)
-    start_scan(broker, user_id, float(cfg.get("min_rs") or SCAN.MIN_RS))
+    start_scan(broker, user_id, float(cfg.get("min_rs") or SCAN.MIN_RS), cfg=cfg)
     return "started"

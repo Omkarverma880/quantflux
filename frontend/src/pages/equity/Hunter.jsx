@@ -4,6 +4,8 @@ import { api } from '../../api';
 import Board from '../../components/hunter/Board';
 import StockGrid from '../../components/hunter/StockGrid';
 import Evidence from '../../components/hunter/Evidence';
+import Tuning from '../../components/hunter/Tuning';
+import StockPage from '../../components/hunter/StockPage';
 import { Note, Section } from '../../components/hunter/ui';
 
 /**
@@ -22,6 +24,7 @@ export default function Hunter() {
   const [data, setData] = useState(null);
   const [filters, setFilters] = useState({ stage: 'FORMING', industry: '', q: '', sort: 'rs_rating', screens: [], combine: 'any' });
   const [tab, setTab] = useState('board');
+  const [openSymbol, setOpenSymbol] = useState(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
   const [err, setErr] = useState('');
@@ -91,6 +94,8 @@ export default function Hunter() {
             <Radio className="w-3 h-3" />{meta.connected ? 'Zerodha connected' : 'Zerodha not connected'}
           </span>
           {scanned && <span className="text-[11px] text-gray-500">Scanned · {scanned}</span>}
+          <Tuning config={meta.config} busy={busy}
+            onSaved={(cfg) => setMeta({ ...meta, config: cfg })} onRescan={scan} />
           <button onClick={scan} disabled={busy || !meta.connected}
             className="btn-primary !py-1.5 !px-3 text-[12.5px] flex items-center gap-1.5">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
@@ -128,6 +133,14 @@ export default function Hunter() {
         </Section>
       ) : (
         <>
+          {data?.meta && (
+            <div className="text-[11.5px] text-gray-500">
+              Scanned {data.meta.scanned} stocks{data.meta.skipped ? `, skipped ${data.meta.skipped}` : ''} ·
+              {' '}{data.meta.universe?.mode === 'nse_liquid' ? 'every liquid NSE stock' : 'NIFTY 500'} ·
+              {' '}RS floor {data.meta.min_rs} · base up to {data.meta.params?.base_max_depth}% deep ·
+              {' '}within {data.meta.params?.near_pivot_pct}% of the ceiling — widen any of these in Tuning.
+            </div>
+          )}
           <Board board={board} changes={data?.changes || []} stage={filters.screens.length ? '' : filters.stage}
             setStage={(s) => setFilters({ ...filters, stage: s, screens: [] })} headline={headline} />
 
@@ -164,13 +177,15 @@ export default function Hunter() {
             </div>
           </div>
           <StockGrid rows={data?.rows || []} total={data?.total || 0} industries={data?.industries || []}
-            filters={filters} setFilters={setFilters}
+            filters={filters} setFilters={setFilters} onOpen={setOpenSymbol}
             blurb={filters.screens.length === 1 ? (meta.screens[filters.screens[0]] || {}).blurb : filters.screens.length ? null : BLURB[filters.stage]}
             stageLabel={filters.screens.length
               ? `${filters.screens.map((k) => (meta.screens[k] || {}).name).join(filters.combine === 'all' ? ' + ' : ' or ')} — the names`
               : `${label} — the names`} />
         </>
       )}
+
+      <StockPage symbol={openSymbol} onClose={() => setOpenSymbol(null)} />
 
       <Section title="How these are found" right={
         <button onClick={() => setShowHow(!showHow)} className="text-[11.5px] text-gray-400 hover:text-gray-200 flex items-center gap-1">

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Check, Minus, Search, ChevronDown, ChevronRight, Download, Copy, LayoutGrid, List as ListIcon, Eye,
+  Check, Minus, Search, ChevronDown, ChevronRight, Download, Copy, LayoutGrid, List as ListIcon, Eye, LineChart,
 } from 'lucide-react';
 import { api } from '../../api';
 import CandleChart from './CandleChart';
@@ -34,7 +34,7 @@ function Tag({ children, tone: t = 'gray' }) {
   return <span className={`px-1.5 py-px rounded border text-[10px] font-semibold ${cls}`}>{children}</span>;
 }
 
-function Card({ r, measures }) {
+function Card({ r, measures, onOpen }) {
   const [chart, setChart] = useState(null);
   const [open, setOpen] = useState(false);
   const st = STAGE_STYLE[r.stage] || STAGE_STYLE.PLAYED_OUT;
@@ -73,6 +73,10 @@ function Card({ r, measures }) {
           </div>
         </div>
         <div className="text-right shrink-0">
+          <button onClick={() => onOpen?.(r.symbol)}
+            className="text-[11px] text-brand-400 hover:text-brand-300 flex items-center gap-1 ml-auto mb-0.5">
+            <LineChart className="w-3 h-3" />Tech chart ›
+          </button>
           <div className="text-[15px] font-semibold mono text-gray-100">{RS_(r.close)}</div>
           <div className={`text-[11px] mono ${tone(day.change_pct)}`}>{PCT(day.change_pct)}</div>
         </div>
@@ -123,7 +127,7 @@ function Card({ r, measures }) {
   );
 }
 
-function ListTable({ rows, measures }) {
+function ListTable({ rows, measures, onOpen }) {
   const cols = MEASURES.filter(([k]) => measures.includes(k));
   return (
     <div className="overflow-x-auto max-h-[720px] overflow-y-auto">
@@ -139,7 +143,8 @@ function ListTable({ rows, measures }) {
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.symbol} className="border-b border-surface-3/40 hover:bg-surface-2/60">
+            <tr key={r.symbol} onClick={() => onOpen?.(r.symbol)}
+              className="border-b border-surface-3/40 hover:bg-surface-2/60 cursor-pointer">
               <td className="px-2 py-1.5">
                 <div className="font-semibold text-gray-100">{r.symbol}</div>
                 <div className="text-[10px] text-gray-500 truncate max-w-[220px]">{r.name}</div>
@@ -156,7 +161,7 @@ function ListTable({ rows, measures }) {
   );
 }
 
-export default function StockGrid({ rows = [], total = 0, industries = [], filters, setFilters, stageLabel, blurb }) {
+export default function StockGrid({ rows = [], total = 0, industries = [], filters, setFilters, stageLabel, blurb, onOpen }) {
   const [view, setView] = useState(() => localStorage.getItem('hunter_view') || 'cards');
   const [measures, setMeasures] = useState(() => {
     try { return JSON.parse(localStorage.getItem('hunter_measures')) || DEFAULT_MEASURES; } catch { return DEFAULT_MEASURES; }
@@ -249,11 +254,11 @@ export default function StockGrid({ rows = [], total = 0, industries = [], filte
       {!rows.length ? (
         <div className="py-10 text-center text-[12.5px] text-gray-500">Nothing in this stage right now.</div>
       ) : view === 'list' ? (
-        <ListTable rows={rows} measures={measures} />
+        <ListTable rows={rows} measures={measures} onOpen={onOpen} />
       ) : (
         <>
           <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
-            {rows.slice(0, shown).map((r) => <Card key={r.symbol} r={r} measures={measures} />)}
+            {rows.slice(0, shown).map((r) => <Card key={r.symbol} r={r} measures={measures} onOpen={onOpen} />)}
           </div>
           {rows.length > shown && (
             <div className="text-center mt-3">

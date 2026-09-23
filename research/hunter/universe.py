@@ -85,12 +85,40 @@ def load(refresh: bool = False) -> dict:
                 "note": f"NSE list unreachable ({type(exc).__name__}) and nothing cached yet"}
 
 
-def with_tokens(broker, refresh: bool = False) -> tuple[list[dict], list[str]]:
-    """Each constituent with its Zerodha token; names that cannot be resolved are reported."""
+SKIP_WORDS = ("ETF", "BEES", "LIQUID", "GOLD", "SILVER", "NIFTY", "SENSEX", "GSEC", "SDL", "IVZ")
+
+
+def all_nse(broker) -> list[dict]:
+    """Every ordinary NSE equity from the instrument dump — funds, ETFs and bonds left out.
+
+    The turnover floor in the scan is what actually decides "liquid"; this only gathers names.
+    """
+    out = []
+    for i in broker.get_instruments("NSE") or []:
+        sym = (i.get("tradingsymbol") or "").upper()
+        if i.get("instrument_type") != "EQ" or i.get("segment") != "NSE" or not sym:
+            continue
+        if any(w in sym for w in SKIP_WORDS) or "-" in sym:
+            continue
+        out.append({"symbol": sym, "name": i.get("name") or sym, "industry": "Unclassified",
+                    "token": int(i["instrument_token"]), "exchange": "NSE"})
+    return out
+
+
+def with_tokens(broker, refresh: bool = False, mode: str = "nifty500") -> tuple[list[dict], list[str]]:
+    """Each stock with its Zerodha token; names that cannot be resolved are reported."""
     from research.pmvwap_straddle.universe import Universe
     u = Universe(broker)
+    index = {s["symbol"]: s for s in load(refresh).get("stocks", [])}
+    if mode == "nse_liquid":
+        rows = []
+        for s in all_nse(broker):
+            known = index.get(s["symbol"])
+            rows.append({**s, "industry": (known or {}).get("industry", "Unclassified"),
+                         "name": (known or {}).get("name") or s["name"]})
+        return rows, []
     out, missing = [], []
-    for s in load(refresh).get("stocks", []):
+    for s in index.values():
         token, exch = u.resolve_equity_token(s["symbol"])
         if token:
             out.append({**s, "token": int(token), "exchange": exch or "NSE"})

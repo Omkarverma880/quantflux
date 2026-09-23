@@ -32,14 +32,14 @@ STAGE_BLURB = {
     "CLIMBING": "broke out earlier, still above its stop",
     "PLAYED_OUT": "broke out and has since lost its stop",
 }
-MIN_RS = 70.0                   # a forming base is only interesting in a leading stock
+MIN_RS = 60.0                   # a forming base is only interesting in a leading stock
 
 
 def run(broker, progress: Optional[Callable[[str], None]] = None, refresh_universe: bool = False,
-        min_rs: float = MIN_RS, params: PT.Params = PT.P) -> dict:
+        min_rs: float = MIN_RS, params: PT.Params = PT.P, universe: str = "nifty500") -> dict:
     say = progress or (lambda _m: None)
-    say("loading the NIFTY 500 list")
-    stocks, missing = UNIV.with_tokens(broker, refresh_universe)
+    say("every liquid NSE stock" if universe == "nse_liquid" else "loading the NIFTY 500 list")
+    stocks, missing = UNIV.with_tokens(broker, refresh_universe, universe)
     meta_u = UNIV.load()
     if not stocks:
         return {"status": "error", "message": meta_u.get("note") or "could not build the universe"}
@@ -86,7 +86,9 @@ def run(broker, progress: Optional[Callable[[str], None]] = None, refresh_univer
     changes = diff(rows, prev_rows)
     meta = {
         "scan_date": scan_date, "ran_at": pd.Timestamp.now().isoformat(timespec="seconds"),
-        "universe": {"source": meta_u.get("source"), "fetched": meta_u.get("fetched"),
+        "universe": {"mode": universe,
+                     "source": "every NSE equity (instrument dump)" if universe == "nse_liquid" else meta_u.get("source"),
+                     "fetched": meta_u.get("fetched"),
                      "count": len(stocks), "note": meta_u.get("note"), "unresolved": missing[:20]},
         "scanned": len(rows), "skipped": len(skipped),
         "skipped_detail": skipped[:20], "min_rs": min_rs, "params": params.as_dict(),

@@ -32,11 +32,12 @@ class Params:
     near_high_pct: float = 25.0     # within this % of the 52-week high
     above_low_pct: float = 30.0     # at least this % above the 52-week low
     # base
-    base_min: int = 12              # sessions
+    base_min: int = 10              # sessions
     base_max: int = 60
-    base_max_depth: float = 25.0    # % from base high to base low
-    dry_up: float = 0.9             # last 10 days' volume vs the base's own average
-    near_pivot_pct: float = 8.0     # how close to the ceiling counts as "ready"
+    base_max_depth: float = 35.0    # % from base high to base low
+    dry_up: float = 1.0             # last 10 days' volume vs the base's own average
+    near_pivot_pct: float = 12.0    # how close to the ceiling counts as "ready"
+    strict_base: bool = False       # True = volatility must contract AND volume must dry up
     # breakout
     pivot_lookback: int = 40        # the ceiling is the highest high of this many sessions
     breakout_volume: float = 1.3    # × the 50-day average volume on the breakout day
@@ -150,7 +151,8 @@ def find_base(d: pd.DataFrame, p: Params = P) -> dict | None:
         contracting = float(late["atr14"].mean()) < float(early["atr14"].mean())
         dry = float(w["volume"].tail(10).mean()) < p.dry_up * float(w["volume"].mean())
         close = float(d["close"].iloc[-1])
-        if not (contracting and dry):
+        # a resting stock shows at least one of the two; strict mode asks for both
+        if not ((contracting and dry) if p.strict_base else (contracting or dry)):
             continue
         best = {"length": L, "pivot": hi, "low": lo, "depth_pct": round(depth, 1),
                 "from_pivot_pct": round((close / hi - 1) * 100, 2),
@@ -169,12 +171,14 @@ def last_breakout(d: pd.DataFrame, p: Params = P) -> dict | None:
         return None
     i = int(idx[-1])
     days_since = len(d) - 1 - i
-    if days_since > 250:
+    if days_since > p.climb_days:
         return None
     after = d.iloc[i:]
     entry = float(c.iloc[i])
     stop = entry * (1 - p.stop_pct / 100)
-    broke_stop = bool((after["close"] < stop).any() or (after["close"] < after["sma50"]).any())
+    under = (after["close"] < after["sma50"]).to_numpy()
+    two_under = bool(np.any(under[:-1] & under[1:])) if len(under) > 1 else False
+    broke_stop = bool((after["close"] < stop).any() or two_under)
     peak = float(after["high"].max())
     now = float(c.iloc[-1])
     return {
@@ -280,6 +284,16 @@ def breakout_history(d: pd.DataFrame, p: Params = P) -> dict:
     return out
 
 
+def to_weekly(d: pd.DataFrame) -> pd.DataFrame:
+    """Daily bars folded into weeks, for the longer view on the stock page."""
+    w = d.copy()
+    w["date"] = pd.to_datetime(w["date"])
+    g = w.resample("W-FRI", on="date").agg(open=("open", "first"), high=("high", "max"),
+                                           low=("low", "min"), close=("close", "last"),
+                                           volume=("volume", "sum")).dropna().reset_index()
+    return indicators(g)
+
+
 def chart_payload(d: pd.DataFrame, base: dict | None, bo: dict | None, bars: int = 140,
                   p: Params = P) -> dict:
     """The last few months of candles, plus where the ceiling, the base and past breakouts sit."""
@@ -287,11 +301,12 @@ def chart_payload(d: pd.DataFrame, base: dict | None, bo: dict | None, bars: int
     hist = breakout_history(d, p)
     start = len(d) - len(w)
     flags = [{"i": e["i"] - start, "date": e["date"]} for e in hist["events"] if e["i"] - start >= 0]
+    ma = {k: [None if pd.isna(x) else round(float(x), 2) for x in w[k]] for k in ("sma50", "sma150", "sma200")}
     out = {
         "candles": [{"d": str(pd.Timestamp(r.date).date()), "o": round(float(r.open), 2),
                      "h": round(float(r.high), 2), "l": round(float(r.low), 2),
                      "c": round(float(r.close), 2), "v": float(r.volume)} for r in w.itertuples()],
-        "sma50": [None if pd.isna(x) else round(float(x), 2) for x in w["sma50"]],
+        **ma, "history": hist["events"], "first": hist.get("first"),
         "flags": flags, "pivot": None, "base_from": None, "base_to": None,
     }
     if base:

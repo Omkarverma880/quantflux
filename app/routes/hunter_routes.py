@@ -81,6 +81,13 @@ class ScanReq(BaseModel):
 class ConfigReq(BaseModel):
     auto_scan: bool | None = None
     min_rs: int | None = None
+    universe: str | None = None
+    base_max_depth: float | None = None
+    near_pivot_pct: float | None = None
+    base_min: int | None = None
+    base_max: int | None = None
+    strict_base: bool | None = None
+    min_turnover_cr: float | None = None
 
 
 @router.get("/meta")
@@ -119,8 +126,8 @@ def stock(symbol: str, user_id: int = Depends(login_required)):
 
 @router.get("/chart/{symbol}")
 @safe("chart")
-def chart(symbol: str, bars: int = 140, user_id: int = Depends(login_required)):
-    c = SV.chart(symbol, bars)
+def chart(symbol: str, bars: int = 140, timeframe: str = "day", user_id: int = Depends(login_required)):
+    c = SV.chart(symbol, bars, timeframe)
     return {"status": "ok", "chart": c} if c else {"status": "error", "message": "no cached candles for that stock"}
 
 
@@ -134,8 +141,8 @@ def start(req: ScanReq, user_id: int = Depends(login_required), db: Session = De
     if SV.scanning():
         return {"status": "error", "message": "a scan is already running"}
     cfg = SV.load_config(db, user_id)
-    job = SV.start_scan(broker, user_id, float(req.min_rs if req.min_rs is not None else cfg.get("min_rs", 70)),
-                        req.refresh_universe)
+    job = SV.start_scan(broker, user_id, float(req.min_rs if req.min_rs is not None else cfg.get("min_rs", 60)),
+                        req.refresh_universe, cfg)
     return {"status": "ok", "job": {k: v for k, v in job.items() if k != "user_id"}}
 
 

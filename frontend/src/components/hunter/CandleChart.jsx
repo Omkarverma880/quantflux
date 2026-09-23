@@ -8,7 +8,7 @@ import React from 'react';
 const UP = '#10b981';
 const DOWN = '#ef4444';
 
-export default function CandleChart({ chart, height = 190 }) {
+export default function CandleChart({ chart, height = 190, showMas = false }) {
   const c = chart?.candles || [];
   if (c.length < 5) {
     return <div className="h-[190px] flex items-center justify-center text-[11.5px] text-gray-600">
@@ -31,8 +31,11 @@ export default function CandleChart({ chart, height = 190 }) {
 
   const ticks = [lo, (lo + hi) / 2, hi].map((v) => ({ v, y: y(v) }));
   const dateAt = [0, Math.floor(c.length / 2), c.length - 1];
-  const sma = (chart.sma50 || []).map((v, i) => (v == null ? null : `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`))
-    .filter(Boolean).join(' ').replace(/L/, 'M');
+  const line = (key) => (chart[key] || [])
+    .map((v, i) => (v == null ? null : `${x(i).toFixed(1)},${y(v).toFixed(1)}`))
+    .filter(Boolean).map((pt, i) => `${i ? 'L' : 'M'}${pt}`).join(' ');
+  const sma = line('sma50');
+  const mas = showMas ? [['sma150', '#f59e0b'], ['sma200', '#a78bfa']] : [];
 
   return (
     <svg viewBox={`0 0 ${W} ${height}`} className="w-full" style={{ height }} preserveAspectRatio="none">
@@ -71,7 +74,11 @@ export default function CandleChart({ chart, height = 190 }) {
         </>
       )}
       {/* the 50-day average */}
-      {sma && <path d={sma} fill="none" stroke="#60a5fa" strokeWidth="1" opacity="0.5" />}
+      {sma && <path d={sma} fill="none" stroke="#60a5fa" strokeWidth="1" opacity="0.6" />}
+      {mas.map(([k, col]) => {
+        const d2 = line(k);
+        return d2 ? <path key={k} d={d2} fill="none" stroke={col} strokeWidth="1" opacity="0.55" /> : null;
+      })}
       {/* candles */}
       {c.map((k, i) => {
         const up = k.c >= k.o;
