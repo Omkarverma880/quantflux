@@ -657,10 +657,15 @@ export const api = {
   meImportFile: (file, dry = 1) => { const fd = new FormData(); fd.append('file', file); return requestUpload(`/equity-strategy/my-workspace/import/file?dry_run=${dry ? 1 : 0}`, fd); },
   // Equity order from the workspace — the same desk (and risk fence) as Manual Trading
   equityOrder: (body) => request('/manual/order', { method: 'POST', body: JSON.stringify(body) }),
-  wsMeta: () => request('/equity-strategy/workspace/meta'),
-  wsScan: (body) => request('/equity-strategy/workspace/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
-  wsConfig: () => request('/equity-strategy/workspace/config'),
-  wsConfigSave: (partial) => request('/equity-strategy/workspace/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
+  huMeta: () => request('/equity-strategy/hunter/meta'),
+  huBoard: (p) => request(`/equity-strategy/hunter/board?${new URLSearchParams(p || {})}`),
+  huStock: (symbol) => request(`/equity-strategy/hunter/stock/${encodeURIComponent(symbol)}`),
+  huChart: (symbol, bars = 140) => request(`/equity-strategy/hunter/chart/${encodeURIComponent(symbol)}?bars=${bars}`),
+  huScan: (body) => request('/equity-strategy/hunter/scan', { method: 'POST', body: JSON.stringify(body || {}) }),
+  huJob: (id) => request(`/equity-strategy/hunter/job/${id}`),
+  huEvidence: () => request('/equity-strategy/hunter/evidence'),
+  huBuildEvidence: (years = 5) => request(`/equity-strategy/hunter/evidence?years=${years}`, { method: 'POST' }),
+  huConfig: (partial) => request('/equity-strategy/hunter/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
 
   // Wyckoff Method desk — equity · index options · equity F&O (read-only)
   wyMeta: () => request('/wyckoff/meta'),

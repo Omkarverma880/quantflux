@@ -61,7 +61,7 @@ const NAV = [
     label: 'Equity Strategies', icon: Wallet,
     children: [
       { to: '/equity-strategy/my-workspace', label: '★ My Equity Workspace' },
-      { to: '/equity-strategy/workspace', label: '★ Strategy Workspace' },
+      { to: '/equity-strategy/hunter', label: '★ Hunter' },
       { to: '/equity-strategy/wyckoff', label: '★ Wyckoff Method' },
       { to: '/equity-strategy/simulation', label: '★ Chart Simulation' },
       { to: '/equity-strategy/pmvwap-holding', label: '1. Prev-Month VWAP Holding' },

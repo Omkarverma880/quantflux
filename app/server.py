@@ -40,7 +40,7 @@ from app.routes.equity_strategy_routes import router as equity_strategy_router
 from app.routes.fourth_candle_routes import router as fourth_candle_router
 from app.routes.fourth_candle_equity_routes import router as fourth_candle_equity_router
 from app.routes.hammer_breakout_routes import router as hammer_breakout_router
-from app.routes.equity_workspace_routes import router as equity_workspace_router
+from app.routes.hunter_routes import router as hunter_router
 from app.routes.my_equity_routes import router as my_equity_router
 from app.routes.wyckoff_routes import router as wyckoff_router
 from app.routes.simulation_routes import router as simulation_router
@@ -315,6 +315,15 @@ def _run_strategies_for_user(uid: int):
             except Exception as exc:
                 print(f"[BG] Flux Lab paper error user {uid}: {exc}", flush=True)
 
+        # Hunter: one automatic scan of the NIFTY 500 after the close, so the stage board is
+        # ready in the evening. Rate-limited inside (once a day) and a screener only — no orders.
+        if authenticated:
+            try:
+                from research.hunter import service as _hunter
+                _hunter.tick(db, uid, broker)
+            except Exception as exc:
+                print(f"[BG] Hunter scan error user {uid}: {exc}", flush=True)
+
         # My Equity Workspace: level / target / stop alerts and the two daily digests.
         # Also warms a few stocks' daily candles so the page itself never waits on Zerodha.
         # Both are rate-limited inside (30s for alerts, 60s for the warmer), so this loop's
@@ -497,7 +506,7 @@ app.include_router(equity_strategy_router, prefix="/api/equity-strategy/pmvwap-h
 app.include_router(fourth_candle_router, prefix="/api/equity-strategy/fourth-candle", tags=["Equity-FourthCandle"])
 app.include_router(fourth_candle_equity_router, prefix="/api/equity-strategy/fourth-candle-cash", tags=["Equity-FourthCandleCash"])
 app.include_router(hammer_breakout_router, prefix="/api/equity-strategy/hammer-breakout", tags=["Equity-HammerBreakout"])
-app.include_router(equity_workspace_router, prefix="/api/equity-strategy/workspace", tags=["Equity-Workspace"])
+app.include_router(hunter_router, prefix="/api/equity-strategy/hunter", tags=["Equity-Hunter"])
 app.include_router(my_equity_router, prefix="/api/equity-strategy/my-workspace", tags=["Equity-MyWorkspace"])
 app.include_router(wyckoff_router, prefix="/api/wyckoff", tags=["Wyckoff"])
 app.include_router(simulation_router, prefix="/api/simulation", tags=["ChartSimulation"])

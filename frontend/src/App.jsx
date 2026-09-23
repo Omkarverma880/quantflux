@@ -44,7 +44,7 @@ import VwapOptions from './pages/index/VwapOptions';
 import FourthCandle from './pages/equity/FourthCandle';
 import FourthCandleEquity from './pages/equity/FourthCandleEquity';
 import HammerBreakout from './pages/equity/HammerBreakout';
-import EquityWorkspace from './pages/equity/EquityWorkspace';
+import Hunter from './pages/equity/Hunter';
 import MyEquityWorkspace from './pages/equity/MyEquityWorkspace';
 import Wyckoff from './pages/equity/Wyckoff';
 import Simulation from './pages/equity/Simulation';
@@ -110,7 +110,8 @@ export default function App() {
           <Route path="equity-strategy/fourth-candle" element={<FourthCandle />} />
           <Route path="equity-strategy/fourth-candle-cash" element={<FourthCandleEquity />} />
           <Route path="equity-strategy/hammer-breakout" element={<HammerBreakout />} />
-          <Route path="equity-strategy/workspace" element={<EquityWorkspace />} />
+          <Route path="equity-strategy/hunter" element={<Hunter />} />
+          <Route path="equity-strategy/workspace" element={<Navigate to="/equity-strategy/hunter" replace />} />
           <Route path="equity-strategy/my-workspace" element={<MyEquityWorkspace />} />
           <Route path="equity-strategy/wyckoff" element={<Wyckoff />} />
           <Route path="equity-strategy/simulation" element={<Simulation />} />
