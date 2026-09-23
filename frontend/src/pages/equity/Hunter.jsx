@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Crosshair, Loader2, RefreshCw, BookOpen, Radio, LayoutGrid, BarChart3, Layers } from 'lucide-react';
+import { Crosshair, Loader2, RefreshCw, BookOpen, Radio, LayoutGrid, BarChart3, Layers, Table2 } from 'lucide-react';
 import { api } from '../../api';
 import Board from '../../components/hunter/Board';
 import StockGrid from '../../components/hunter/StockGrid';
 import Evidence from '../../components/hunter/Evidence';
+import Market from '../../components/hunter/Market';
 import Tuning from '../../components/hunter/Tuning';
 import StockPage from '../../components/hunter/StockPage';
 import { Note, Section } from '../../components/hunter/ui';
@@ -110,7 +111,7 @@ export default function Hunter() {
       {!meta.connected && <Note tone="warn">Connect Zerodha to scan — the Hunter needs daily candles for the universe.</Note>}
 
       <div className="flex gap-1 border-b border-surface-3 overflow-x-auto">
-        {[['board', 'The board', LayoutGrid], ['evidence', 'Evidence', BarChart3]].map(([id, label, Icon]) => (
+        {[['board', 'The board', LayoutGrid], ['market', 'Market', Table2], ['evidence', 'Evidence', BarChart3]].map(([id, label, Icon]) => (
           <button key={id} onClick={() => setTab(id)}
             className={`flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold border-b-2 -mb-px transition whitespace-nowrap ${tab === id
               ? 'border-brand-500 text-brand-400' : 'border-transparent text-gray-400 hover:text-gray-200'}`}>
@@ -119,7 +120,7 @@ export default function Hunter() {
         ))}
       </div>
 
-      {tab === 'evidence' ? <Evidence /> : data?.empty ? (
+      {tab === 'market' ? <Market onOpen={setOpenSymbol} /> : tab === 'evidence' ? <Evidence /> : data?.empty ? (
         <Section title="No scan yet">
           <div className="py-6 text-center">
             <div className="text-[13px] text-gray-300 mb-2">Nothing has been scanned yet.</div>

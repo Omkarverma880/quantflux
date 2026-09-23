@@ -659,6 +659,7 @@ export const api = {
   equityOrder: (body) => request('/manual/order', { method: 'POST', body: JSON.stringify(body) }),
   huMeta: () => request('/equity-strategy/hunter/meta'),
   huBoard: (p) => request(`/equity-strategy/hunter/board?${new URLSearchParams(p || {})}`),
+  huMarket: (p) => request(`/equity-strategy/hunter/market?${new URLSearchParams(p || {})}`),
   huStock: (symbol) => request(`/equity-strategy/hunter/stock/${encodeURIComponent(symbol)}`),
   huChart: (symbol, bars = 140, timeframe = 'day') => request(`/equity-strategy/hunter/chart/${encodeURIComponent(symbol)}?bars=${bars}&timeframe=${timeframe}`),
   huScan: (body) => request('/equity-strategy/hunter/scan', { method: 'POST', body: JSON.stringify(body || {}) }),

@@ -32,7 +32,7 @@ STAGE_BLURB = {
     "CLIMBING": "broke out earlier, still above its stop",
     "PLAYED_OUT": "broke out and has since lost its stop",
 }
-MIN_RS = 60.0                   # a forming base is only interesting in a leading stock
+MIN_RS = 65.0                   # a forming base is only interesting in a leading stock
 
 
 def run(broker, progress: Optional[Callable[[str], None]] = None, refresh_universe: bool = False,

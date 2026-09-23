@@ -167,12 +167,12 @@ export default function StockGrid({ rows = [], total = 0, industries = [], filte
     try { return JSON.parse(localStorage.getItem('hunter_measures')) || DEFAULT_MEASURES; } catch { return DEFAULT_MEASURES; }
   });
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [shown, setShown] = useState(12);
+  const [shown, setShown] = useState(4);   // two rows of two, then ask for more
   const f = filters;
 
   useEffect(() => { localStorage.setItem('hunter_view', view); }, [view]);
   useEffect(() => { localStorage.setItem('hunter_measures', JSON.stringify(measures)); }, [measures]);
-  useEffect(() => { setShown(12); }, [filters]);
+  useEffect(() => { setShown(4); }, [filters]);
 
   const csv = () => {
     const cols = MEASURES.filter(([k]) => measures.includes(k));
@@ -257,13 +257,13 @@ export default function StockGrid({ rows = [], total = 0, industries = [], filte
         <ListTable rows={rows} measures={measures} onOpen={onOpen} />
       ) : (
         <>
-          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
+          <div className="grid lg:grid-cols-2 gap-3">
             {rows.slice(0, shown).map((r) => <Card key={r.symbol} r={r} measures={measures} onOpen={onOpen} />)}
           </div>
           {rows.length > shown && (
             <div className="text-center mt-3">
-              <button onClick={() => setShown(shown + 12)} className="btn-secondary !py-1.5 !px-3 text-[12px]">
-                Show 12 more · {rows.length - shown} left
+              <button onClick={() => setShown(shown + 4)} className="btn-secondary !py-1.5 !px-3 text-[12px]">
+                Show more · {rows.length - shown} left
               </button>
             </div>
           )}

@@ -117,6 +117,14 @@ def board(stage: str = "", industry: str = "", q: str = "", sort: str = "rs_rati
     return SV.latest(stage or None, industry or None, q or None, sort, limit, scan_date or None, picked, combine)
 
 
+@router.get("/market")
+@safe("market")
+def market(q: str = "", industry: str = "", stage: str = "", sort: str = "rs_rating", desc: bool = True,
+           limit: int = 100, offset: int = 0, scan_date: str = "", user_id: int = Depends(login_required)):
+    return SV.market(q or None, industry or None, stage or None, sort, desc, min(limit, 500), offset,
+                     scan_date or None)
+
+
 @router.get("/stock/{symbol}")
 @safe("stock")
 def stock(symbol: str, user_id: int = Depends(login_required)):

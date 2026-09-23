@@ -1,17 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { X, Check, Minus, Loader2, ExternalLink } from 'lucide-react';
 import { api } from '../../api';
-import CandleChart from './CandleChart';
+import ProChart from './ProChart';
 import { MEASURES } from './StockGrid';
 import { Measure, N, N0, PCT, RS_, RsPill, STAGE_STYLE, tone } from './ui';
 
 /**
- * One stock, full size: the chart with its base, ceiling, moving averages and past breakouts, and
- * every measure and check behind the setup. Opened from "Tech chart" on a card.
+ * One stock, in a tile that slides in from the right: the chart with its base, ceiling, moving
+ * averages and past breakouts, and every measure and check behind the setup. The board stays where
+ * it is behind it, so you can open name after name without losing your place.
  */
 const RANGES = [['6 months', 130, 'day'], ['1 year', 250, 'day'], ['2 years', 500, 'day'], ['5 years, weekly', 1250, 'week']];
 
 export default function StockPage({ symbol, onClose }) {
+  const [wide, setWide] = useState(false);
   const [row, setRow] = useState(null);
   const [chart, setChart] = useState(null);
   const [range, setRange] = useState(1);
@@ -36,8 +38,9 @@ export default function StockPage({ symbol, onClose }) {
   const bo = row?.breakout || {};
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 p-2 sm:p-6 overflow-y-auto" onClick={onClose}>
-      <div className="max-w-[1180px] mx-auto card !p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 bg-black/50" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()}
+        className={`absolute right-0 top-0 h-full bg-surface-1 border-l border-surface-3 shadow-2xl overflow-y-auto p-4 space-y-3 animate-[slideIn_.18s_ease-out] ${wide ? 'w-full' : 'w-full sm:w-[640px] lg:w-[820px]'}`}>
         {!row ? (
           <div className="py-16 text-center text-gray-500 text-sm">
             {err ? <span className="text-red-400">{err}</span> : <><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Loading {symbol}…</>}
@@ -78,20 +81,14 @@ export default function StockPage({ symbol, onClose }) {
                   {label}
                 </button>
               ))}
-              <div className="ml-auto flex items-center gap-3 text-[10.5px] text-gray-500">
-                <span className="flex items-center gap-1"><span className="w-3 h-px bg-[#60a5fa] inline-block" />50-day</span>
-                <span className="flex items-center gap-1"><span className="w-3 h-px bg-[#f59e0b] inline-block" />150-day</span>
-                <span className="flex items-center gap-1"><span className="w-3 h-px bg-[#a78bfa] inline-block" />200-day</span>
-                <span className="flex items-center gap-1"><span className="w-3 h-px bg-[#10b981] inline-block" style={{ borderTop: '1px dashed' }} />ceiling</span>
-              </div>
             </div>
 
             <div className="rounded-xl border border-surface-3 bg-surface-2/20 p-2">
-              {chart ? <CandleChart chart={chart} height={420} showMas /> :
-                <div className="h-[420px] flex items-center justify-center text-[12px] text-gray-600">loading the chart…</div>}
+              {chart ? <ProChart chart={chart} height={wide ? 560 : 380} fullscreen={wide} onFullscreen={() => setWide(!wide)} /> :
+                <div className="h-[380px] flex items-center justify-center text-[12px] text-gray-600">loading the chart…</div>}
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
               {MEASURES.map(([k, label, tip, fn]) => (
                 <div key={k} title={tip} className="cursor-help">
                   <Measure label={label} value={fn(row)} />
@@ -99,7 +96,7 @@ export default function StockPage({ symbol, onClose }) {
               ))}
             </div>
 
-            <div className="grid lg:grid-cols-2 gap-3">
+            <div className="grid gap-3">
               <div className="rounded-xl border border-surface-3 p-3">
                 <div className="text-[11px] uppercase tracking-wider text-gray-500 mb-1.5">Why it qualifies</div>
                 {(row.trend_checks || []).map((c, i) => (

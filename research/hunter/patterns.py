@@ -29,15 +29,15 @@ MIN_BARS = 220                      # a year of history, so the 200-day average 
 @dataclass(frozen=True)
 class Params:
     # trend
-    near_high_pct: float = 25.0     # within this % of the 52-week high
+    near_high_pct: float = 30.0     # within this % of the 52-week high
     above_low_pct: float = 30.0     # at least this % above the 52-week low
     # base
     base_min: int = 10              # sessions
     base_max: int = 60
     base_max_depth: float = 35.0    # % from base high to base low
     dry_up: float = 1.0             # last 10 days' volume vs the base's own average
-    near_pivot_pct: float = 12.0    # how close to the ceiling counts as "ready"
-    strict_base: bool = False       # True = volatility must contract AND volume must dry up
+    near_pivot_pct: float = 20.0    # how close to the ceiling counts as "ready"
+    strict_base: bool = False       # True = require contraction AND dry-up; off = both are just measures
     # breakout
     pivot_lookback: int = 40        # the ceiling is the highest high of this many sessions
     breakout_volume: float = 1.3    # × the 50-day average volume on the breakout day
@@ -151,8 +151,8 @@ def find_base(d: pd.DataFrame, p: Params = P) -> dict | None:
         contracting = float(late["atr14"].mean()) < float(early["atr14"].mean())
         dry = float(w["volume"].tail(10).mean()) < p.dry_up * float(w["volume"].mean())
         close = float(d["close"].iloc[-1])
-        # a resting stock shows at least one of the two; strict mode asks for both
-        if not ((contracting and dry) if p.strict_base else (contracting or dry)):
+        # tightening and dry-up are reported on the card; only strict mode makes them gates
+        if p.strict_base and not (contracting and dry):
             continue
         best = {"length": L, "pivot": hi, "low": lo, "depth_pct": round(depth, 1),
                 "from_pivot_pct": round((close / hi - 1) * 100, 2),

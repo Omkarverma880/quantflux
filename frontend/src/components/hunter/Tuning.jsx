@@ -42,10 +42,10 @@ export default function Tuning({ config, onSaved, onRescan, busy }) {
         <div className="absolute right-0 top-[130%] z-30 w-[340px] card !p-3 space-y-2.5">
           <div>
             <div className="text-[10px] uppercase tracking-wider text-gray-500">Universe</div>
-            <select value={c.universe || 'nifty500'} onChange={(e) => setC({ ...c, universe: e.target.value })}
+            <select value={c.universe || 'nse_liquid'} onChange={(e) => setC({ ...c, universe: e.target.value })}
               className="input-field !py-1.5 w-full text-[12px] mt-0.5">
-              <option value="nifty500">NIFTY 500 — about 3 minutes a scan</option>
               <option value="nse_liquid">Every liquid NSE stock — first scan 15–20 minutes</option>
+              <option value="nifty500">NIFTY 500 only — about 3 minutes a scan</option>
             </select>
             <div className="text-[10.5px] text-gray-500 mt-0.5">
               The wider list is where most base setups are: smaller names build them more often.

@@ -22,9 +22,9 @@ from research.hunter import store as STORE
 logger = get_logger("research.hunter.service")
 
 CONFIG_NAME = "hunter"
-DEFAULTS = {"auto_scan": True, "min_rs": 60, "scan_after_min": 16 * 60,   # 16:00 IST
-            "universe": "nifty500",          # or "nse_liquid" — every ordinary NSE equity
-            "base_max_depth": 35.0, "near_pivot_pct": 12.0, "base_min": 10, "base_max": 60,
+DEFAULTS = {"auto_scan": True, "min_rs": 65, "scan_after_min": 16 * 60,   # 16:00 IST
+            "universe": "nse_liquid",        # every ordinary NSE equity; "nifty500" for the index only
+            "base_max_depth": 35.0, "near_pivot_pct": 20.0, "base_min": 10, "base_max": 60,
             "strict_base": False, "min_turnover_cr": 2.0}
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
@@ -155,6 +155,55 @@ def latest(stage: Optional[str] = None, industry: Optional[str] = None, q: Optio
             "industries": sorted({(r.get("industry") or "Unclassified") for r in rows if r.get("stage") != "NONE"}),
             "rows": shown[:limit], "total": len(shown), "meta": {k: v for k, v in meta.items() if k != "changes"},
             "dates": STORE.dates()[-30:]}
+
+
+MARKET_COLS = ("symbol", "name", "industry", "stage", "close", "rs_rating", "from_52w_high_pct",
+               "above_50dma_pct", "atr_pct", "turnover_cr", "volume_x", "up_down_volume",
+               "blue_sky", "screen_hits", "bases_this_year")
+
+
+def market(q: Optional[str] = None, industry: Optional[str] = None, stage: Optional[str] = None,
+           sort: str = "rs_rating", desc: bool = True, limit: int = 100, offset: int = 0,
+           scan_date: Optional[str] = None) -> dict:
+    """Every stock the scan measured, in one table — setup or not.
+
+    This is the whole market as the scan saw it after the close: the same measures as the cards,
+    for names that are merely strong, merely liquid, or nothing in particular.
+    """
+    rows, meta = STORE.load(scan_date)
+    if not rows:
+        return {"status": "ok", "empty": True, "rows": [], "total": 0,
+                "message": "No scan yet — run one to fill the market table."}
+    out = rows
+    if stage:
+        out = [r for r in out if r.get("stage") == stage.upper()]
+    if industry:
+        out = [r for r in out if (r.get("industry") or "Unclassified") == industry]
+    if q:
+        needle = q.strip().upper()
+        out = [r for r in out if needle in r["symbol"] or needle in (r.get("name") or "").upper()]
+
+    def key(r):
+        if sort in ("change", "change_pct"):          # the day's move lives inside the day block
+            return (r.get("day") or {}).get("change_pct")
+        if sort in ("symbol", "name", "industry", "stage"):
+            return (r.get(sort) or "")
+        return r.get(sort)
+    with_val = [r for r in out if key(r) is not None]
+    without = [r for r in out if key(r) is None]
+    with_val.sort(key=key, reverse=bool(desc))
+    ordered = with_val + without
+    trimmed = []
+    for r in ordered[offset:offset + limit]:
+        row = {k: r.get(k) for k in MARKET_COLS}
+        row["change_pct"] = (r.get("day") or {}).get("change_pct")
+        trimmed.append(row)
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r.get("stage") or "NONE"] = counts.get(r.get("stage") or "NONE", 0) + 1
+    return {"status": "ok", "rows": trimmed, "total": len(ordered), "scanned": len(rows),
+            "counts": counts, "scan_date": meta.get("scan_date"),
+            "industries": sorted({(r.get("industry") or "Unclassified") for r in rows})}
 
 
 def one(symbol: str, scan_date: Optional[str] = None) -> Optional[dict]:

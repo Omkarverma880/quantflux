@@ -158,3 +158,10 @@ html.light .bg-brand-600\/15 { background-color: rgb(17 137 252 / 0.12); }
 @media (prefers-reduced-motion: reduce) {
   .row-blink, .dot-blink { animation: none; background-color: rgb(245 158 11 / 0.14); }
 }
+
+
+/* Hunter: the stock tile slides in from the right */
+@keyframes slideIn {
+  from { transform: translateX(18px); opacity: .6; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
