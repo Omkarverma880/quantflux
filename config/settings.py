@@ -12,8 +12,22 @@ load_dotenv(BASE_DIR / ".env")
 
 # ──────────────── Database ────────────────
 _raw_db_url = os.getenv("DATABASE_URL", "postgresql://postgres:1605@localhost:5432/quantflux_db")
-# Railway provides postgres:// but SQLAlchemy 2.0 requires postgresql://
-DATABASE_URL = _raw_db_url.replace("postgres://", "postgresql://", 1) if _raw_db_url.startswith("postgres://") else _raw_db_url
+# Railway provides postgres:// but SQLAlchemy needs postgresql://
+_raw_db_url = _raw_db_url.replace("postgres://", "postgresql://", 1) if _raw_db_url.startswith("postgres://") else _raw_db_url
+
+
+def _with_driver(url: str) -> str:
+    """Name the PostgreSQL driver in the URL instead of relying on SQLAlchemy's default.
+
+    A bare ``postgresql://`` means psycopg2 on SQLAlchemy 2.0 but psycopg (version 3) on 2.1, so
+    an unpinned upgrade silently switches drivers and the container dies at import with
+    "No module named 'psycopg'". We install psycopg2-binary, so we ask for it by name; an explicit
+    ``postgresql+something://`` from the environment is left exactly as it is.
+    """
+    return url.replace("postgresql://", "postgresql+psycopg2://", 1) if url.startswith("postgresql://") else url
+
+
+DATABASE_URL = _with_driver(_raw_db_url)
 
 # ──────────────── Token Storage ────────────────
 TOKEN_DIR = BASE_DIR / "data" / "tokens"
