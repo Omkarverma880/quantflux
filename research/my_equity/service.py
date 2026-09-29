@@ -322,8 +322,8 @@ class MyEquityService:
             return self._index_cache
         try:
             from research.market_store import store as MS
-            df = MS.read("spot", "NIFTY")
-            self._index_cache = df[["timestamp", "close"]] if not df.empty else None
+            df = MS.read("spot", "NIFTY", columns=["timestamp", "close"])   # two columns, not ten
+            self._index_cache = df if not df.empty else None
         except Exception as exc:
             logger.debug("index series unavailable: %s", exc)
             self._index_cache = None

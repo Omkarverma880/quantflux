@@ -140,6 +140,10 @@ def _upsert(db, kind, underlying, year, month, path: Path) -> bool:
                               B.year == year, B.month == month).first())
     if row is not None and row.checksum == checksum:
         return False
+    if _too_soon(row, year, month):
+        logger.debug("market store: %s %s %s-%02d saved recently, leaving the database copy alone",
+                     kind, underlying, year, month)
+        return False
     data = path.read_bytes()
     if row is None:
         row = B(kind=kind, underlying=underlying, year=year, month=month)
@@ -151,6 +155,25 @@ def _upsert(db, kind, underlying, year, month, path: Path) -> bool:
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     return True
+
+
+CURRENT_MONTH_EVERY_H = float(os.environ.get("MARKET_STORE_CURRENT_MONTH_HOURS", "12"))
+
+
+def _too_soon(row, year: int, month: int) -> bool:
+    """True when this is the month still being written to and we saved it very recently.
+
+    Each save rewrites the whole month as one large row. PostgreSQL keeps the previous version
+    until it is vacuumed and writes the new one to its journal, so refreshing intraday data every
+    few minutes can inflate the database far beyond the size of the data. Closed months are
+    written once; the live month is written on a timer, and a wiped container can always re-pull
+    the missing hours from the broker.
+    """
+    now = datetime.now(timezone.utc)
+    if (year, month) != (now.year, now.month) or row is None or row.updated_at is None:
+        return False
+    last = row.updated_at if row.updated_at.tzinfo else row.updated_at.replace(tzinfo=timezone.utc)
+    return (now - last).total_seconds() < CURRENT_MONTH_EVERY_H * 3600
 
 
 def save(records: list[dict]) -> dict:
@@ -316,8 +339,78 @@ def prune_bundled() -> dict:
     return {"ok": True, "removed": removed, "kept_rows": kept, "freed_bytes": freed}
 
 
+def footprint() -> dict:
+    """What is actually using the database volume, biggest first."""
+    from sqlalchemy import text
+    if not enabled():
+        return {"ok": False, "message": "no database configured"}
+    out: dict = {"disk": {}, "database": {}}
+    try:
+        root = MS.ROOT
+        files = list(root.rglob("*.parquet")) if root.exists() else []
+        out["disk"] = {"path": str(root), "month_files": len(files),
+                       "megabytes": round(sum(f.stat().st_size for f in files) / 1e6, 1)}
+        cache = root.parent / "equity_daily"
+        if cache.exists():
+            eq = list(cache.glob("*.parquet"))
+            out["disk"]["equity_cache_files"] = len(eq)
+            out["disk"]["equity_cache_megabytes"] = round(sum(f.stat().st_size for f in eq) / 1e6, 1)
+    except Exception as exc:
+        out["disk"] = {"error": str(exc)[:200]}
+    db = None
+    try:
+        db = _session()
+        out["database"]["total_megabytes"] = round(
+            db.execute(text("SELECT pg_database_size(current_database())")).scalar() / 1e6, 1)
+        rows = db.execute(text("""
+            SELECT relname AS table, pg_total_relation_size(c.oid) AS bytes,
+                   n_live_tup AS live_rows, n_dead_tup AS dead_rows,
+                   COALESCE(last_autovacuum, last_vacuum) AS last_vacuum
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+            WHERE n.nspname = 'public' AND c.relkind = 'r'
+            ORDER BY pg_total_relation_size(c.oid) DESC LIMIT 12""")).mappings().all()
+        out["database"]["tables"] = [
+            {"table": r["table"], "megabytes": round((r["bytes"] or 0) / 1e6, 1),
+             "live_rows": r["live_rows"], "dead_rows": r["dead_rows"],
+             "last_vacuum": str(r["last_vacuum"]) if r["last_vacuum"] else None} for r in rows]
+    except Exception as exc:
+        out["database"]["error"] = str(exc)[:300]
+    finally:
+        if db is not None:
+            db.close()
+    return out
+
+
+def vacuum(full: bool = False, table: str = "market_store_blobs") -> dict:
+    """Reclaim space left by rewritten month blobs.
+
+    ``VACUUM`` returns the space to PostgreSQL for reuse; ``VACUUM FULL`` returns it to the
+    volume but rewrites the table and needs room for a second copy while it runs.
+    """
+    from sqlalchemy import text
+    if not enabled():
+        return {"ok": False, "message": "no database configured"}
+    from core.database import engine
+    sql = f"VACUUM {'FULL ' if full else ''}ANALYZE {table}"
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text(sql))
+        return {"ok": True, "ran": sql}
+    except Exception as exc:
+        return {"ok": False, "ran": sql, "error": str(exc)[:300]}
+
+
 def _cli(argv: list[str]) -> int:
     cmd = argv[1] if len(argv) > 1 else "status"
+    if cmd == "footprint":
+        import json as _json
+        print(_json.dumps(footprint(), indent=2, default=str))
+        return 0
+    if cmd in ("vacuum", "vacuum-full"):
+        print(vacuum(full=cmd == "vacuum-full"))
+        return 0
     from core.database import Base, engine
     from core.models import MarketStoreBlob, MarketStorePartition  # noqa: F401
     Base.metadata.create_all(bind=engine, tables=[MarketStoreBlob.__table__, MarketStorePartition.__table__])

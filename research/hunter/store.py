@@ -46,14 +46,28 @@ def dates() -> list[str]:
     return sorted(p.stem.replace("scan_", "") for p in ROOT.glob("scan_*.parquet"))
 
 
+_CACHE: dict = {}          # one parsed snapshot, keyed by file and mtime
+
+
 def load(d: Optional[str] = None) -> tuple[list[dict], dict]:
-    """A scan by date, or the latest one. Returns ([], {}) when nothing is stored."""
+    """A scan by date, or the latest one. Returns ([], {}) when nothing is stored.
+
+    Kept in memory between calls: every card asking for its chart would otherwise re-read and
+    re-parse the whole snapshot, which is thousands of rows of JSON on a small container.
+    """
     ds = dates()
     if not ds:
         return [], {}
     d = d or ds[-1]
     if d not in ds:
         return [], {}
+    try:
+        stamp = _path(d).stat().st_mtime
+    except OSError:
+        stamp = 0
+    hit = _CACHE.get(d)
+    if hit and hit[0] == stamp:
+        return hit[1], hit[2]
     df = pd.read_parquet(_path(d))
     for col in JSON_COLS:
         if col in df.columns:
@@ -65,7 +79,10 @@ def load(d: Optional[str] = None) -> tuple[list[dict], dict]:
         meta = json.loads((ROOT / f"scan_{d}.json").read_text())
     except Exception:
         meta = {"scan_date": d}
-    return df.to_dict("records"), meta
+    rows = df.to_dict("records")
+    _CACHE.clear()
+    _CACHE[d] = (stamp, rows, meta)
+    return rows, meta
 
 
 def previous(before: str) -> tuple[list[dict], dict]:

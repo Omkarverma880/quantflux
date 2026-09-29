@@ -31,15 +31,50 @@ COST = CostModel(slippage_pts=0.0)       # slippage is applied on the fill price
 GRID = np.arange(9 * 60 + 15, 15 * 60 + 30)
 
 
+_COVER_CACHE: dict = {}
+
+
+def _sessions_of(kind: str, underlying: str = "NIFTY") -> dict:
+    """First date, last date and session count — one month file at a time.
+
+    Reading the whole timestamp column of three years of option data costs over half a gigabyte
+    of memory, and this runs on every page load. Walking the monthly parquet files and keeping
+    only the distinct dates costs a few megabytes.
+    """
+    import pyarrow.parquet as pq
+    base = MS.ROOT / f"kind={kind}" / f"underlying={underlying.upper()}"
+    if not base.exists():
+        return {}
+    days: set = set()
+    for f in sorted(base.rglob("*.parquet")):
+        try:
+            tbl = pq.read_table(f, columns=["timestamp"])
+        except Exception as exc:
+            logger.debug("coverage: %s unreadable (%s)", f.name, exc)
+            continue
+        days.update(pd.to_datetime(tbl.column("timestamp").to_pandas()).dt.date.unique())
+        del tbl
+    if not days:
+        return {}
+    return {"first": str(min(days)), "last": str(max(days)), "sessions": len(days)}
+
+
 def coverage() -> dict:
-    spot = MS.read("spot", "NIFTY", columns=["timestamp"])
-    opts = MS.read("options", "NIFTY", columns=["timestamp"])
+    """What the store holds. Cached until a month file changes, so page loads are free."""
+    base = MS.ROOT
+    try:
+        files = sorted(base.rglob("*.parquet"))
+        stamp = (len(files), max((f.stat().st_mtime for f in files), default=0))
+    except Exception:
+        stamp = (0, 0)
+    if _COVER_CACHE.get("stamp") == stamp:
+        return _COVER_CACHE["value"]
     out = {}
-    for k, df in (("spot", spot), ("options", opts)):
-        if not df.empty:
-            ts = pd.to_datetime(df["timestamp"])
-            out[k] = {"first": str(ts.min().date()), "last": str(ts.max().date()),
-                      "sessions": int(ts.dt.date.nunique())}
+    for kind in ("spot", "options"):
+        got = _sessions_of(kind)
+        if got:
+            out[kind] = got
+    _COVER_CACHE.update(stamp=stamp, value=out)
     return out
 
 

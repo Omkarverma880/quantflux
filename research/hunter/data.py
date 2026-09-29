@@ -22,15 +22,20 @@ CALL_SPACING_S = 0.34          # Zerodha allows ~3 historical calls a second
 MIN_BARS = 220
 
 
-def load_all(broker, stocks: list[dict], progress: Optional[Callable[[str], None]] = None,
-             today: Optional[date] = None) -> tuple[dict, list[dict]]:
-    """{symbol: daily bars} for every stock that has enough history, plus what was skipped."""
+def stream(broker, stocks: list[dict], progress: Optional[Callable[[str], None]] = None,
+           today: Optional[date] = None, skipped: Optional[list] = None):
+    """Yield ``(stock, daily bars)`` one at a time.
+
+    Holding a year of candles for two thousand stocks at once costs hundreds of megabytes on a
+    small container, and the scan only ever needs one stock at a time — so each frame is handed
+    over and then dropped.
+    """
     say = progress or (lambda _m: None)
-    bars, skipped = {}, []
+    skipped = skipped if skipped is not None else []
     n = len(stocks)
     for i, s in enumerate(stocks, 1):
         if i % 25 == 0 or i == n:
-            say(f"{i}/{n} stocks · {len(bars)} loaded")
+            say(f"{i}/{n} stocks")
         t0 = time.time()
         try:
             df = CACHE.daily(broker, s["symbol"], s["token"], s.get("exchange", "NSE"), today=today)
@@ -39,9 +44,10 @@ def load_all(broker, stocks: list[dict], progress: Optional[Callable[[str], None
             continue
         if df is None or df.empty or len(df) < MIN_BARS:
             skipped.append({"symbol": s["symbol"], "reason": f"only {0 if df is None else len(df)} daily bars stored"})
-            continue
-        bars[s["symbol"]] = df
+            df = None
+        else:
+            yield s, df
+        del df
         wait = CALL_SPACING_S - (time.time() - t0)
         if wait > 0:
             time.sleep(wait)
-    return bars, skipped

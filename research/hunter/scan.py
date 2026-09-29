@@ -44,23 +44,21 @@ def run(broker, progress: Optional[Callable[[str], None]] = None, refresh_univer
     if not stocks:
         return {"status": "error", "message": meta_u.get("note") or "could not build the universe"}
     say(f"{len(stocks)} stocks · fetching daily candles")
-    bars, skipped = DATA.load_all(broker, stocks, say)
-
-    say("measuring")
-    rows = []
-    for s in stocks:
-        df = bars.get(s["symbol"])
-        if df is None:
-            continue
+    rows: list[dict] = []
+    skipped: list[dict] = []
+    for s, df in DATA.stream(broker, stocks, say, skipped=skipped):
         try:
             d = PT.indicators(df)
             c = PT.classify(d, params)
+            last = str(pd.Timestamp(d["date"].iloc[-1]).date())
         except Exception as exc:                      # one odd stock can never end the whole scan
             logger.warning("hunter: %s could not be measured: %s", s["symbol"], exc)
             skipped.append({"symbol": s["symbol"], "reason": f"{type(exc).__name__}: {exc}"[:120]})
             continue
+        finally:
+            d = None
         rows.append({**{k: s[k] for k in ("symbol", "name", "industry", "token", "exchange")}, **c,
-                     "date": str(pd.Timestamp(d["date"].iloc[-1]).date())})
+                     "date": last})
 
     # relative strength as a percentile of everything measured today
     raw = pd.Series([r.get("rs_raw") for r in rows], dtype="float64")
