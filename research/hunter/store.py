@@ -19,8 +19,16 @@ from research.market_store import store as MS
 
 logger = get_logger("research.hunter.store")
 
-ROOT = Path(MS.ROOT).parent / "hunter"
-KEEP = 60                       # scans to keep on disk
+def _root() -> Path:
+    try:
+        from config import settings as _s
+        return Path(_s.CACHE_DIR) / "hunter"
+    except Exception:
+        return Path(MS.ROOT).parent / "hunter"
+
+
+ROOT = _root()
+KEEP = 20                       # scans to keep on disk (the board only needs the last two)
 JSON_COLS = ("trend_checks", "base", "breakout", "day", "first_breakout", "screens")
 
 

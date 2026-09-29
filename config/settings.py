@@ -29,6 +29,13 @@ def _with_driver(url: str) -> str:
 
 DATABASE_URL = _with_driver(_raw_db_url)
 
+# ──────────────── Caches (safe to lose) ────────────────
+# Two kinds of files: history that cannot be fetched again (option chains of expired contracts)
+# and caches that can (daily equity candles, scan snapshots). Only the first kind needs durable
+# storage; point CACHE_DIR at the container's own disk and a wipe costs nothing but a refetch.
+CACHE_DIR = Path(os.getenv("CACHE_DIR") or (BASE_DIR / "data" / "cache"))
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 # ──────────────── Token Storage ────────────────
 TOKEN_DIR = BASE_DIR / "data" / "tokens"
 TOKEN_DIR.mkdir(parents=True, exist_ok=True)

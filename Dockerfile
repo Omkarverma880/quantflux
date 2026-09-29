@@ -12,6 +12,11 @@ WORKDIR /app
 
 # Set timezone to IST (all datetime.now() calls must return Indian time)
 ENV TZ=Asia/Kolkata
+# Keep resident memory close to what Python actually uses: without this, glibc holds freed blocks
+# in per-thread arenas and the container looks far larger than it is (and is billed that way).
+ENV MALLOC_ARENA_MAX=2
+# Re-fetchable caches (daily candles, scan snapshots) stay on the container disk, never a volume.
+ENV CACHE_DIR=/app/.cache
 
 # Install system deps for psycopg2 + timezone data
 RUN apt-get update && apt-get install -y --no-install-recommends \

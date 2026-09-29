@@ -23,7 +23,15 @@ from research.market_store import store as MS
 
 logger = get_logger("research.hunter.universe")
 
-ROOT = Path(MS.ROOT).parent / "hunter"
+def _root() -> Path:
+    try:
+        from config import settings as _s
+        return Path(_s.CACHE_DIR) / "hunter"
+    except Exception:
+        return Path(MS.ROOT).parent / "hunter"
+
+
+ROOT = _root()
 LIST_URL = "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv"
 CACHE = ROOT / "universe.json"
 MAX_AGE_DAYS = 7

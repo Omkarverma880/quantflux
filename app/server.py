@@ -142,7 +142,26 @@ async def _strategy_background_loop():
             await asyncio.sleep(10)  # back off on error
 
 
+_ACTIVE_USERS_TTL_S = 30.0
+_active_users_cache: dict = {"at": 0.0, "ids": []}
+
+
 def _get_active_user_ids() -> list[int]:
+    """Who has a live Zerodha session today, looked up at most every 30 seconds.
+
+    The loop ticks once a second so triggers stay prompt, but this answer changes only when
+    somebody logs in — asking the database 23,000 times a trading day costs CPU on both services
+    and buys nothing.
+    """
+    import time as _t
+    if _t.time() - _active_users_cache["at"] < _ACTIVE_USERS_TTL_S:
+        return _active_users_cache["ids"]
+    ids = _query_active_user_ids()
+    _active_users_cache.update(at=_t.time(), ids=ids)
+    return ids
+
+
+def _query_active_user_ids() -> list[int]:
     """Synchronous helper — queries DB for active sessions today. Runs in executor."""
     from core.database import get_db_session
     from core.models import ZerodhaSession

@@ -26,7 +26,18 @@ from research.market_store import store as MS
 
 logger = get_logger("research.my_equity.cache")
 
-ROOT = Path(os.environ.get("EQUITY_CACHE_DIR") or (MS.ROOT.parent / "equity_daily"))
+def _cache_root() -> Path:
+    """Daily candles live in the throwaway cache: Zerodha can serve them again at any time."""
+    if os.environ.get("EQUITY_CACHE_DIR"):
+        return Path(os.environ["EQUITY_CACHE_DIR"])
+    try:
+        from config import settings as _s
+        return Path(_s.CACHE_DIR) / "equity_daily"
+    except Exception:
+        return MS.ROOT.parent / "equity_daily"
+
+
+ROOT = _cache_root()
 CHUNK_DAYS = 2000                 # Kite's maximum span for one `day` request
 FIRST_DATE = date(2000, 1, 1)     # Kite starts far later; it simply returns what it has
 CALL_SPACING_S = 0.35             # ~3 historical calls per second
