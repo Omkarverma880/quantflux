@@ -115,7 +115,7 @@ function ModifyOrderModal({ order, onClose, onSuccess }) {
       <label className="block">
         <span className="text-xs text-gray-400">Order Type</span>
         <select value={orderType} onChange={(e) => setOrderType(e.target.value)}
-                className="input mt-1 w-full">
+                className="input-field mt-1 w-full">
           <option value="LIMIT">LIMIT</option>
           <option value="MARKET">MARKET</option>
           <option value="SL">SL</option>
@@ -125,17 +125,17 @@ function ModifyOrderModal({ order, onClose, onSuccess }) {
       <label className="block">
         <span className="text-xs text-gray-400">Price</span>
         <input type="number" step="0.05" value={price}
-               onChange={(e) => setPrice(e.target.value)} className="input mt-1 w-full mono" />
+               onChange={(e) => setPrice(e.target.value)} className="input-field mt-1 w-full mono" />
       </label>
       <label className="block">
         <span className="text-xs text-gray-400">Trigger Price (for SL / SL-M)</span>
         <input type="number" step="0.05" value={triggerPrice}
-               onChange={(e) => setTriggerPrice(e.target.value)} className="input mt-1 w-full mono" />
+               onChange={(e) => setTriggerPrice(e.target.value)} className="input-field mt-1 w-full mono" />
       </label>
       <label className="block">
         <span className="text-xs text-gray-400">Quantity</span>
         <input type="number" step="1" value={quantity}
-               onChange={(e) => setQuantity(e.target.value)} className="input mt-1 w-full mono" />
+               onChange={(e) => setQuantity(e.target.value)} className="input-field mt-1 w-full mono" />
       </label>
       {err ? <div className="text-xs text-red-400">{err}</div> : null}
     </ModalShell>
@@ -214,7 +214,7 @@ function SlTgtModal({ tradingsymbol, exchange, quantity, side, entryPrice, produ
       <div className="grid grid-cols-2 gap-2">
         <label className="block">
           <span className="text-xs text-gray-400">SL Type</span>
-          <select value={slType} onChange={(e) => setSlType(e.target.value)} className="input mt-1 w-full">
+          <select value={slType} onChange={(e) => setSlType(e.target.value)} className="input-field mt-1 w-full">
             <option value="POINTS">POINTS</option>
             <option value="PERCENT">PERCENT</option>
           </select>
@@ -222,12 +222,12 @@ function SlTgtModal({ tradingsymbol, exchange, quantity, side, entryPrice, produ
         <label className="block">
           <span className="text-xs text-gray-400">Stop Loss</span>
           <input type="number" step="0.05" value={stopLoss}
-                 onChange={(e) => setStopLoss(e.target.value)} className="input mt-1 w-full mono" />
+                 onChange={(e) => setStopLoss(e.target.value)} className="input-field mt-1 w-full mono" />
         </label>
 
         <label className="block">
           <span className="text-xs text-gray-400">TGT Type</span>
-          <select value={tgtType} onChange={(e) => setTgtType(e.target.value)} className="input mt-1 w-full">
+          <select value={tgtType} onChange={(e) => setTgtType(e.target.value)} className="input-field mt-1 w-full">
             <option value="POINTS">POINTS</option>
             <option value="PERCENT">PERCENT</option>
           </select>
@@ -235,12 +235,12 @@ function SlTgtModal({ tradingsymbol, exchange, quantity, side, entryPrice, produ
         <label className="block">
           <span className="text-xs text-gray-400">Target</span>
           <input type="number" step="0.05" value={target}
-                 onChange={(e) => setTarget(e.target.value)} className="input mt-1 w-full mono" />
+                 onChange={(e) => setTarget(e.target.value)} className="input-field mt-1 w-full mono" />
         </label>
 
         <label className="block">
           <span className="text-xs text-gray-400">Trailing Type</span>
-          <select value={trailingType} onChange={(e) => setTrailingType(e.target.value)} className="input mt-1 w-full">
+          <select value={trailingType} onChange={(e) => setTrailingType(e.target.value)} className="input-field mt-1 w-full">
             <option value="POINTS">POINTS</option>
             <option value="PERCENT">PERCENT</option>
           </select>
@@ -248,7 +248,7 @@ function SlTgtModal({ tradingsymbol, exchange, quantity, side, entryPrice, produ
         <label className="block">
           <span className="text-xs text-gray-400">Trailing</span>
           <input type="number" step="0.05" value={trailing}
-                 onChange={(e) => setTrailing(e.target.value)} className="input mt-1 w-full mono" />
+                 onChange={(e) => setTrailing(e.target.value)} className="input-field mt-1 w-full mono" />
         </label>
       </div>
 
@@ -417,6 +417,7 @@ function ManualOrderForm({ onOrderAction }) {
   const [strikesLoading, setStrikesLoading] = useState(false);
   const [nearestExpiry, setNearestExpiry] = useState('');
   const [lotSize, setLotSize] = useState(1);
+  const [optionLtp, setOptionLtp] = useState(0);      // premium of the selected strike
 
   // Cache both CE+PE option chains so toggling is instant
   const optionChainCache = useRef({});
@@ -468,6 +469,8 @@ function ManualOrderForm({ onOrderAction }) {
   const handleChange = (event) => {
     const { name, value, type, checked } = event.target;
     if (name === 'quantity') userEditedQty.current = true;
+    // typing an amount means "size it for me again"
+    if (name === 'trade_amount') userEditedQty.current = false;
     // When disabling trailing SL, clear trailing value
     if (name === 'enable_trailing_sl' && !checked) {
       setForm((current) => ({ ...current, enable_trailing_sl: false, trailing: '' }));
@@ -584,22 +587,52 @@ function ManualOrderForm({ onOrderAction }) {
     };
   }, [form.auto_atm, form.index_name, form.option_type]);
 
+  // Quantity is only ever a whole number of lots: the exchange will not take anything else.
+  const lotsOf = (qty) => Math.max(1, Math.floor((parseInt(qty, 10) || 0) / Math.max(lotSize, 1)));
+  const setLots = (lots) => {
+    userEditedQty.current = true;
+    const safe = Math.max(1, Math.floor(Number(lots) || 1));
+    setForm((current) => ({ ...current, quantity: safe * Math.max(lotSize, 1) }));
+  };
+  const stepLots = (by) => setLots(lotsOf(form.quantity) + by);
+  const snapQuantity = () => {
+    const lots = lotsOf(form.quantity);
+    const snapped = lots * Math.max(lotSize, 1);
+    if (snapped !== parseInt(form.quantity, 10)) {
+      setForm((current) => ({ ...current, quantity: snapped }));
+    }
+  };
+
+  // Fetch the premium of the chosen strike — an amount can only become lots once we know what
+  // one lot costs, and for an option that is the premium, not the index level.
+  useEffect(() => {
+    let active = true;
+    const { index_name: idx, strike_price: strike, option_type: type } = form;
+    if (!idx || !strike || !type) { setOptionLtp(0); return undefined; }
+    requestManual(`/option_quote?index_name=${encodeURIComponent(idx)}&strike_price=${strike}&option_type=${type}`)
+      .then((d) => active && setOptionLtp(Number(d.ltp) || 0))
+      .catch(() => active && setOptionLtp(0));
+    return () => { active = false; };
+  }, [form.index_name, form.strike_price, form.option_type]);
+
+  // What one unit costs: your limit price if you set one, else the live premium, else the spot
+  // (the last only applies to plain equity, where the "premium" is the share price).
+  const unitPrice = parseFloat(form.price) || optionLtp || (lotSize > 1 ? 0 : spotPrice) || 0;
+
   // Auto-calculate quantity from trade_amount and entry price (or spot-based LTP)
   useEffect(() => {
     if (userEditedQty.current) return; // user manually set quantity — don't override
     const amount = parseFloat(form.trade_amount) || 0;
-    const entryPrice = parseFloat(form.price) || spotPrice || 0;
-    if (amount <= 0 || entryPrice <= 0 || lotSize <= 0) return;
+    if (amount <= 0 || unitPrice <= 0 || lotSize <= 0) return;
 
-    // qty = trade_amount / entry_price, rounded down to nearest lot_size multiple
-    const rawQty = Math.floor(amount / entryPrice);
-    const lots = Math.max(1, Math.floor(rawQty / lotSize));
+    // whole lots only: one lot costs unitPrice × lotSize
+    const lots = Math.max(1, Math.floor(amount / (unitPrice * lotSize)));
     const calculatedQty = lots * lotSize;
 
     if (calculatedQty > 0 && calculatedQty !== parseInt(form.quantity, 10)) {
       setForm((current) => ({ ...current, quantity: calculatedQty }));
     }
-  }, [form.trade_amount, form.price, spotPrice, lotSize]);
+  }, [form.trade_amount, unitPrice, lotSize]);
 
   // Keep order_type in sync with entry price: blank price = MARKET, any price = LIMIT.
   // SL / SL-M are left untouched so the user can still pick them explicitly.
@@ -759,15 +792,37 @@ function ManualOrderForm({ onOrderAction }) {
           </LabeledField>
         </div>
         <div className="md:col-span-2">
-          <LabeledField label="Quantity" hint={lotSize > 1 ? `lot: ${lotSize}` : ''}>
-            <input name="quantity" value={form.quantity} onChange={handleChange} type="number" min="1" className={controlClass()} />
+          <LabeledField label={lotSize > 1 ? 'Lots' : 'Quantity'}
+                        hint={lotSize > 1 ? `${lotSize} per lot` : ''}>
+            <div className="flex items-stretch gap-1">
+              <button type="button" onClick={() => stepLots(-1)} aria-label="one lot fewer"
+                      className="px-2.5 rounded-lg border border-surface-3 bg-surface-2 text-gray-300 hover:text-white hover:border-brand-500/50">−</button>
+              <input name={lotSize > 1 ? 'lots' : 'quantity'}
+                     value={lotSize > 1 ? lotsOf(form.quantity) : form.quantity}
+                     onChange={(e) => (lotSize > 1 ? setLots(e.target.value) : handleChange(e))}
+                     onBlur={snapQuantity} type="number" min="1" step="1"
+                     className={controlClass('text-center')} />
+              <button type="button" onClick={() => stepLots(1)} aria-label="one lot more"
+                      className="px-2.5 rounded-lg border border-surface-3 bg-surface-2 text-gray-300 hover:text-white hover:border-brand-500/50">+</button>
+            </div>
           </LabeledField>
         </div>
         <div className="md:col-span-3">
-          <LabeledField label="Trade Amount">
+          <LabeledField label="Trade Amount" hint="sized down to whole lots">
             <input name="trade_amount" value={form.trade_amount} onChange={handleChange} className={controlClass()} />
           </LabeledField>
         </div>
+        {lotSize > 1 ? (
+          <div className="md:col-span-5 -mt-1 text-[11.5px] text-gray-500">
+            {lotsOf(form.quantity)} lot{lotsOf(form.quantity) === 1 ? '' : 's'} ={' '}
+            <span className="mono text-gray-300">{lotsOf(form.quantity) * lotSize}</span> quantity
+            {unitPrice > 0
+              ? <> · about <span className="mono text-gray-300">
+                  ₹{Math.round(lotsOf(form.quantity) * lotSize * unitPrice).toLocaleString('en-IN')}
+                </span> at {form.price ? 'your price' : `the live premium ₹${unitPrice.toFixed(2)}`}</>
+              : <> · <span className="text-amber-500">enter a price to size by amount</span></>}
+          </div>
+        ) : null}
       </div>
 
       <div className={`grid grid-cols-1 ${form.enable_trailing_sl ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-3`}>

@@ -389,6 +389,28 @@ async def get_option_setup_all(
     }
 
 
+@router.get("/option_quote")
+async def option_quote(index_name: str, strike_price: float, option_type: str = "CE",
+                       _auth=Depends(require_zerodha_auth)):
+    """The live premium of one option, so an amount can be turned into lots.
+
+    Sizing a trade means dividing money by what the thing costs. For an option that is the
+    premium, not the index level — ₹50,000 buys five lots of a ₹130 call, not two of a 24,650
+    index. The front end needs this number before it can size anything.
+    """
+    broker = get_user_broker(_auth["db"], _auth["user_id"])
+    order = ManualOrder(index_name=index_name, strike_price=strike_price, option_type=option_type)
+    tradingsymbol, expiry, exchange = _resolve_option_contract(order, broker)
+    key = f"{exchange}:{tradingsymbol}"
+    try:
+        ltp = float((broker.get_ltp([key]) or {}).get(key, 0) or 0)
+    except Exception as exc:
+        logger.warning("option quote failed for %s: %s", key, exc)
+        ltp = 0.0
+    return {"tradingsymbol": tradingsymbol, "exchange": exchange,
+            "expiry": str(expiry) if expiry else None, "ltp": ltp}
+
+
 @router.post("/preload_instruments")
 async def preload_instruments(_auth=Depends(require_zerodha_auth)):
     """Warm the instrument cache for all option exchanges."""
