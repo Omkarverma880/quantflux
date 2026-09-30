@@ -53,6 +53,7 @@ import IndexStraddle from './pages/index/IndexStraddle';
 import OptionsLab from './pages/index/OptionsLab';
 import OILab from './pages/index/OILab';
 import FluxLab from './pages/index/FluxLab';
+import CasGame from './pages/index/CasGame';
 import DataIngestion from './pages/DataIngestion';
 import EquityPMVwapHolding from './pages/equity/PMVwapHolding';
 
@@ -105,6 +106,7 @@ export default function App() {
           <Route path="index-strategy/options-lab" element={<OptionsLab />} />
           <Route path="index-strategy/oi-lab" element={<OILab />} />
           <Route path="index-strategy/flux-lab" element={<FluxLab />} />
+          <Route path="index-strategy/cas-game" element={<CasGame />} />
           <Route path="data-ingestion" element={<DataIngestion />} />
           <Route path="equity-strategy/pmvwap-holding" element={<EquityPMVwapHolding />} />
           <Route path="equity-strategy/fourth-candle" element={<FourthCandle />} />

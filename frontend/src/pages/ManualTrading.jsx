@@ -791,36 +791,36 @@ function ManualOrderForm({ onOrderAction }) {
             </select>
           </LabeledField>
         </div>
+        {lotSize > 1 ? (
+          <div className="md:col-span-2">
+            <LabeledField label="Lots" hint={`1 lot = ${lotSize} qty`}>
+              <div className="flex items-stretch gap-1">
+                <button type="button" onClick={() => stepLots(-1)} aria-label="one lot fewer"
+                        className="px-2.5 rounded-lg border border-surface-3 bg-surface-2 text-gray-300 hover:text-white hover:border-brand-500/50">−</button>
+                <input value={lotsOf(form.quantity)} onChange={(e) => setLots(e.target.value)}
+                       type="number" min="1" step="1" className={controlClass('text-center')} />
+                <button type="button" onClick={() => stepLots(1)} aria-label="one lot more"
+                        className="px-2.5 rounded-lg border border-surface-3 bg-surface-2 text-gray-300 hover:text-white hover:border-brand-500/50">+</button>
+              </div>
+            </LabeledField>
+          </div>
+        ) : null}
         <div className="md:col-span-2">
-          <LabeledField label={lotSize > 1 ? 'Lots' : 'Quantity'}
-                        hint={lotSize > 1 ? `${lotSize} per lot` : ''}>
-            <div className="flex items-stretch gap-1">
-              <button type="button" onClick={() => stepLots(-1)} aria-label="one lot fewer"
-                      className="px-2.5 rounded-lg border border-surface-3 bg-surface-2 text-gray-300 hover:text-white hover:border-brand-500/50">−</button>
-              <input name={lotSize > 1 ? 'lots' : 'quantity'}
-                     value={lotSize > 1 ? lotsOf(form.quantity) : form.quantity}
-                     onChange={(e) => (lotSize > 1 ? setLots(e.target.value) : handleChange(e))}
-                     onBlur={snapQuantity} type="number" min="1" step="1"
-                     className={controlClass('text-center')} />
-              <button type="button" onClick={() => stepLots(1)} aria-label="one lot more"
-                      className="px-2.5 rounded-lg border border-surface-3 bg-surface-2 text-gray-300 hover:text-white hover:border-brand-500/50">+</button>
-            </div>
+          <LabeledField label="Quantity" hint={lotSize > 1 ? `steps of ${lotSize}` : ''}>
+            <input name="quantity" value={form.quantity} onChange={handleChange} onBlur={snapQuantity}
+                   type="number" min="1" step={lotSize} className={controlClass()} />
           </LabeledField>
         </div>
         <div className="md:col-span-3">
-          <LabeledField label="Trade Amount" hint="sized down to whole lots">
+          <LabeledField label="Trade Amount" hint="buys as many whole lots as it covers">
             <input name="trade_amount" value={form.trade_amount} onChange={handleChange} className={controlClass()} />
           </LabeledField>
         </div>
-        {lotSize > 1 ? (
-          <div className="md:col-span-5 -mt-1 text-[11.5px] text-gray-500">
-            {lotsOf(form.quantity)} lot{lotsOf(form.quantity) === 1 ? '' : 's'} ={' '}
-            <span className="mono text-gray-300">{lotsOf(form.quantity) * lotSize}</span> quantity
-            {unitPrice > 0
-              ? <> · about <span className="mono text-gray-300">
-                  ₹{Math.round(lotsOf(form.quantity) * lotSize * unitPrice).toLocaleString('en-IN')}
-                </span> at {form.price ? 'your price' : `the live premium ₹${unitPrice.toFixed(2)}`}</>
-              : <> · <span className="text-amber-500">enter a price to size by amount</span></>}
+        {lotSize > 1 && unitPrice > 0 ? (
+          <div className="md:col-span-12 -mt-1 text-[11.5px] text-gray-500">
+            about <span className="mono text-gray-300">
+              ₹{Math.round(lotsOf(form.quantity) * lotSize * unitPrice).toLocaleString('en-IN')}
+            </span> at {form.price ? 'your price' : `the live premium ₹${unitPrice.toFixed(2)}`}
           </div>
         ) : null}
       </div>

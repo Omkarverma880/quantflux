@@ -197,11 +197,17 @@ def plan(broker, cfg: Optional[dict] = None) -> dict:
 
 
 # ── fetching ─────────────────────────────────────────────────────────
+SESSION_END_H, SESSION_END_M = 15, 45      # a little past the 15:40 derivative close, to be safe
+
+
 def _fetch(broker, token: int, start: date, end: date, oi: bool) -> pd.DataFrame:
     rows = []
     for ch in build_chunks(start, end, "minute"):
         frm = datetime.combine(date.fromisoformat(ch["start"]), datetime.min.time()) + timedelta(hours=9, minutes=15)
-        to = datetime.combine(date.fromisoformat(ch["end"]), datetime.min.time()) + timedelta(hours=15, minutes=30)
+        # Equity derivatives trade until 15:40 since 3 August 2026 (the ten minutes after the cash
+        # market's closing auction). Asking only to 15:30 silently dropped that window — which is
+        # where expiry-day premiums move most — so the request runs to the end of the session.
+        to = datetime.combine(date.fromisoformat(ch["end"]), datetime.min.time()) + timedelta(hours=SESSION_END_H, minutes=SESSION_END_M)
         t0 = time.monotonic()
         try:
             rows.extend(broker.get_historical_data(token, frm, to, "minute", oi=oi) or [])

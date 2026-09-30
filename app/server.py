@@ -49,6 +49,7 @@ from app.routes.vwap_options_routes import router as vwap_options_router
 from app.routes.index_straddle_routes import router as index_straddle_router
 from app.routes.market_store_routes import router as market_store_router
 from app.routes.options_lab_routes import router as options_lab_router
+from app.routes.cas_game_routes import router as cas_game_router
 from app.routes.flux_lab_routes import router as flux_lab_router
 from app.routes.oi_lab_routes import router as oi_lab_router
 from app.routes.data_ingestion_routes import router as data_ingestion_router
@@ -334,6 +335,15 @@ def _run_strategies_for_user(uid: int):
             except Exception as exc:
                 print(f"[BG] Flux Lab paper error user {uid}: {exc}", flush=True)
 
+        # CAS Game Play: idle until you press Start, and it places real orders only when its own
+        # mode is live and the app itself is out of paper mode.
+        if authenticated:
+            try:
+                from research.cas_game.live import ENGINE as _cas
+                _cas.check(db, uid, broker)
+            except Exception as exc:
+                print(f"[BG] CAS game error user {uid}: {exc}", flush=True)
+
         # Hunter: one automatic scan of the NIFTY 500 after the close, so the stage board is
         # ready in the evening. Rate-limited inside (once a day) and a screener only — no orders.
         if authenticated:
@@ -536,6 +546,7 @@ app.include_router(market_store_router, prefix="/api/market-store", tags=["Marke
 app.include_router(options_lab_router, prefix="/api/index-strategy/options-lab", tags=["Index-OptionsLab"])
 app.include_router(oi_lab_router, prefix="/api/index-strategy/oi-lab", tags=["Index-OILab"])
 app.include_router(flux_lab_router, prefix="/api/index-strategy/flux-lab", tags=["Index-FluxLab"])
+app.include_router(cas_game_router, prefix="/api/index-strategy/cas-game", tags=["Index-CASGame"])
 app.include_router(data_ingestion_router, prefix="/api/data-ingestion", tags=["DataIngestion"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])

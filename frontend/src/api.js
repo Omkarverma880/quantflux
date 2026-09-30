@@ -623,6 +623,17 @@ export const api = {
 
   // Equity Strategy Workspace — consolidated multi-strategy screener (read-only)
   // Flux Strategy Test Lab — backtest, validate, replay, paper trade
+  casMeta: () => request('/index-strategy/cas-game/meta'),
+  casDesk: () => request('/index-strategy/cas-game/desk'),
+  casConfig: (body) => request('/index-strategy/cas-game/config', { method: 'POST', body: JSON.stringify(body || {}) }),
+  casStart: () => request('/index-strategy/cas-game/start', { method: 'POST' }),
+  casStop: () => request('/index-strategy/cas-game/stop', { method: 'POST' }),
+  casScan: () => request('/index-strategy/cas-game/scan', { method: 'POST' }),
+  casBacktest: (body) => request('/index-strategy/cas-game/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
+  casJob: (id) => request(`/index-strategy/cas-game/job/${id}`),
+  casRuns: () => request('/index-strategy/cas-game/runs'),
+  casRun: (id) => request(`/index-strategy/cas-game/runs/${id}`),
+
   flMeta: (u = 'NIFTY') => request(`/index-strategy/flux-lab/meta?underlying=${u}`),
   flDataCheck: (body) => request('/index-strategy/flux-lab/data-check', { method: 'POST', body: JSON.stringify(body) }),
   flBacktest: (body) => request('/index-strategy/flux-lab/backtest', { method: 'POST', body: JSON.stringify(body) }),
