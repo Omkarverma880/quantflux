@@ -304,12 +304,14 @@ function StatCard({ icon: Icon, label, value, tone = 'brand' }) {
 
 function LabeledField({ label, children, hint }) {
   return (
-    <label className="block space-y-1.5">
-      <div className="flex items-center gap-2 text-xs font-medium text-gray-400 uppercase tracking-[0.14em]">
-        <span>{label}</span>
-        {hint ? <span className="text-[11px] normal-case tracking-normal text-gray-500">{hint}</span> : null}
+    <label className="block">
+      {/* fixed height + no wrapping: a long hint can never push this field's input
+          out of line with its neighbours in the same grid row */}
+      <div className="flex h-4 items-baseline justify-between gap-2 overflow-hidden whitespace-nowrap">
+        <span className="shrink-0 text-xs font-medium uppercase tracking-[0.14em] text-gray-400">{label}</span>
+        {hint ? <span className="truncate text-[11px] text-gray-500">{hint}</span> : null}
       </div>
-      {children}
+      <div className="mt-1.5">{children}</div>
     </label>
   );
 }
@@ -422,7 +424,9 @@ function ManualOrderForm({ onOrderAction }) {
   // Cache both CE+PE option chains so toggling is instant
   const optionChainCache = useRef({});
   // Track whether user manually edited quantity (suppress auto-calc)
-  const userEditedQty = useRef(false);
+  // Which field is in charge of size. 'lots' = you set the lots (amount is ignored),
+  // 'amount' = you set the rupees and the lots are derived in whole-lot multiples.
+  const [sizeBy, setSizeBy] = useState('amount');
 
   // Prefill from URL query params (used when navigating from
   // Analytics World / Portfolio "Trade" buttons).
@@ -468,9 +472,6 @@ function ManualOrderForm({ onOrderAction }) {
 
   const handleChange = (event) => {
     const { name, value, type, checked } = event.target;
-    if (name === 'quantity') userEditedQty.current = true;
-    // typing an amount means "size it for me again"
-    if (name === 'trade_amount') userEditedQty.current = false;
     // When disabling trailing SL, clear trailing value
     if (name === 'enable_trailing_sl' && !checked) {
       setForm((current) => ({ ...current, enable_trailing_sl: false, trailing: '' }));
@@ -590,7 +591,6 @@ function ManualOrderForm({ onOrderAction }) {
   // Quantity is only ever a whole number of lots: the exchange will not take anything else.
   const lotsOf = (qty) => Math.max(1, Math.floor((parseInt(qty, 10) || 0) / Math.max(lotSize, 1)));
   const setLots = (lots) => {
-    userEditedQty.current = true;
     const safe = Math.max(1, Math.floor(Number(lots) || 1));
     setForm((current) => ({ ...current, quantity: safe * Math.max(lotSize, 1) }));
   };
@@ -619,9 +619,22 @@ function ManualOrderForm({ onOrderAction }) {
   // (the last only applies to plain equity, where the "premium" is the share price).
   const unitPrice = parseFloat(form.price) || optionLtp || (lotSize > 1 ? 0 : spotPrice) || 0;
 
+  const byLots = sizeBy === 'lots';
+  const switchSizeBy = (key) => {
+    // hand the number on screen over to the other mode so nothing jumps
+    if (key === 'amount' && sizeBy === 'lots') {
+      setForm((current) => ({ ...current, trade_amount: String(costOfLots || current.trade_amount) }));
+    }
+    setSizeBy(key);
+  };
+  // what the lots on screen actually cost — shown live, and written into Trade Amount
+  // whenever you are sizing by lots, so the two can never disagree
+  const costOfLots = Math.round(lotsOf(form.quantity) * Math.max(lotSize, 1) * unitPrice);
+
+
   // Auto-calculate quantity from trade_amount and entry price (or spot-based LTP)
   useEffect(() => {
-    if (userEditedQty.current) return; // user manually set quantity — don't override
+    if (sizeBy !== 'amount') return;   // you are sizing by lots — the amount is ignored
     const amount = parseFloat(form.trade_amount) || 0;
     if (amount <= 0 || unitPrice <= 0 || lotSize <= 0) return;
 
@@ -632,7 +645,7 @@ function ManualOrderForm({ onOrderAction }) {
     if (calculatedQty > 0 && calculatedQty !== parseInt(form.quantity, 10)) {
       setForm((current) => ({ ...current, quantity: calculatedQty }));
     }
-  }, [form.trade_amount, unitPrice, lotSize]);
+  }, [form.trade_amount, unitPrice, lotSize, sizeBy]);
 
   // Keep order_type in sync with entry price: blank price = MARKET, any price = LIMIT.
   // SL / SL-M are left untouched so the user can still pick them explicitly.
@@ -791,36 +804,58 @@ function ManualOrderForm({ onOrderAction }) {
             </select>
           </LabeledField>
         </div>
+        <div className="md:col-span-5">
+          <LabeledField label="Size by" hint={byLots ? 'amount is ignored' : 'lots are derived'}>
+            <div className="flex items-stretch gap-1 rounded-lg border border-surface-3 bg-surface-2 p-1">
+              {[['lots', 'Lots'], ['amount', 'Amount']].map(([key, text]) => (
+                <button key={key} type="button" onClick={() => switchSizeBy(key)}
+                        aria-pressed={sizeBy === key}
+                        className={`flex-1 rounded-md py-1.5 text-sm transition-colors ${
+                          sizeBy === key ? 'bg-brand-500 text-white' : 'text-gray-400 hover:text-white'}`}>
+                  {text}
+                </button>
+              ))}
+            </div>
+          </LabeledField>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
         {lotSize > 1 ? (
-          <div className="md:col-span-2">
+          <div className="md:col-span-4">
             <LabeledField label="Lots" hint={`1 lot = ${lotSize} qty`}>
               <div className="flex items-stretch gap-1">
-                <button type="button" onClick={() => stepLots(-1)} aria-label="one lot fewer"
-                        className="px-2.5 rounded-lg border border-surface-3 bg-surface-2 text-gray-300 hover:text-white hover:border-brand-500/50">−</button>
+                <button type="button" onClick={() => stepLots(-1)} disabled={!byLots} aria-label="one lot fewer"
+                        className="w-10 shrink-0 rounded-lg border border-surface-3 bg-surface-2 text-lg leading-none text-gray-300 transition-colors hover:border-brand-500/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40">−</button>
                 <input value={lotsOf(form.quantity)} onChange={(e) => setLots(e.target.value)}
-                       type="number" min="1" step="1" className={controlClass('text-center')} />
-                <button type="button" onClick={() => stepLots(1)} aria-label="one lot more"
-                        className="px-2.5 rounded-lg border border-surface-3 bg-surface-2 text-gray-300 hover:text-white hover:border-brand-500/50">+</button>
+                       readOnly={!byLots} type="number" min="1" step="1"
+                       className={controlClass(`text-center mono ${byLots ? '' : 'opacity-60'}`)} />
+                <button type="button" onClick={() => stepLots(1)} disabled={!byLots} aria-label="one lot more"
+                        className="w-10 shrink-0 rounded-lg border border-surface-3 bg-surface-2 text-lg leading-none text-gray-300 transition-colors hover:border-brand-500/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40">+</button>
               </div>
             </LabeledField>
           </div>
         ) : null}
-        <div className="md:col-span-2">
+        <div className="md:col-span-4">
           <LabeledField label="Quantity" hint={lotSize > 1 ? `steps of ${lotSize}` : ''}>
             <input name="quantity" value={form.quantity} onChange={handleChange} onBlur={snapQuantity}
-                   type="number" min="1" step={lotSize} className={controlClass()} />
+                   readOnly={!byLots} type="number" min="1" step={lotSize}
+                   className={controlClass(`mono ${byLots ? '' : 'opacity-60'}`)} />
           </LabeledField>
         </div>
-        <div className="md:col-span-3">
-          <LabeledField label="Trade Amount" hint="buys as many whole lots as it covers">
-            <input name="trade_amount" value={form.trade_amount} onChange={handleChange} className={controlClass()} />
+        <div className="md:col-span-4">
+          <LabeledField label="Trade Amount" hint={byLots ? 'not used' : 'whole lots only'}>
+            <input name="trade_amount" value={byLots ? costOfLots : form.trade_amount}
+                   onChange={handleChange} readOnly={byLots} inputMode="numeric"
+                   className={controlClass(`mono ${byLots ? 'opacity-60' : ''}`)} />
           </LabeledField>
         </div>
         {lotSize > 1 && unitPrice > 0 ? (
           <div className="md:col-span-12 -mt-1 text-[11.5px] text-gray-500">
-            about <span className="mono text-gray-300">
-              ₹{Math.round(lotsOf(form.quantity) * lotSize * unitPrice).toLocaleString('en-IN')}
-            </span> at {form.price ? 'your price' : `the live premium ₹${unitPrice.toFixed(2)}`}
+            {lotsOf(form.quantity)} lot{lotsOf(form.quantity) === 1 ? '' : 's'} ·{' '}
+            <span className="mono text-gray-300">{lotsOf(form.quantity) * lotSize}</span> qty ·{' '}
+            <span className="mono text-gray-300">₹{costOfLots.toLocaleString('en-IN')}</span>{' '}
+            at {form.price ? 'your price' : `the live premium ₹${unitPrice.toFixed(2)}`}
           </div>
         ) : null}
       </div>
