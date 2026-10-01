@@ -788,15 +788,20 @@ function ManualOrderForm({ onOrderAction }) {
         <InlineToggle name="auto_atm" checked={form.auto_atm} onChange={handleChange}>Auto ATM</InlineToggle>
         <InlineToggle name="enable_trailing_sl" checked={form.enable_trailing_sl} onChange={handleChange}>Trailing SL</InlineToggle>
         <InlineToggle name="move_sl_to_cost" checked={form.move_sl_to_cost} onChange={handleChange}>Move SL to Cost</InlineToggle>
+        <span className="hidden md:block h-4 w-px bg-surface-4" aria-hidden="true" />
+        <InlineToggle name="size_by_amount" checked={!byLots}
+                      onChange={(e) => switchSizeBy(e.target.checked ? 'amount' : 'lots')}>
+          Size by amount
+        </InlineToggle>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-        <div className="md:col-span-5">
+        <div className="md:col-span-9">
           <LabeledField label="Trading Symbol" hint="optional override">
             <input name="tradingsymbol" value={form.tradingsymbol} onChange={handleChange} placeholder="Auto-build from selection or enter symbol" className={controlClass()} />
           </LabeledField>
         </div>
-        <div className="md:col-span-2">
+        <div className="md:col-span-3">
           <LabeledField label="Side">
             <select name="side" value={form.side} onChange={handleChange} className={controlClass()}>
               <option value="BUY">Buy</option>
@@ -804,26 +809,12 @@ function ManualOrderForm({ onOrderAction }) {
             </select>
           </LabeledField>
         </div>
-        <div className="md:col-span-5">
-          <LabeledField label="Size by" hint={byLots ? 'amount is ignored' : 'lots are derived'}>
-            <div className="flex items-stretch gap-1 rounded-lg border border-surface-3 bg-surface-2 p-1">
-              {[['lots', 'Lots'], ['amount', 'Amount']].map(([key, text]) => (
-                <button key={key} type="button" onClick={() => switchSizeBy(key)}
-                        aria-pressed={sizeBy === key}
-                        className={`flex-1 rounded-md py-1.5 text-sm transition-colors ${
-                          sizeBy === key ? 'bg-brand-500 text-white' : 'text-gray-400 hover:text-white'}`}>
-                  {text}
-                </button>
-              ))}
-            </div>
-          </LabeledField>
-        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
         {lotSize > 1 ? (
           <div className="md:col-span-4">
-            <LabeledField label="Lots" hint={`1 lot = ${lotSize} qty`}>
+            <LabeledField label="Lots" hint={byLots ? `1 lot = ${lotSize} qty` : 'from amount'}>
               <div className="flex items-stretch gap-1">
                 <button type="button" onClick={() => stepLots(-1)} disabled={!byLots} aria-label="one lot fewer"
                         className="w-10 shrink-0 rounded-lg border border-surface-3 bg-surface-2 text-lg leading-none text-gray-300 transition-colors hover:border-brand-500/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40">−</button>
@@ -837,14 +828,14 @@ function ManualOrderForm({ onOrderAction }) {
           </div>
         ) : null}
         <div className="md:col-span-4">
-          <LabeledField label="Quantity" hint={lotSize > 1 ? `steps of ${lotSize}` : ''}>
+          <LabeledField label="Quantity" hint={!byLots && lotSize > 1 ? 'from amount' : (lotSize > 1 ? `steps of ${lotSize}` : '')}>
             <input name="quantity" value={form.quantity} onChange={handleChange} onBlur={snapQuantity}
                    readOnly={!byLots} type="number" min="1" step={lotSize}
                    className={controlClass(`mono ${byLots ? '' : 'opacity-60'}`)} />
           </LabeledField>
         </div>
         <div className="md:col-span-4">
-          <LabeledField label="Trade Amount" hint={byLots ? 'not used' : 'whole lots only'}>
+          <LabeledField label="Trade Amount" hint={byLots ? 'from lots' : 'whole lots only'}>
             <input name="trade_amount" value={byLots ? costOfLots : form.trade_amount}
                    onChange={handleChange} readOnly={byLots} inputMode="numeric"
                    className={controlClass(`mono ${byLots ? 'opacity-60' : ''}`)} />
