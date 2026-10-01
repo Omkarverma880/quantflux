@@ -628,6 +628,7 @@ export const api = {
   casConfig: (body) => request('/index-strategy/cas-game/config', { method: 'POST', body: JSON.stringify(body || {}) }),
   casStart: () => request('/index-strategy/cas-game/start', { method: 'POST' }),
   casStop: () => request('/index-strategy/cas-game/stop', { method: 'POST' }),
+  casHuntNow: () => request('/index-strategy/cas-game/hunt-now', { method: 'POST' }),
   casScan: () => request('/index-strategy/cas-game/scan', { method: 'POST' }),
   casBacktest: (body) => request('/index-strategy/cas-game/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
   casJob: (id) => request(`/index-strategy/cas-game/job/${id}`),

@@ -113,17 +113,19 @@ def size(picks: list[dict], p: Params = P) -> list[dict]:
     """
     if not picks:
         return []
-    lot = p.lot
     share = p.budget / len(picks)
     out = []
     for c in picks:
+        # the exchange's own lot size for this contract wins: LOT_SIZE is only a fallback, and a
+        # stale constant would size a live order wrong the day an exchange revises its lot
+        lot = int(c.get("lot_size") or 0) or p.lot
         entry = float(c["price"]) + p.slippage_ticks * TICK
         per_lot = entry * lot
         lots = int(share // per_lot) if per_lot > 0 else 0
         if lots < 1:
             out.append({**c, "lots": 0, "skipped": f"one lot costs ₹{per_lot:,.0f}, more than the ₹{share:,.0f} share"})
             continue
-        out.append({**c, "entry": round(entry, 2), "lots": lots, "qty": lots * lot,
+        out.append({**c, "entry": round(entry, 2), "lots": lots, "qty": lots * lot, "lot": lot,
                     "cost": round(entry * lots * lot, 2),
                     "target": round(entry + p.target_points, 2),
                     "stop": round(entry - p.stop_points, 2) if p.stop_points else None})

@@ -124,10 +124,31 @@ def start(user_id: int = Depends(login_required), db: Session = Depends(get_db))
     return {"status": "ok", "config": cfg, "result": LIVE.ENGINE.check(db, user_id, broker)}
 
 
+@router.post("/hunt-now")
+@safe("hunt_now")
+def hunt_now(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Start hunting from this minute instead of waiting for the scheduled window.
+
+    Entry stays open until square-off, and the arming is stamped with today's date so it
+    cannot carry over into the next session.
+    """
+    broker = _broker(db, user_id)
+    if broker is None:
+        return {"status": "error", "code": "not_connected",
+                "message": "Connect Zerodha — the desk needs live option quotes."}
+    now = LIVE.datetime.now()      # the desk's clock, so both agree on "now"
+    cfg = LIVE.save_config(db, user_id, {
+        "running": True, "started_at": str(date.today()),
+        "hunt_from": {"day": str(now.date()), "minute": now.hour * 60 + now.minute},
+    })
+    return {"status": "ok", "config": cfg, "result": LIVE.ENGINE.check(db, user_id, broker)}
+
+
 @router.post("/stop")
 @safe("stop")
 def stop(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
-    return {"status": "ok", "config": LIVE.save_config(db, user_id, {"running": False})}
+    return {"status": "ok",
+            "config": LIVE.save_config(db, user_id, {"running": False, "hunt_from": None})}
 
 
 @router.get("/desk")

@@ -620,16 +620,42 @@ def debug_frontend():
     files = sorted(str(f.relative_to(FRONTEND_DIR)) for f in FRONTEND_DIR.rglob("*") if f.is_file()) if exists else []
     return {"frontend_dir": str(FRONTEND_DIR), "exists": exists, "files": files[:50]}
 
+# Vite fingerprints every bundle, so an asset URL names exactly one build and can be cached
+# forever. index.html must NOT be: it is what points at the current bundle. Served without a
+# Cache-Control header, browsers fall back to heuristic caching and may keep yesterday's
+# index.html, which then asks for a bundle this deploy no longer has — a 404, an empty #root
+# and a page that spins forever. These two headers are the whole fix.
+IMMUTABLE = "public, max-age=31536000, immutable"
+ALWAYS_REVALIDATE = "no-cache, must-revalidate"
+
+
+class ImmutableAssets(StaticFiles):
+    """dist/assets/* — content-hashed names, safe to cache for a year."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = IMMUTABLE
+        return response
+
+
+def _html(path):
+    """index.html, revalidated on every load. The ETag keeps that to a cheap 304."""
+    return FileResponse(path, headers={"Cache-Control": ALWAYS_REVALIDATE})
+
+
 if FRONTEND_DIR.exists():
     # Serve static assets (JS, CSS, images) from dist/assets/
     assets_dir = FRONTEND_DIR / "assets"
     if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="static-assets")
+        app.mount("/assets", ImmutableAssets(directory=str(assets_dir)), name="static-assets")
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
         """SPA catch-all: serve file if exists, otherwise index.html."""
         file_path = FRONTEND_DIR / full_path
         if full_path and file_path.is_file():
+            # anything unhashed (index.html, manifests, icons) must be revalidated too
+            if file_path.suffix.lower() in (".html", ".json", ".webmanifest"):
+                return _html(file_path)
             return FileResponse(file_path)
-        return FileResponse(FRONTEND_DIR / "index.html")
+        return _html(FRONTEND_DIR / "index.html")

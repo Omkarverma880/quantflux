@@ -29,7 +29,9 @@ from research.cas_game import strategy as ST
 logger = get_logger("research.cas_game.live")
 
 CONFIG_NAME = "cas_game"
-CHECK_EVERY_S = 8.0
+CHECK_EVERY_S = 8.0          # while hunting or holding: the pace that matters
+IDLE_CHECK_EVERY_S = 60.0    # armed but the window is still far off: no reason to poll hard
+LOG_MAX = 200                # the day's log is a tail, not a transcript
 QUOTE_TTL_S = 5.0
 SCAN_STRIKES = 25            # strikes either side of the spot — a ₹1 option can sit a long way out
 
@@ -39,10 +41,12 @@ DEFAULTS = {
     "params": ST.P.as_dict(),
     "started_at": None,
     "day": None,               # the session the current state belongs to
+    # "Hunt now": {"day": "YYYY-MM-DD", "minute": 612}. While it matches today, entry is open
+    # from that minute until square-off instead of waiting for the 15:15 window.
+    "hunt_from": None,
 }
 
 _last_check: dict[int, float] = {}
-_quotes: dict[str, tuple] = {}
 _lock = threading.Lock()
 _state: dict[int, dict] = {}   # per user: today's tickets and the last scan
 
@@ -61,7 +65,9 @@ def save_config(db, user_id: int, updates: dict) -> dict:
     for k, v in (updates or {}).items():
         if k == "params" and isinstance(v, dict):
             cfg["params"] = {**cfg["params"], **{pk: pv for pk, pv in v.items() if pk in ST.P.as_dict()}}
-        elif k in DEFAULTS and v is not None:
+        elif k in DEFAULTS and (v is not None or DEFAULTS[k] is None):
+            # a key whose default is None is nullable, so None means "clear it" — that is how
+            # Stop disarms a hunt. For the rest (running, mode) None is a caller bug: ignore it.
             cfg[k] = v
     row = (db.query(StrategyConfig)
              .filter(StrategyConfig.user_id == user_id, StrategyConfig.strategy_name == CONFIG_NAME).first())
@@ -157,21 +163,54 @@ def scan(broker, p: ST.Params) -> dict:
 
 
 # ── the desk ─────────────────────────────────────────────────────────
+def _log(st: dict, line: str) -> None:
+    """Append unless it repeats the last line, and keep only the tail.
+
+    The desk re-scans every few seconds, so without this a single unfillable pick would write
+    thousands of identical rows over a day's hunt.
+    """
+    log = st.setdefault("log", [])
+    if log and log[-1][6:] == line[6:]:      # same message, only the clock moved
+        log[-1] = line
+        return
+    log.append(line)
+    if len(log) > LOG_MAX:
+        del log[:-LOG_MAX]
+
+
+def entry_window(cfg: dict, p, today: str) -> tuple[int, int, bool]:
+    """When entry is allowed today: the configured window, or from the "Hunt now" minute.
+
+    A hunt only counts for the day it was armed, so it can never leak into tomorrow's session.
+    It still stops at square-off — hunting early buys you more time, not a different exit.
+    """
+    hunt = cfg.get("hunt_from") or {}
+    if str(hunt.get("day") or "") == today and hunt.get("minute") is not None:
+        return int(hunt["minute"]), int(p.squareoff) - 1, True
+    return int(p.entry_from), int(p.entry_to), False
+
+
 class Desk:
     """Watches, buys inside the window, and closes out. Paper unless told otherwise."""
 
     def check(self, db, user_id: int, broker) -> dict:
         now = datetime.now()
-        with _lock:
-            if _time.time() - _last_check.get(user_id, 0) < CHECK_EVERY_S:
-                return {"skipped": "too soon"}
-            _last_check[user_id] = _time.time()
-
         cfg = load_config(db, user_id)
         if not cfg.get("running"):
             return {"skipped": "not started"}
         p = params_of(cfg)
         today = str(now.date())
+
+        # Poll fast only when a scan could change something: inside the entry window, or while a
+        # ticket is open. Armed early in the morning, once a minute is plenty and costs ~7x less.
+        minute_now = now.hour * 60 + now.minute
+        open_m, _close_m, _h = entry_window(cfg, p, today)
+        holding = any(not t.get("closed") for t in _state.get(user_id, {}).get("tickets", []))
+        every = CHECK_EVERY_S if (holding or minute_now >= open_m - 1) else IDLE_CHECK_EVERY_S
+        with _lock:
+            if _time.time() - _last_check.get(user_id, 0) < every:
+                return {"skipped": "too soon"}
+            _last_check[user_id] = _time.time()
         st = _state.setdefault(user_id, {"day": today, "tickets": [], "log": []})
         if st["day"] != today:                                   # a new session wipes yesterday
             st.update(day=today, tickets=[], log=[])
@@ -204,18 +243,20 @@ class Desk:
             if why:
                 self._close(db, user_id, broker, cfg, t, float(price), why)
 
-        if minute < p.entry_from:
-            return {**out, "state": f"watching — the window opens at {ST.hhmm(p.entry_from)}"}
+        open_m, close_m, hunting = entry_window(cfg, p, today)
+        out["hunting_now"] = hunting
+        if minute < open_m:
+            return {**out, "state": f"watching — the window opens at {ST.hhmm(open_m)}"}
         if st["tickets"]:
             open_n = sum(1 for t in st["tickets"] if not t.get("closed"))
             return {**out, "state": (f"holding {open_n} ticket(s)" if open_n
                                      else "done for the day — tickets closed")}
-        if minute > p.entry_to:
-            return {**out, "state": f"window closed at {ST.hhmm(p.entry_to)}, nothing taken"}
+        if minute > close_m:
+            return {**out, "state": f"window closed at {ST.hhmm(close_m)}, nothing taken"}
 
         for pick in scanned["picks"]:
             if not pick.get("lots"):
-                st["log"].append(f"{ST.hhmm(minute)} skipped {pick['option_type']} {pick['strike']:g}: {pick.get('skipped')}")
+                _log(st, f"{ST.hhmm(minute)} skipped {pick['option_type']} {pick['strike']:g}: {pick.get('skipped')}")
                 continue
             self._buy(db, user_id, broker, cfg, pick, minute)
         return {**out, "state": "tickets taken" if st["tickets"] else "nothing priced in the band yet"}
@@ -231,11 +272,11 @@ class Desk:
         if cfg["mode"] == "live":
             placed = self._order(broker, user_id, ticket, "BUY")
             if not placed.get("ok"):
-                st["log"].append(f"{ST.hhmm(minute)} live buy refused: {placed.get('error')}")
+                _log(st, f"{ST.hhmm(minute)} live buy refused: {placed.get('error')}")
                 return
             ticket["order_id"] = placed.get("order_id")
         st["tickets"].append(ticket)
-        st["log"].append(f"{ST.hhmm(minute)} bought {ticket['option_type']} {ticket['strike']:g} "
+        _log(st, f"{ST.hhmm(minute)} bought {ticket['option_type']} {ticket['strike']:g} "
                          f"× {ticket['lots']} lots at {ticket['entry']} ({cfg['mode']})")
         logger.info("cas game: %s ticket %s %s at %s (user %s)", cfg["mode"], ticket["option_type"],
                     ticket["strike"], ticket["entry"], user_id)
@@ -247,7 +288,7 @@ class Desk:
         ticket.update(closed=True, exit=round(price, 2), exit_reason=why,
                       pnl=round((price - ticket["entry"]) * ticket["qty"], 2),
                       closed_at=datetime.now().strftime("%H:%M"))
-        st["log"].append(f"{ticket['closed_at']} closed {ticket['option_type']} {ticket['strike']:g} "
+        _log(st, f"{ticket['closed_at']} closed {ticket['option_type']} {ticket['strike']:g} "
                          f"at {ticket['exit']} ({why}) · {ticket['pnl']:+,.0f}")
 
     def _order(self, broker, user_id: int, ticket: dict, side: str) -> dict:
@@ -284,6 +325,7 @@ def dashboard(db, user_id: int, broker=None) -> dict:
     st = _state.get(user_id, {})
     tickets = st.get("tickets", [])
     closed = [t for t in tickets if t.get("closed")]
+    open_m, close_m, hunting = entry_window(cfg, p, str(now.date()))
     scanned = st.get("last_scan")
     if broker is not None and cfg.get("running") and not scanned:
         scanned = scan(broker, p)
@@ -291,10 +333,11 @@ def dashboard(db, user_id: int, broker=None) -> dict:
         "status": "ok", "running": bool(cfg.get("running")), "mode": cfg.get("mode", "paper"),
         "params": p.as_dict(), "rules": ST.describe(p), "connected": broker is not None,
         "now": now.strftime("%H:%M:%S"),
-        "window": {"from": ST.hhmm(p.entry_from), "to": ST.hhmm(p.entry_to),
-                   "squareoff": ST.hhmm(p.squareoff),
-                   "state": ("before the window" if minute < p.entry_from
-                             else "in the window" if minute <= p.entry_to
+        "window": {"from": ST.hhmm(open_m), "to": ST.hhmm(close_m),
+                   "squareoff": ST.hhmm(p.squareoff), "hunting_now": hunting,
+                   "scheduled": {"from": ST.hhmm(p.entry_from), "to": ST.hhmm(p.entry_to)},
+                   "state": ("before the window" if minute < open_m
+                             else ("hunting now" if hunting else "in the window") if minute <= close_m
                              else "after the window")},
         "scan": scanned, "tickets": tickets, "log": st.get("log", [])[-40:],
         "totals": {"tickets": len(tickets), "spent": round(sum(t.get("cost", 0) for t in tickets), 2),

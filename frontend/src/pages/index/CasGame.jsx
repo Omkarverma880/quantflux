@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Dice5, Loader2, Play, Square, RefreshCw, ShieldCheck, AlertTriangle, Radio, BarChart3, BookOpen, Activity,
+  Dice5, Loader2, Play, Square, RefreshCw, ShieldCheck, AlertTriangle, Radio, BarChart3, BookOpen, Activity, Crosshair,
 } from 'lucide-react';
 import { api } from '../../api';
 import { Note, Section, Stat, Field, input, N, N0, RS, PCT, tone } from '../../components/fluxlab/ui';
@@ -141,8 +141,16 @@ export default function CasGame() {
           {desk?.running
             ? <button disabled={busy} onClick={() => act(api.casStop)} className="btn-secondary !py-1.5 !px-3 text-[12.5px] flex items-center gap-1.5">
                 <Square className="w-3.5 h-3.5" />Stop</button>
-            : <button disabled={busy || !desk?.connected} onClick={() => act(api.casStart)} className="btn-primary !py-1.5 !px-3 text-[12.5px] flex items-center gap-1.5">
+            : <button disabled={busy || !desk?.connected} onClick={() => act(api.casStart)} className="btn-secondary !py-1.5 !px-3 text-[12.5px] flex items-center gap-1.5">
                 <Play className="w-3.5 h-3.5" />Start watching</button>}
+          {/* skips the scheduled window: entry opens from this minute until square-off */}
+          {desk?.window?.hunting_now
+            ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-semibold">
+                hunting since {desk?.window?.from}</span>
+            : <button disabled={busy || !desk?.connected} onClick={() => act(api.casHuntNow)}
+                      title="Start hunting from right now instead of waiting for the window"
+                      className="btn-primary !py-1.5 !px-3 text-[12.5px] flex items-center gap-1.5">
+                <Crosshair className="w-3.5 h-3.5" />Hunt now</button>}
         </div>
       </div>
 
@@ -174,7 +182,10 @@ export default function CasGame() {
               </select>
             </div>}>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-3">
-              <Stat label="Window" value={`${desk?.window?.from}–${desk?.window?.to}`} sub={desk?.window?.state} />
+              <Stat label="Window" value={`${desk?.window?.from}–${desk?.window?.to}`}
+                    sub={desk?.window?.hunting_now
+                      ? `hunting now · scheduled ${desk?.window?.scheduled?.from}–${desk?.window?.scheduled?.to}`
+                      : desk?.window?.state} />
               <Stat label="Square-off" value={desk?.window?.squareoff} sub="before the 15:40 close" />
               <Stat label="Spot" value={N(desk?.scan?.spot)} sub={desk?.scan?.expiry ? `expiry ${desk.scan.expiry}` : ''} />
               <Stat label="Staked" value={RS(desk?.totals?.spent)} sub={`${desk?.totals?.tickets || 0} tickets`} />
