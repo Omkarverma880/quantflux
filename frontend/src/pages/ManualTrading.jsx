@@ -619,6 +619,8 @@ function ManualOrderForm({ onOrderAction }) {
   // (the last only applies to plain equity, where the "premium" is the share price).
   const unitPrice = parseFloat(form.price) || optionLtp || (lotSize > 1 ? 0 : spotPrice) || 0;
 
+  const [unit, setUnit] = useState('lots');   // what the size field's number means
+  const inLots = unit === 'lots' && lotSize > 1;
   const byLots = sizeBy === 'lots';
   const switchSizeBy = (key) => {
     // hand the number on screen over to the other mode so nothing jumps
@@ -812,29 +814,39 @@ function ManualOrderForm({ onOrderAction }) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-        {lotSize > 1 ? (
-          <div className="md:col-span-4">
-            <LabeledField label="Lots" hint={byLots ? `1 lot = ${lotSize} qty` : 'from amount'}>
-              <div className="flex items-stretch gap-1">
+        <div className="md:col-span-6">
+          <LabeledField label={inLots ? 'Lots' : 'Quantity'}
+                        hint={!byLots ? 'from amount' : (inLots ? `1 lot = ${lotSize} qty` : `steps of ${lotSize}`)}>
+            <div className="flex items-stretch gap-1">
+              {lotSize > 1 ? (
                 <button type="button" onClick={() => stepLots(-1)} disabled={!byLots} aria-label="one lot fewer"
                         className="w-10 shrink-0 rounded-lg border border-surface-3 bg-surface-2 text-lg leading-none text-gray-300 transition-colors hover:border-brand-500/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40">−</button>
-                <input value={lotsOf(form.quantity)} onChange={(e) => setLots(e.target.value)}
-                       readOnly={!byLots} type="number" min="1" step="1"
-                       className={controlClass(`text-center mono ${byLots ? '' : 'opacity-60'}`)} />
+              ) : null}
+              {/* one field; the button inside it switches what the number means */}
+              <div className="relative flex-1">
+                <input name={inLots ? 'lots' : 'quantity'}
+                       value={inLots ? lotsOf(form.quantity) : form.quantity}
+                       onChange={(e) => (inLots ? setLots(e.target.value) : handleChange(e))}
+                       onBlur={inLots ? undefined : snapQuantity}
+                       readOnly={!byLots} type="number" min="1" step={inLots ? 1 : lotSize}
+                       className={controlClass(`mono pr-11 ${byLots ? '' : 'opacity-60'}`)} />
+                {lotSize > 1 ? (
+                  <button type="button" onClick={() => setUnit(inLots ? 'qty' : 'lots')}
+                          title={inLots ? 'switch to quantity' : 'switch to lots'}
+                          aria-label={inLots ? 'switch to quantity' : 'switch to lots'}
+                          className="absolute inset-y-1 right-1 w-9 rounded-md border border-surface-3 bg-surface-3/60 text-[10px] font-semibold uppercase tracking-wide text-gray-400 transition-colors hover:border-brand-500/50 hover:text-white">
+                    {inLots ? 'Qty' : 'Lot'}
+                  </button>
+                ) : null}
+              </div>
+              {lotSize > 1 ? (
                 <button type="button" onClick={() => stepLots(1)} disabled={!byLots} aria-label="one lot more"
                         className="w-10 shrink-0 rounded-lg border border-surface-3 bg-surface-2 text-lg leading-none text-gray-300 transition-colors hover:border-brand-500/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40">+</button>
-              </div>
-            </LabeledField>
-          </div>
-        ) : null}
-        <div className="md:col-span-4">
-          <LabeledField label="Quantity" hint={!byLots && lotSize > 1 ? 'from amount' : (lotSize > 1 ? `steps of ${lotSize}` : '')}>
-            <input name="quantity" value={form.quantity} onChange={handleChange} onBlur={snapQuantity}
-                   readOnly={!byLots} type="number" min="1" step={lotSize}
-                   className={controlClass(`mono ${byLots ? '' : 'opacity-60'}`)} />
+              ) : null}
+            </div>
           </LabeledField>
         </div>
-        <div className="md:col-span-4">
+        <div className="md:col-span-6">
           <LabeledField label="Trade Amount" hint={byLots ? 'from lots' : 'whole lots only'}>
             <input name="trade_amount" value={byLots ? costOfLots : form.trade_amount}
                    onChange={handleChange} readOnly={byLots} inputMode="numeric"
@@ -843,8 +855,10 @@ function ManualOrderForm({ onOrderAction }) {
         </div>
         {lotSize > 1 && unitPrice > 0 ? (
           <div className="md:col-span-12 -mt-1 text-[11.5px] text-gray-500">
-            {lotsOf(form.quantity)} lot{lotsOf(form.quantity) === 1 ? '' : 's'} ·{' '}
-            <span className="mono text-gray-300">{lotsOf(form.quantity) * lotSize}</span> qty ·{' '}
+            <span className="mono text-gray-300">
+              {inLots ? `${lotsOf(form.quantity) * lotSize} qty`
+                      : `${lotsOf(form.quantity)} lot${lotsOf(form.quantity) === 1 ? '' : 's'}`}
+            </span> ·{' '}
             <span className="mono text-gray-300">₹{costOfLots.toLocaleString('en-IN')}</span>{' '}
             at {form.price ? 'your price' : `the live premium ₹${unitPrice.toFixed(2)}`}
           </div>
