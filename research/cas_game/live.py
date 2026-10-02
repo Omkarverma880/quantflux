@@ -163,6 +163,55 @@ def scan(broker, p: ST.Params) -> dict:
 
 
 # ── the desk ─────────────────────────────────────────────────────────
+def _minute_now() -> int:
+    n = datetime.now()
+    return n.hour * 60 + n.minute
+
+
+def _record(db, user_id: int, ticket: dict, cfg: dict) -> None:
+    """Write (or update) this ticket's row in trade_logs.
+
+    The desk keeps tickets in memory, so a restart or a new session used to erase every trace of
+    a trade that had really been placed. One row per ticket, keyed by the symbol and the minute
+    it was taken, updated again when it closes.
+    """
+    if db is None:
+        return
+    try:
+        from core.models import TradeLog
+        key = f"{ticket.get('symbol')}@{ticket.get('taken_at')}"
+        row = (db.query(TradeLog)
+                 .filter(TradeLog.user_id == user_id, TradeLog.strategy_name == CONFIG_NAME,
+                         TradeLog.trade_date == date.today())
+                 .filter(TradeLog.extra["key"].astext == key).first())
+        if row is None:
+            row = TradeLog(user_id=user_id, strategy_name=CONFIG_NAME, trade_date=date.today())
+            db.add(row)
+        row.signal = "BUY"
+        row.option_symbol = ticket.get("symbol")
+        row.atm_strike = int(float(ticket.get("strike") or 0))
+        row.entry_price = ticket.get("entry")
+        row.exit_price = ticket.get("exit")
+        row.exit_type = ticket.get("exit_reason")
+        row.exit_time = ticket.get("closed_at")
+        row.lot_size = ticket.get("lot") or ticket.get("qty")
+        row.pnl = ticket.get("pnl")
+        row.extra = {"key": key, "mode": ticket.get("mode"), "option_type": ticket.get("option_type"),
+                     "lots": ticket.get("lots"), "qty": ticket.get("qty"), "cost": ticket.get("cost"),
+                     "target": ticket.get("target"), "taken_at": ticket.get("taken_at"),
+                     "index": (cfg.get("params") or {}).get("index"),
+                     "order_id": ticket.get("order_id"),
+                     "exit_error": ticket.get("exit_error"),
+                     "needs_attention": bool(ticket.get("needs_attention"))}
+        db.commit()
+    except Exception as exc:                      # a logging failure must never kill the desk
+        logger.warning("cas game: could not record ticket: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
 def _log(st: dict, line: str) -> None:
     """Append unless it repeats the last line, and keep only the tail.
 
@@ -276,18 +325,36 @@ class Desk:
                 return
             ticket["order_id"] = placed.get("order_id")
         st["tickets"].append(ticket)
+        _record(db, user_id, ticket, cfg)
         _log(st, f"{ST.hhmm(minute)} bought {ticket['option_type']} {ticket['strike']:g} "
                          f"× {ticket['lots']} lots at {ticket['entry']} ({cfg['mode']})")
         logger.info("cas game: %s ticket %s %s at %s (user %s)", cfg["mode"], ticket["option_type"],
                     ticket["strike"], ticket["entry"], user_id)
 
     def _close(self, db, user_id: int, broker, cfg: dict, ticket: dict, price: float, why: str) -> None:
+        """Book the exit — but only if the exit really happened.
+
+        A rejected sell used to be ignored: the ticket was marked closed with a tidy P&L while
+        the real position stayed open and rode into expiry. The desk's number and the broker's
+        number then disagreed, which is the worst possible way to be wrong.
+        """
         st = _state[user_id]
         if cfg["mode"] == "live" and ticket.get("order_id"):
-            self._order(broker, user_id, ticket, "SELL")
+            sold = self._order(broker, user_id, ticket, "SELL")
+            if not sold.get("ok"):
+                ticket["exit_error"] = str(sold.get("error"))[:200]
+                ticket["needs_attention"] = True
+                _log(st, f"{ST.hhmm(_minute_now())} SELL REFUSED for {ticket['option_type']} "
+                         f"{ticket['strike']:g} — STILL OPEN: {ticket['exit_error']}")
+                logger.error("cas game: sell refused, position still open: %s", ticket["exit_error"])
+                _record(db, user_id, ticket, cfg)
+                return                      # stays open; the next tick will try again
+            ticket.pop("exit_error", None)
+            ticket["needs_attention"] = False
         ticket.update(closed=True, exit=round(price, 2), exit_reason=why,
                       pnl=round((price - ticket["entry"]) * ticket["qty"], 2),
                       closed_at=datetime.now().strftime("%H:%M"))
+        _record(db, user_id, ticket, cfg)
         _log(st, f"{ticket['closed_at']} closed {ticket['option_type']} {ticket['strike']:g} "
                          f"at {ticket['exit']} ({why}) · {ticket['pnl']:+,.0f}")
 
