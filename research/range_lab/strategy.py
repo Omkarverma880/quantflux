@@ -46,6 +46,9 @@ class Params:
     # ── which way the cross is read ──────────────────────────────────
     mode: str = "reversal"               # reversal (as written) | breakout
     sides: str = "both"                  # both | call | put
+    cross_buffer: float = 0.0            # the close must clear the level by this many points
+    min_range: float = 0.0               # skip the day when the range is narrower than this
+    max_range: float = 0.0               # …or wider than this (0 = no limit)
 
     # ── the option that is bought ────────────────────────────────────
     moneyness: str = "ITM"               # ITM | ATM | OTM
@@ -116,10 +119,16 @@ def signal(prev_close: float, close: float, lv: dict, p: Params = P) -> Optional
     if not lv:
         return None
     hi, lo = float(lv["high"]), float(lv["low"])
-    up_through_low = prev_close <= lo < close
-    down_through_high = prev_close >= hi > close
-    up_through_high = prev_close <= hi < close
-    down_through_low = prev_close >= lo > close
+    width = hi - lo
+    if p.min_range and width < p.min_range:
+        return None
+    if p.max_range and width > p.max_range:
+        return None
+    b = float(p.cross_buffer or 0.0)          # a cross must clear the level, not graze it
+    up_through_low = prev_close <= lo and close > lo + b
+    down_through_high = prev_close >= hi and close < hi - b
+    up_through_high = prev_close <= hi and close > hi + b
+    down_through_low = prev_close >= lo and close < lo - b
 
     if p.mode == "breakout":
         call_on, put_on, call_lv, put_lv = up_through_high, down_through_low, "high", "low"
@@ -178,6 +187,8 @@ def describe(p: Params = P) -> list[str]:
         f"Trade the option {where}{offset}, {p.lots} lot(s) of {p.lot}.",
         (f"Take {p.target_points:g} points of profit, cut at {p.stop_points:g} — measured on "
          f"{'the index' if p.exit_on_index else 'the option premium'}."),
+        (f"A cross only counts once the close clears the level by {p.cross_buffer:g} points."
+         if p.cross_buffer else "Any cross of the level counts, however small."),
         f"No new trade before {hhmm(p.first_entry)} or after {hhmm(p.last_entry)}; "
         f"everything is closed by {hhmm(p.squareoff)}.",
         f"At most {p.max_trades_per_day} trade(s) a day"

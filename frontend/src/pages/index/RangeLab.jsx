@@ -11,6 +11,10 @@ const TABS = [
   { id: 'rules', label: 'The rules', icon: BookOpen },
 ];
 
+// RS() signs everything, which is right for a P&L and wrong for a magnitude:
+// a drawdown of 45,150 is not "+₹45,150". Costs and drawdowns use this instead.
+const RSA = (v) => (v == null ? '—' : `₹${Math.abs(Number(v)).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
+
 const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
 
@@ -231,14 +235,16 @@ export default function RangeLab() {
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                     <Stat label="Net" value={RS(s.net)} tone={tone(s.net)} sub={`${s.trades} trades`} />
                     <Stat label="Per trade" value={RS(s.per_trade)} tone={tone(s.per_trade)}
-                          sub={`${PCT(s.win_rate)} win`} />
-                    <Stat label="Gross" value={RS(s.gross)} sub={`${RS(s.charges)} charges`} />
+                          sub={`${PCT(s.win_rate)} of trades win · ${RSA(s.charges / Math.max(s.trades, 1))} cost each`} />
+                    <Stat label="Gross" value={RS(s.gross)} tone={tone(s.gross)}
+                          sub={`less ${RSA(s.charges)} charges`} />
                     <Stat label="Green months" value={`${s.green_months}/${s.months}`}
-                          sub={`median ${RS(s.median_month)}`} />
+                          tone={tone(s.median_month)}
+                          sub={`median month ${RS(s.median_month)} — not a win rate`} />
                     <Stat label="Worst day" value={RS(s.worst_day)} tone="text-red-400"
                           sub={`best ${RS(s.best_day)}`} />
-                    <Stat label="Max drawdown" value={RS(s.max_drawdown)} tone="text-red-400"
-                          sub={`${s.traded_days} days traded`} />
+                    <Stat label="Max drawdown" value={RSA(s.max_drawdown)} tone="text-red-400"
+                          sub={`worst peak-to-trough · ${s.traded_days} days traded`} />
                   </div>
                   {s.charges > Math.abs(s.gross) * 0.5 && (
                     <div className="mt-3"><Note>
@@ -368,6 +374,16 @@ function Settings({ params, meta, onChange }) {
             <option value="both">call and put</option><option value="call">calls only</option>
             <option value="put">puts only</option>
           </select>
+        </Field>
+
+        <Field label="Cross buffer" hint="points the close must clear the level by">
+          <input type="number" step="1" value={params.cross_buffer ?? 0} onChange={num('cross_buffer')} className={input} />
+        </Field>
+        <Field label="Min range width" hint="skip a narrower range (0 = off)">
+          <input type="number" step="10" value={params.min_range ?? 0} onChange={num('min_range')} className={input} />
+        </Field>
+        <Field label="Max range width" hint="skip a wider range (0 = off)">
+          <input type="number" step="10" value={params.max_range ?? 0} onChange={num('max_range')} className={input} />
         </Field>
 
         <Field label="Target (points)"><input type="number" value={params.target_points} onChange={num('target_points')} className={input} /></Field>
