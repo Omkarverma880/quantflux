@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Loader2, Play, Square, RefreshCw, AlertTriangle, Radio, BarChart3, BookOpen, Ruler,
+  Loader2, Play, Square, RefreshCw, AlertTriangle, Radio, BarChart3, BookOpen, Ruler, Info, Check,
 } from 'lucide-react';
 import { api } from '../../api';
 import { Note, Section, Stat, Field, input, N, N0, RS, PCT, tone } from '../../components/fluxlab/ui';
@@ -9,6 +9,7 @@ const TABS = [
   { id: 'desk', label: 'Live desk', icon: Radio },
   { id: 'backtest', label: 'Backtest', icon: BarChart3 },
   { id: 'rules', label: 'The rules', icon: BookOpen },
+  { id: 'guide', label: 'Filters & presets', icon: Info },
 ];
 
 // RS() signs everything, which is right for a P&L and wrong for a magnitude:
@@ -31,6 +32,8 @@ export default function RangeLab() {
   const [job, setJob] = useState(null);
   const [result, setResult] = useState(null);
   const [runs, setRuns] = useState([]);
+  const [guide, setGuide] = useState(null);
+  const [applied, setApplied] = useState('');
   const poll = useRef(null);
 
   const loadMeta = useCallback(async () => {
@@ -45,8 +48,11 @@ export default function RangeLab() {
     try { setDesk(await api.rangeDesk()); } catch (e) { setErr(String(e.message || e)); }
   }, []);
 
-  useEffect(() => { loadMeta(); loadDesk(); api.rangeRuns().then((d) => setRuns(d?.runs || [])).catch(() => {}); },
-    [loadMeta, loadDesk]);
+  useEffect(() => {
+    loadMeta(); loadDesk();
+    api.rangeRuns().then((d) => setRuns(d?.runs || [])).catch(() => {});
+    api.rangeGuide().then(setGuide).catch(() => {});
+  }, [loadMeta, loadDesk]);
   useEffect(() => {
     if (tab !== 'desk') return undefined;
     const t = setInterval(loadDesk, 5000);
@@ -64,6 +70,17 @@ export default function RangeLab() {
     const next = { ...(params || {}), ...patch };
     setParams(next);
     try { await api.rangeConfig({ params: patch }); } catch (e) { setErr(String(e.message || e)); }
+  };
+
+  const applyPreset = async (preset) => {
+    // the dates matter as much as the parameters: a preset's number belongs to its window
+    const w = guide?.window || {};
+    setRange({ start: w.start || range.start, end: w.end || range.end });
+    setParams({ ...(params || {}), ...preset.params });
+    setApplied(preset.id);
+    setTab('backtest');
+    try { await api.rangeConfig({ params: preset.params }); }
+    catch (e) { setErr(String(e.message || e)); }
   };
 
   const runBacktest = async () => {
@@ -317,6 +334,91 @@ export default function RangeLab() {
               </div>
             </Section>
           )}
+        </>
+      )}
+
+      {tab === 'guide' && (
+        <>
+          <Section title="How to reproduce a number">
+            <ol className="space-y-1.5 text-[13px] text-gray-300 list-decimal list-inside">
+              <li>Pick a preset below and press <b>Apply</b>. It sets every setting <i>and</i> the
+                  date window the number was measured on.</li>
+              <li>You land on the Backtest tab with everything filled in. Press <b>Run backtest</b>.</li>
+              <li>The result should match the preset's row. If it does not, the market store has
+                  been refreshed or extended since the row was recorded — the fresh run is the
+                  truthful one.</li>
+            </ol>
+            {guide?.window && (
+              <div className="mt-3 text-[12px] text-gray-400">
+                Every number below was measured on{' '}
+                <span className="mono text-gray-300">{guide.window.start} → {guide.window.end}</span>,{' '}
+                {guide.window.note}. Net of real brokerage, STT and one tick of slippage per side.
+              </div>
+            )}
+          </Section>
+
+          <Section title="Measured configurations">
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12.5px]">
+                <thead className="text-gray-500 text-[11px] uppercase tracking-wide">
+                  <tr>{['', 'Configuration', 'Trades', 'Net', 'Per trade', 'Win', 'Green months', 'Max drawdown', 'Confidence']
+                    .map((h) => <th key={h} className="text-left font-medium py-1.5 pr-3">{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {(guide?.presets || []).map((ps) => (
+                    <tr key={ps.id} className="border-t border-surface-3 align-top">
+                      <td className="py-2 pr-3">
+                        <button onClick={() => applyPreset(ps)}
+                                className="btn-secondary !py-1 !px-2 text-[11.5px] flex items-center gap-1">
+                          {applied === ps.id ? <Check className="w-3 h-3" /> : null}Apply
+                        </button>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <div className="text-gray-200">{ps.name}</div>
+                        <div className="text-[11.5px] text-gray-500 max-w-md">{ps.note}</div>
+                      </td>
+                      <td className="py-2 pr-3 mono">{ps.result.trades}</td>
+                      <td className={`py-2 pr-3 mono ${tone(ps.result.net)}`}>{RS(ps.result.net)}</td>
+                      <td className={`py-2 pr-3 mono ${tone(ps.result.per_trade)}`}>{RS(ps.result.per_trade)}</td>
+                      <td className="py-2 pr-3 mono">{PCT(ps.result.win_rate)}</td>
+                      <td className="py-2 pr-3 mono">{ps.result.green_months}/{ps.result.months}</td>
+                      <td className="py-2 pr-3 mono text-red-400">{RSA(ps.result.max_drawdown)}</td>
+                      <td className="py-2 pr-3 mono text-gray-400">
+                        {ps.result.p_profit ? `${ps.result.p_profit}%` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[11.5px] text-gray-500 mt-2">
+              Confidence is the share of 5,000 bootstrap resamples of the daily results that stayed
+              profitable. Blank where it was not computed.
+            </p>
+          </Section>
+
+          <Section title="What each filter does">
+            <div className="space-y-3">
+              {(guide?.filters || []).map((f) => (
+                <div key={f.key} className="border-l-2 border-surface-3 pl-3">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="text-[13px] font-semibold text-gray-100">{f.name}</span>
+                    <span className="text-[11px] text-gray-500 mono">{f.key}</span>
+                    <span className="text-[11px] text-gray-500">({f.unit})</span>
+                  </div>
+                  <div className="text-[12.5px] text-gray-300 mt-1">{f.what}</div>
+                  <div className="text-[12.5px] text-gray-400 mt-1"><b className="text-gray-500">Why: </b>{f.why}</div>
+                  <div className="text-[12.5px] text-gray-400 mt-1"><b className="text-gray-500">Measured: </b>{f.measured}</div>
+                  <div className="text-[12.5px] text-emerald-400/90 mt-1"><b className="text-gray-500">Use: </b>{f.suggested}</div>
+                </div>
+              ))}
+            </div>
+          </Section>
+
+          <Section title="What these numbers do not prove">
+            <ul className="space-y-1.5 text-[12.5px] text-gray-300 list-disc list-inside">
+              {(guide?.caveats || []).map((c, i) => <li key={i}>{c}</li>)}
+            </ul>
+          </Section>
         </>
       )}
 

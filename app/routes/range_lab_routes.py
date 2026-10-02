@@ -22,6 +22,7 @@ from core.broker import get_user_broker
 from core.database import get_db
 from core.logger import get_logger
 from research.range_lab import live as LIVE
+from research.range_lab import presets as PRE
 from research.range_lab import service as SV
 from research.range_lab import strategy as ST
 
@@ -99,6 +100,14 @@ def meta(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
         "app_paper_mode": bool(settings.PAPER_TRADE or not settings.TRADING_ENABLED),
         "connected": _broker(db, user_id) is not None,
     }
+
+
+@router.get("/guide")
+@safe("guide")
+def guide(user_id: int = Depends(login_required)):
+    """What each filter does, and the configurations whose numbers are quoted in the app."""
+    return {"status": "ok", "window": PRE.WINDOW, "filters": PRE.FILTERS,
+            "presets": PRE.PRESETS, "caveats": PRE.CAVEATS, "common": PRE.COMMON}
 
 
 @router.post("/config")

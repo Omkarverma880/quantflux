@@ -632,6 +632,7 @@ export const api = {
 
   rangeMeta: () => request('/index-strategy/range-lab/meta'),
   rangeDesk: () => request('/index-strategy/range-lab/desk'),
+  rangeGuide: () => request('/index-strategy/range-lab/guide'),
   rangeConfig: (body) => request('/index-strategy/range-lab/config', { method: 'POST', body: JSON.stringify(body || {}) }),
   rangeStart: () => request('/index-strategy/range-lab/start', { method: 'POST' }),
   rangeStop: () => request('/index-strategy/range-lab/stop', { method: 'POST' }),
