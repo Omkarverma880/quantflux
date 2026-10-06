@@ -33,9 +33,10 @@ export function rowTone(row) {
 
 export const ROW_CLASS = {
   blink: 'row-blink',
-  oversold: 'bg-emerald-500/10 hover:bg-emerald-500/15',
-  overbought: 'bg-red-500/10 hover:bg-red-500/15',
-  plain: 'hover:bg-surface-2/60',
+  oversold: 'bg-emerald-500/10 hover:bg-emerald-500/20',
+  overbought: 'bg-red-500/10 hover:bg-red-500/20',
+  // the zebra stripe is applied by the table; hover only has to be stronger than either stripe
+  plain: 'hover:bg-brand-500/10',
 };
 
 // A tinted background and a coloured dot carry the meaning; the text itself uses the theme's

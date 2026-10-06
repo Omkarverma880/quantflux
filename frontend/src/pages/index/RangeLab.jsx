@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Loader2, Play, Square, RefreshCw, AlertTriangle, Radio, BarChart3, BookOpen, Ruler, Info, Check,
+  Loader2, Play, Square, RefreshCw, AlertTriangle, Radio, BarChart3, BookOpen, Ruler, Info, Check, Download,
 } from 'lucide-react';
-import { api } from '../../api';
+import { api, API_BASE } from '../../api';
 import { Note, Section, Stat, Field, input, N, N0, RS, PCT, tone } from '../../components/fluxlab/ui';
 
 const TABS = [
@@ -81,6 +81,18 @@ export default function RangeLab() {
     setTab('backtest');
     try { await api.rangeConfig({ params: preset.params }); }
     catch (e) { setErr(String(e.message || e)); }
+  };
+
+  const exportCsv = (runId, what) => {
+    const token = localStorage.getItem('app_token');
+    fetch(`${API_BASE}/index-strategy/range-lab/runs/${runId}/export.csv?what=${what}`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => r.blob()).then((b) => {
+        const url = URL.createObjectURL(b);
+        const a = document.createElement('a');
+        a.href = url; a.download = `range-5-60-${runId}-${what}.csv`; a.click();
+        URL.revokeObjectURL(url);
+      }).catch((e) => setErr(String(e.message || e)));
   };
 
   const runBacktest = async () => {
@@ -246,7 +258,16 @@ export default function RangeLab() {
           <Settings params={params} meta={meta} onChange={saveParams} />
 
           {s && (
-            <Section title="Result">
+            <Section title="Result" right={result?.id ? (
+              <div className="flex items-center gap-1.5">
+                {[['trades', 'Trades'], ['monthly', 'Monthly'], ['summary', 'Summary']].map(([w, lbl]) => (
+                  <button key={w} onClick={() => exportCsv(result.id, w)}
+                          className="btn-secondary !py-1 !px-2 text-[11.5px] flex items-center gap-1">
+                    <Download className="w-3 h-3" />{lbl}
+                  </button>
+                ))}
+              </div>
+            ) : null}>
               {s.trades ? (
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
@@ -290,7 +311,11 @@ export default function RangeLab() {
           )}
 
           {!!result?.trades?.length && (
-            <Section title={`Trades (${result.trades.length})`}>
+            <Section title={`Trades (${result.trades.length})`} right={result?.id ? (
+              <button onClick={() => exportCsv(result.id, 'trades')}
+                      className="btn-secondary !py-1 !px-2 text-[11.5px] flex items-center gap-1">
+                <Download className="w-3 h-3" />Download all as CSV
+              </button>) : null}>
               <div className="overflow-x-auto max-h-[460px]">
                 <table className="w-full text-[12px]">
                   <thead className="text-gray-500 text-[11px] uppercase tracking-wide sticky top-0 bg-surface-1">
@@ -329,6 +354,10 @@ export default function RangeLab() {
                     <span className="mono">{r.trades} trades</span>
                     <span className={`mono ${tone(r.net)}`}>{RS(r.net)}</span>
                     <span className="text-gray-500">{r.green_months}/{r.months} green months</span>
+                    <button onClick={() => exportCsv(r.id, 'trades')}
+                            className="ml-auto btn-secondary !py-0.5 !px-2 text-[11px] flex items-center gap-1">
+                      <Download className="w-3 h-3" />CSV
+                    </button>
                   </div>
                 ))}
               </div>

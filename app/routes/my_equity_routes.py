@@ -192,6 +192,18 @@ def remove_stock(stock_id: int, user_id: int = Depends(login_required),
     return {"status": "ok"}
 
 
+@router.get("/fno")
+@safe("fno")
+def fno(symbol: str, spot: float = 0.0, around: int = 5,
+        user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Nearest-expiry option strikes around spot for one stock, for the order ticket."""
+    svc = _service(db, user_id)
+    if svc.broker is None:
+        return {"status": "error", "code": "not_connected",
+                "message": "Connect Zerodha to see the option chain."}
+    return {"status": "ok", **svc.option_chain(symbol, spot, max(1, min(int(around), 10)))}
+
+
 @router.get("/xray/{stock_id}")
 @safe("xray")
 def xray(stock_id: int, news: int = 1, fundamentals: int = 1, refresh: int = 1,

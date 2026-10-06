@@ -7,6 +7,8 @@ Everything here reads data or edits settings.
 """
 from __future__ import annotations
 
+import csv
+import io as _io
 import math
 import traceback
 from datetime import date
@@ -14,6 +16,7 @@ from functools import wraps
 
 import numpy as np
 from fastapi import APIRouter, Depends
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -181,6 +184,35 @@ def run_detail(run_id: str, user_id: int = Depends(login_required)):
     if not r:
         return {"status": "error", "message": "run not found"}
     return {"status": "ok", "run": {**r, "trades": r.get("trades", [])[:1000]}}
+
+
+@router.get("/runs/{run_id}/export.csv")
+def export(run_id: str, what: str = "trades", user_id: int = Depends(login_required)):
+    """The whole run as CSV — every trade, not the 500 the page shows."""
+    r = SV.load_run(run_id) or {}
+    buf = _io.StringIO()
+    w = csv.writer(buf)
+    if what == "monthly":
+        w.writerow(["month", "net"])
+        for m, v in ((r.get("summary") or {}).get("monthly") or {}).items():
+            w.writerow([m, v])
+    elif what == "summary":
+        s = r.get("summary") or {}
+        w.writerow(["setting", "value"])
+        for k, v in (r.get("params") or {}).items():
+            w.writerow([k, v])
+        w.writerow([]); w.writerow(["result", "value"])
+        for k, v in s.items():
+            if not isinstance(v, (dict, list)):
+                w.writerow([k, v])
+    else:
+        cols = ["date", "time", "fill_time", "range", "level", "level_price", "why", "side",
+                "strike", "moneyness", "spot_at_signal", "entry", "exit", "exit_time",
+                "exit_reason", "held_min", "lots", "qty", "gross", "charges", "pnl"]
+        w.writerow(cols)
+        for t in r.get("trades") or []:
+            w.writerow([t.get(c) for c in cols])
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv")
 
 
 @router.delete("/runs/{run_id}")

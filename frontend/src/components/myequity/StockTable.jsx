@@ -205,17 +205,24 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
       <div className="card !p-0 overflow-hidden hidden md:block">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1150px] text-[12px]">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-wider text-gray-500 border-b border-surface-3">
-              {COLS.map(([k, l, a]) => <th key={k} className={`${pad} font-medium ${ALIGN[a]}`}>{l}</th>)}
+          <thead className="sticky top-0 z-10">
+            {/* its own solid background and a hard bottom rule: the header has to read as a
+                header when it sits directly above a tinted row */}
+            <tr className="bg-surface-3/80 backdrop-blur-sm text-[10.5px] uppercase tracking-[0.12em]
+                           text-gray-300 border-b-2 border-surface-4 shadow-sm">
+              {COLS.map(([k, l, a]) => (
+                <th key={k} className={`${pad} font-semibold ${ALIGN[a]} whitespace-nowrap`}>{l}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
+            {rows.map((r, i) => {
               const tone = rowTone(r);
               return (
                 <tr key={r.id} onClick={() => onOpen?.(r)}
-                  className={`border-b border-surface-3/40 cursor-pointer transition-colors ${ROW_CLASS[tone]}`}>
+                  className={`border-b border-surface-3 cursor-pointer transition-colors
+                    ${tone === 'plain' ? (i % 2 ? 'bg-surface-2/30' : 'bg-transparent') : ''}
+                    ${ROW_CLASS[tone]}`}>
                   <td className={pad}>
                     <div className="flex items-center gap-1.5">
                       {tone === 'blink' && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 dot-blink shrink-0" />}

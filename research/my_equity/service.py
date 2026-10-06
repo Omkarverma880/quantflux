@@ -60,6 +60,8 @@ class MyEquityService:
         self._index_at = 0.0
         self._daily_at: dict[str, float] = {}     # exchange:symbol -> last candle refresh
         self._warm_at = 0.0
+        self._fno_cache: dict[str, list] = {}     # underlying -> its listed option instruments
+        self._fno_day = None
 
     # ── instruments ──────────────────────────────────────────────────
     def _equities(self, exchange: str) -> dict:
@@ -80,6 +82,77 @@ class MyEquityService:
             return self._inst.get(exchange, {})
         self._inst[exchange], self._inst_day[exchange] = out, today
         return out
+
+    def _fno(self) -> dict:
+        """Day-cached NFO option instruments, grouped by the underlying's name."""
+        today = date.today()
+        if self._fno_day == today and self._fno_cache:
+            return self._fno_cache
+        out: dict[str, list] = {}
+        try:
+            for i in self.broker.get_instruments("NFO") or []:
+                if i.get("instrument_type") not in ("CE", "PE"):
+                    continue
+                name = (i.get("name") or "").strip().upper()
+                if not name:
+                    continue
+                exp = i.get("expiry")
+                exp = exp if isinstance(exp, date) else (pd.Timestamp(str(exp)).date() if exp else None)
+                if not exp or exp < today:
+                    continue
+                out.setdefault(name, []).append({
+                    "symbol": i["tradingsymbol"], "type": i["instrument_type"],
+                    "strike": float(i.get("strike") or 0), "expiry": exp,
+                    "lot_size": int(i.get("lot_size") or 0)})
+        except Exception as exc:
+            logger.error("NFO instrument dump failed: %s", exc)
+            return self._fno_cache
+        self._fno_cache, self._fno_day = out, today
+        return out
+
+    def option_chain(self, symbol: str, spot: float = 0.0, around: int = 5) -> dict:
+        """The nearest-expiry strikes either side of spot, priced.
+
+        Returns ``fno: False`` for a stock with no listed options — the caller shows the equity
+        ticket alone rather than an empty chain.
+        """
+        symbol = (symbol or "").strip().upper()
+        if self.broker is None:
+            return {"fno": False, "reason": "not connected"}
+        rows = self._fno().get(symbol) or []
+        if not rows:
+            return {"fno": False, "reason": "no listed options"}
+        expiry = min(r["expiry"] for r in rows)
+        rows = [r for r in rows if r["expiry"] == expiry]
+        if not spot:
+            try:
+                key = f"NSE:{symbol}"
+                spot = float((self.broker.get_quote([key]) or {}).get(key, {}).get("last_price") or 0)
+            except Exception:
+                spot = 0.0
+        strikes = sorted({r["strike"] for r in rows if r["strike"] > 0})
+        if not strikes:
+            return {"fno": False, "reason": "no strikes listed"}
+        atm = min(strikes, key=lambda k: abs(k - spot)) if spot else strikes[len(strikes) // 2]
+        i0 = strikes.index(atm)
+        want = strikes[max(0, i0 - around): i0 + around + 1]
+        by_key = {(r["type"], r["strike"]): r for r in rows}
+        keys = [f"NFO:{by_key[(t, k)]['symbol']}" for k in want for t in ("CE", "PE") if (t, k) in by_key]
+        quotes = self.quotes(keys)
+        chain = []
+        for k in want:
+            row = {"strike": k, "atm": k == atm}
+            for t in ("CE", "PE"):
+                r = by_key.get((t, k))
+                if not r:
+                    continue
+                q = quotes.get(f"NFO:{r['symbol']}") or {}
+                row[t.lower()] = {"symbol": r["symbol"], "lot_size": r["lot_size"],
+                                  "ltp": float(q.get("last_price") or 0) or None}
+            chain.append(row)
+        lot = next((r["lot_size"] for r in rows if r["lot_size"]), 0)
+        return {"fno": True, "symbol": symbol, "spot": spot, "atm": atm,
+                "expiry": str(expiry), "lot_size": lot, "exchange": "NFO", "chain": chain}
 
     def token_for(self, s) -> Optional[int]:
         """The stock's instrument token, looked up once and saved back on the row."""
