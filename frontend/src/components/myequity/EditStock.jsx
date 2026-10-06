@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { X, Loader2, AlertTriangle } from 'lucide-react';
+import { X, Loader2, AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../api';
 import { N } from './ui';
 
@@ -20,7 +20,12 @@ const CATS = [
 export default function EditStock({ row, onClose, onSaved }) {
   const [form, setForm] = useState({
     added_on: row.added_on || '',
-    levels: (row.levels || []).map((l) => l.price).join(', '),
+    levels: (row.levels || []).map((l) => ({
+      price: String(l.price), side: l.side || 'LONG',
+      target: l.target == null ? '' : String(l.target),
+      stop: l.stop == null ? '' : String(l.stop),
+      booked: (l.booked || []).length,
+    })),
     touch_pct: row.touch_pct ?? 0.25,
     category: row.category || 'SWING',
     note: row.note || '',
@@ -30,6 +35,13 @@ export default function EditStock({ row, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const setLevel = (i, patch) => setForm((f) => ({
+    ...f, levels: f.levels.map((l, j) => (j === i ? { ...l, ...patch } : l)),
+  }));
+  const addLevel = () => setForm((f) => ({
+    ...f, levels: [...f.levels, { price: '', side: 'LONG', target: '', stop: '', booked: 0 }],
+  }));
+  const removeLevel = (i) => setForm((f) => ({ ...f, levels: f.levels.filter((_, j) => j !== i) }));
 
   const changedDate = form.added_on !== (row.added_on || '');
   const cat = useMemo(() => CATS.find((c) => c[0] === form.category) || CATS[0], [form.category]);
@@ -39,7 +51,13 @@ export default function EditStock({ row, onClose, onSaved }) {
     try {
       const r = await api.meUpdate(row.id, {
         added_on: form.added_on || null,
-        levels: form.levels,
+        levels: form.levels
+          .filter((l) => String(l.price).trim() !== '' && Number(l.price) > 0)
+          .map((l) => ({
+            price: Number(l.price), side: l.side,
+            target: l.target === '' ? null : Number(l.target),
+            stop: l.stop === '' ? null : Number(l.stop),
+          })),
         touch_pct: Number(form.touch_pct) || 0.25,
         category: form.category,
         note: form.note,
@@ -83,13 +101,49 @@ export default function EditStock({ row, onClose, onSaved }) {
           </div>
         )}
 
-        <Field label="Research entry levels" hint="one or many, comma separated">
-          <input value={form.levels} onChange={(e) => set({ levels: e.target.value })}
-            placeholder="3100, 2900" className="input-field !py-1.5 mt-1 w-full mono" />
-        </Field>
-        <div className="text-[10.5px] text-gray-500 -mt-1">
-          A level you keep stays as it is — its direction, bookings and re-arm date are preserved.
-          A new number starts fresh from now.
+        <div>
+          <div className="flex h-4 items-baseline justify-between gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-gray-500">Research entry levels</span>
+            <span className="text-[10px] text-gray-600">
+              {row.fno ? 'each level says which way, and so which option it buys' : 'each level is tracked on its own'}
+            </span>
+          </div>
+          <div className="space-y-1.5 mt-1.5">
+            {form.levels.map((lv, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <input type="number" step="0.05" value={lv.price} placeholder="3000"
+                  onChange={(e) => setLevel(i, { price: e.target.value })}
+                  className="input-field !py-1.5 w-28 mono" />
+                <select value={lv.side} onChange={(e) => setLevel(i, { side: e.target.value })}
+                  className={`input-field !py-1.5 flex-1 ${lv.side === 'SHORT' ? 'text-red-300' : 'text-emerald-300'}`}>
+                  <option value="LONG">{row.fno ? 'Long — buy the ATM call' : 'Long — expecting it up'}</option>
+                  <option value="SHORT">{row.fno ? 'Short — buy the ATM put' : 'Short — expecting it down'}</option>
+                </select>
+                <input type="number" step="0.05" value={lv.target} placeholder="target"
+                  onChange={(e) => setLevel(i, { target: e.target.value })}
+                  className="input-field !py-1.5 w-20 mono" />
+                <input type="number" step="0.05" value={lv.stop} placeholder="stop"
+                  onChange={(e) => setLevel(i, { stop: e.target.value })}
+                  className="input-field !py-1.5 w-20 mono" />
+                <button onClick={() => removeLevel(i)} title="remove this level"
+                  className="text-gray-600 hover:text-red-400 p-1 shrink-0">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+            {!form.levels.length && (
+              <div className="text-[11.5px] text-gray-500">No levels yet.</div>
+            )}
+            <button onClick={addLevel}
+              className="btn-secondary !py-1 !px-2 text-[11.5px] flex items-center gap-1">
+              <Plus className="w-3 h-3" />Add a level
+            </button>
+          </div>
+          <div className="text-[10.5px] text-gray-500 mt-1.5">
+            {form.levels.some((l) => l.booked > 0)
+              ? 'A level you keep keeps its bookings and its re-arm date; the direction, target and stop are whatever you set here.'
+              : 'A target must sit the way the level is meant to go, and the stop the other way — anything else is dropped.'}
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3">

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, Search, Loader2, X, CalendarDays } from 'lucide-react';
+import { Plus, Search, Loader2, X, CalendarDays, Trash2 } from 'lucide-react';
 import { api } from '../../api';
 import { CategoryChip } from './ui';
 
@@ -12,7 +12,8 @@ import { CategoryChip } from './ui';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY = {
-  symbol: '', exchange: null, company: '', levels: '', note: '',
+  symbol: '', exchange: null, company: '', note: '',
+  levels: [{ price: '', side: 'LONG' }],
   added_on: today(), touch_pct: 0.25, category: 'SWING',
 };
 
@@ -25,6 +26,11 @@ export default function AddStock({ onAdded, connected }) {
   const [err, setErr] = useState('');
   const timer = useRef(null);
 
+  const setLevel = (i, patch) => setForm((f) => ({
+    ...f, levels: f.levels.map((l, j) => (j === i ? { ...l, ...patch } : l)),
+  }));
+  const addLevel = () => setForm((f) => ({ ...f, levels: [...f.levels, { price: '', side: 'LONG' }] }));
+  const removeLevel = (i) => setForm((f) => ({ ...f, levels: f.levels.filter((_, j) => j !== i) }));
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const backdated = form.added_on && form.added_on !== today();
 
@@ -52,7 +58,10 @@ export default function AddStock({ onAdded, connected }) {
     try {
       const r = await api.meAdd({
         symbol: form.symbol.trim().toUpperCase(), exchange: form.exchange,
-        levels: form.levels, note: form.note, added_on: form.added_on,
+        levels: form.levels
+          .filter((l) => String(l.price).trim() !== '' && Number(l.price) > 0)
+          .map((l) => ({ price: Number(l.price), side: l.side })),
+        note: form.note, added_on: form.added_on,
         touch_pct: Number(form.touch_pct) || 0.25, category: form.category,
       });
       if (r.status !== 'ok') { setErr(r.message || 'could not add'); return; }
@@ -101,12 +110,37 @@ export default function AddStock({ onAdded, connected }) {
           )}
         </div>
 
-        <label className="block">
+        <div>
           <div className="text-[10px] uppercase tracking-wider text-gray-500">Research entry levels</div>
-          <input value={form.levels} placeholder="3100, 2900" onChange={(e) => set({ levels: e.target.value })}
-            className="input-field !py-1.5 mt-1 w-full mono" />
-          <div className="text-[10.5px] text-gray-500 mt-0.5">One or many — each is tracked on its own</div>
-        </label>
+          <div className="space-y-1.5 mt-1">
+            {form.levels.map((lv, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <input type="number" step="0.05" value={lv.price} placeholder="3100"
+                  onChange={(e) => setLevel(i, { price: e.target.value })}
+                  className="input-field !py-1.5 w-28 mono" />
+                <select value={lv.side} onChange={(e) => setLevel(i, { side: e.target.value })}
+                  className={`input-field !py-1.5 flex-1 ${lv.side === 'SHORT' ? 'text-red-300' : 'text-emerald-300'}`}>
+                  <option value="LONG">Long — expecting it up</option>
+                  <option value="SHORT">Short — expecting it down</option>
+                </select>
+                {form.levels.length > 1 && (
+                  <button type="button" onClick={() => removeLevel(i)} title="remove"
+                    className="text-gray-600 hover:text-red-400 p-1 shrink-0">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+            <button type="button" onClick={addLevel}
+              className="btn-secondary !py-1 !px-2 text-[11.5px] flex items-center gap-1">
+              <Plus className="w-3 h-3" />Another level
+            </button>
+          </div>
+          <div className="text-[10.5px] text-gray-500 mt-1">
+            Each is tracked on its own. On an F&amp;O stock the direction decides whether an
+            automatic buy takes the call or the put.
+          </div>
+        </div>
 
         <label className="block">
           <div className="text-[10px] uppercase tracking-wider text-gray-500 flex items-center gap-1">

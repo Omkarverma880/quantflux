@@ -73,19 +73,35 @@ def parse_levels(raw, on=None) -> list[dict]:
 def merge_levels(existing, incoming, on=None) -> list[dict]:
     """Re-type the level list without losing what each level already knows.
 
-    Editing levels is usually "3000, 2900" typed into a box, which carries no direction, no
-    bookings and no re-arm date. A level at a price that is already there keeps all of that —
-    only genuinely new prices start fresh. Deleting a price still deletes its history, which is
-    what removing a level means.
+    A level at a price that is already there keeps its bookings, its re-arm date and the day it
+    was first written down. Everything you can actually edit — the direction, the target, the
+    stop, whether it is tracked — comes from what you just submitted. Deleting a price still
+    deletes its history, which is what removing a level means.
     """
     old = {round(l["price"], 4): l for l in LV.normalise(existing)}
+    # which prices arrived with a direction of their own. A bare "3000, 2900" says nothing about
+    # direction, so it must not silently flip a level you had pointed short — only an edit that
+    # actually names a direction changes one.
+    said_side: set = set()
+    if isinstance(incoming, (list, tuple)):
+        for it in incoming:
+            if isinstance(it, dict) and it.get("side") and it.get("price") is not None:
+                try:
+                    said_side.add(round(float(it["price"]), 4))
+                except (TypeError, ValueError):
+                    pass
+
     out = []
     for lv in parse_levels(incoming, on):
-        prev = old.get(round(lv["price"], 4))
+        key = round(lv["price"], 4)
+        prev = old.get(key)
         if prev:
-            merged = {**prev}
-            # the only things the text box can actually change
-            merged["track"] = lv.get("track", True)
+            merged = {**lv}
+            for keep in ("booked", "reset_on", "added_at"):
+                if prev.get(keep) is not None:
+                    merged[keep] = prev[keep]
+            if key not in said_side and prev.get("side"):
+                merged["side"] = prev["side"]
             out.append(merged)
         else:
             out.append(lv)
