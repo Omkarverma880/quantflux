@@ -23,6 +23,7 @@ from typing import Optional
 import pandas as pd
 
 MAX_LEVELS = 12
+MAX_BOOKED = 20          # how much history one level keeps
 
 
 def _num(v) -> Optional[float]:
@@ -38,6 +39,11 @@ def normalise(raw) -> list[dict]:
 
     Always returns the dict form. ``target`` and ``stop`` are optional — they are where you
     said you would take the money and where you would admit the idea was wrong.
+
+    Two more fields survive a round trip, both written when a trade on the level is closed:
+    ``booked`` is the list of completed trades on this level, and ``reset_on`` is the date the
+    level starts looking for its NEXT trigger from. Together they let one level be used over and
+    over without losing what it did last time.
     """
     if raw is None:
         return []
@@ -46,10 +52,13 @@ def normalise(raw) -> list[dict]:
     seen: set[float] = set()
     for it in items:
         track, target, stop = True, None, None
+        booked, reset_on = [], None
         if isinstance(it, dict):
             price = it.get("price")
             track = bool(it.get("track", True))
             target, stop = _num(it.get("target")), _num(it.get("stop"))
+            booked = [b for b in (it.get("booked") or []) if isinstance(b, dict)][-MAX_BOOKED:]
+            reset_on = _as_date(it.get("reset_on"))
         else:
             price = it
         p = _num(price)
@@ -62,6 +71,10 @@ def normalise(raw) -> list[dict]:
             row["target"] = target
         if stop and stop < p:
             row["stop"] = stop
+        if booked:
+            row["booked"] = booked
+        if reset_on:
+            row["reset_on"] = reset_on.isoformat()
         out.append(row)
     return sorted(out, key=lambda x: x["price"], reverse=True)[:MAX_LEVELS]
 
@@ -122,8 +135,17 @@ def evaluate(d: pd.DataFrame, raw_levels, research_date, ltp: Optional[float],
             row["near"] = abs(row["distance_pct"]) <= out["tolerance_pct"]
         if day_low and day_high and day_low <= level <= day_high:
             out["touched_today_levels"].append(level)
+        if lv.get("booked"):
+            row["booked"] = lv["booked"]
+            row["booked_count"] = len(lv["booked"])
+            row["last_booked"] = lv["booked"][-1]
+        # a level that has been closed and re-armed hunts from the reset date, so the trade you
+        # already booked can never be counted a second time
+        level_since = _as_date(lv.get("reset_on")) or since
+        if lv.get("reset_on"):
+            row["reset_on"] = lv["reset_on"]
         if len(d):
-            hit = _trigger_row(d, level, since)
+            hit = _trigger_row(d, level, level_since)
             if hit is not None:
                 t_date = _as_date(hit["date"])
                 after = d[d["date"] >= t_date]

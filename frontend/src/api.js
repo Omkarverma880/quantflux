@@ -678,6 +678,8 @@ export const api = {
   meAlertsTest: () => request('/equity-strategy/my-workspace/alerts/test', { method: 'POST' }),
   meImport: (body) => request('/equity-strategy/my-workspace/import', { method: 'POST', body: JSON.stringify(body) }),
   meImportFile: (file, dry = 1) => { const fd = new FormData(); fd.append('file', file); return requestUpload(`/equity-strategy/my-workspace/import/file?dry_run=${dry ? 1 : 0}`, fd); },
+  meBook: (id, body) => request(`/equity-strategy/my-workspace/stocks/${id}/book`, { method: 'POST', body: JSON.stringify(body) }),
+  meUnbook: (id, level, index = -1) => request(`/equity-strategy/my-workspace/stocks/${id}/book?level=${level}&index=${index}`, { method: 'DELETE' }),
   meFno: (symbol, spot) => request(`/equity-strategy/my-workspace/fno?symbol=${encodeURIComponent(symbol)}&spot=${spot || 0}`),
   // Equity order from the workspace — the same desk (and risk fence) as Manual Trading
   equityOrder: (body) => request('/manual/order', { method: 'POST', body: JSON.stringify(body) }),

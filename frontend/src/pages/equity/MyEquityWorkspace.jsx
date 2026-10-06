@@ -72,6 +72,21 @@ export default function MyEquityWorkspace() {
   const [open, setOpen] = useState(null);
   const [ticket, setTicket] = useState(null);
   const [panel, setPanel] = useState(null);          // 'alerts' | 'transfer'
+  // The master switch for automatic option buying. Nothing buys while this is off, whatever an
+  // individual stock's own AUTO flag says.
+  const [autoFno, setAutoFno] = useState(false);
+  const [autoBusy, setAutoBusy] = useState(false);
+
+  const saveAutoFno = async (v) => {
+    setAutoBusy(true);
+    setAutoFno(v);                       // optimistic: the tick box must feel instant
+    try {
+      const r = await api.meAlertsSave({ auto_fno_enabled: v });
+      if (r?.config) setAutoFno(Boolean(r.config.auto_fno_enabled));
+    } catch {
+      setAutoFno(!v);                    // put it back if the server refused
+    } finally { setAutoBusy(false); }
+  };
   const [view, setViewRaw] = useState(readView);
   const timer = useRef(null);
 
@@ -95,7 +110,12 @@ export default function MyEquityWorkspace() {
   }, []);
 
   useEffect(() => {
-    api.meMeta().then((r) => { if (r.status === 'ok') setMeta(r); }).catch(() => {});
+    api.meMeta().then((r) => {
+      if (r.status === 'ok') {
+        setMeta(r);
+        setAutoFno(Boolean(r.alerts?.auto_fno_enabled));   // the switch survives a reload
+      }
+    }).catch(() => {});
     load({ refresh: 0 }).then(() => load({ refresh: 1, force: 1 }));
     return () => clearTimeout(timer.current);
   }, [load]);
@@ -164,6 +184,16 @@ export default function MyEquityWorkspace() {
           <label className="flex items-center gap-1.5 text-[12px] text-gray-400 cursor-pointer">
             <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="accent-brand-500" />
             auto-refresh
+          </label>
+          <label title={autoFno
+            ? 'Armed. Stocks marked AUTO buy 1 ATM call when a research level triggers.'
+            : 'Off. Nothing buys automatically, whatever a stock is marked.'}
+            className={`flex items-center gap-1.5 text-[12px] cursor-pointer px-2 py-1 rounded border ${autoFno
+              ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
+              : 'border-surface-3 text-gray-500 hover:text-gray-300'}`}>
+            <input type="checkbox" checked={autoFno} disabled={autoBusy}
+              onChange={(e) => saveAutoFno(e.target.checked)} className="accent-amber-500" />
+            auto option buy
           </label>
           <button onClick={() => setPanel('alerts')} title="Telegram alerts and digests"
             className="btn-secondary !py-2 !px-3 text-[12.5px] flex items-center gap-1.5">

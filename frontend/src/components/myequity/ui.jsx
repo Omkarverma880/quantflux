@@ -17,6 +17,7 @@ export const COMPACT = (v) => {
 };
 
 export const PCT = (v, d = 2) => (v == null ? '—' : `${Number(v) > 0 ? '+' : ''}${Number(v).toFixed(d)}%`);
+export const RS = (v) => (v == null ? '' : `${Number(v) < 0 ? '−' : '+'}₹${Math.abs(Number(v)).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
 export const signTone = (v) => (v == null ? 'text-gray-400' : v > 0 ? 'text-emerald-400' : v < 0 ? 'text-red-400' : 'text-gray-400');
 /** A price the way a trader writes it: paise for penny stocks, whole rupees for big ones. */
 export const LVL = (v) => (v == null ? '—' : N(v, Math.abs(Number(v)) < 100 ? 2 : 0));
@@ -199,7 +200,68 @@ export function LevelChip({ row, onToggle }) {
   );
 }
 
-export function LevelChips({ watch, onEdit, onToggle }) {
+/** What a level has already paid out, and that it is hunting again. */
+export function BookedChip({ row, onBook, onUndo }) {
+  const b = row?.last_booked;
+  if (!b) {
+    return onBook ? (
+      <button onClick={(e) => { e.stopPropagation(); onBook(row.level); }}
+        className="text-[9.5px] text-gray-600 hover:text-brand-400 underline decoration-dotted whitespace-nowrap">
+        book
+      </button>
+    ) : null;
+  }
+  const win = b.kind === 'PROFIT';
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap"
+      title={`${b.kind === 'PROFIT' ? 'Profit' : 'Loss'} booked: ${b.qty || ''} @ ${b.entry} → ${b.exit}`
+        + ` · ${b.entered_on} → ${b.exited_on}`
+        + (row.reset_on ? ` · hunting again from ${row.reset_on}` : '')}>
+      <span className={`px-1 py-px rounded text-[9.5px] font-semibold border ${win
+        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+        : 'bg-red-500/15 border-red-500/40 text-red-300'}`}>
+        {win ? 'Profit' : 'Loss'} booked{b.pnl != null ? ` ${RS(b.pnl)}` : ''} · {b.days}d
+      </span>
+      {row.booked_count > 1 && <span className="text-[9px] text-gray-600">×{row.booked_count}</span>}
+      {onBook && (
+        <button onClick={(e) => { e.stopPropagation(); onBook(row.level); }}
+          className="text-[9.5px] text-gray-600 hover:text-brand-400 underline decoration-dotted">again</button>
+      )}
+      {onUndo && (
+        <button onClick={(e) => { e.stopPropagation(); onUndo(row.level); }}
+          className="text-[9.5px] text-gray-700 hover:text-red-400" title="undo the last booking">undo</button>
+      )}
+    </span>
+  );
+}
+
+/** Arm or disarm the automatic ATM-call buy for one stock. Off unless you turn it on. */
+export function AutoFnoToggle({ on, fno, onToggle }) {
+  if (!fno) return null;
+  return (
+    <button onClick={(e) => { e.stopPropagation(); onToggle?.(!on); }}
+      title={on
+        ? 'Armed: when a research level triggers, 1 ATM call is bought automatically. Click to disarm.'
+        : 'Off. Click to buy 1 ATM call automatically when a research level triggers.'}
+      className={`px-1 py-px rounded text-[9px] font-bold tracking-wide border transition-colors ${on
+        ? 'bg-amber-500/20 border-amber-500/60 text-amber-300'
+        : 'bg-transparent border-surface-4 text-gray-600 hover:text-gray-300'}`}>
+      AUTO
+    </button>
+  );
+}
+
+/** A stock with listed options, visible without opening a ticket. */
+export function FnoTag({ on }) {
+  if (!on) return null;
+  return (
+    <span title="this stock has listed options"
+      className="px-1 py-px rounded text-[9px] font-bold tracking-wide
+                 bg-violet-500/15 border border-violet-500/40 text-violet-300">F&O</span>
+  );
+}
+
+export function LevelChips({ watch, onEdit, onToggle, onBook, onUndo }) {
   const rows = watch?.rows || [];
   if (!rows.length) {
     return (
@@ -210,7 +272,12 @@ export function LevelChips({ watch, onEdit, onToggle }) {
   // stacked, one level per line: easier to scan down a column than to read along a row
   return (
     <div className="flex flex-col items-stretch gap-1 w-[122px]">
-      {rows.map((r) => <LevelChip key={r.level} row={r} onToggle={onToggle} />)}
+      {rows.map((r) => (
+        <div key={r.level} className="flex flex-col gap-0.5">
+          <LevelChip row={r} onToggle={onToggle} />
+          <BookedChip row={r} onBook={onBook} onUndo={r.last_booked ? onUndo : null} />
+        </div>
+      ))}
     </div>
   );
 }

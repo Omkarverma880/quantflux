@@ -110,6 +110,16 @@ class MyEquityService:
         self._fno_cache, self._fno_day = out, today
         return out
 
+    def _fno_safe(self) -> dict:
+        """The F&O map, but never a reason for the table to fail to load."""
+        if self.broker is None:
+            return {}
+        try:
+            return self._fno()
+        except Exception as exc:
+            logger.debug("F&O lookup skipped: %s", exc)
+            return {}
+
     def option_chain(self, symbol: str, spot: float = 0.0, around: int = 5) -> dict:
         """The nearest-expiry strikes either side of spot, priced.
 
@@ -247,6 +257,13 @@ class MyEquityService:
             self._rows_cache.pop(user_id, None)
         return done
 
+    def invalidate(self, user_id: Optional[int] = None) -> None:
+        """Drop the cached table so the very next read reflects an edit that just happened."""
+        if user_id is None:
+            self._rows_cache.clear()
+        else:
+            self._rows_cache.pop(user_id, None)
+
     # ── the table ────────────────────────────────────────────────────
     def rows(self, db, user_id: int, refresh: bool = True, force: bool = False) -> dict:
         hit = self._rows_cache.get(user_id)
@@ -292,6 +309,9 @@ class MyEquityService:
 
     def _row(self, db, s, quote: dict, refresh: bool) -> dict:
         base = ST.to_dict(s)
+        # whether the stock has listed options, so the table can say so without opening a ticket.
+        # The dump is already cached for the day, so this costs nothing after the first row.
+        base["fno"] = bool(self._fno_safe().get((s.symbol or "").strip().upper()))
         token = self.token_for(s)
         if token and token != s.token:
             ST.update(db, s.user_id, s.id, token=token)

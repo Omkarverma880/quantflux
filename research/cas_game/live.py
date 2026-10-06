@@ -374,7 +374,11 @@ class Desk:
                 side=OrderSide(side), quantity=int(ticket["qty"]), order_type=OrderType.MARKET,
                 product=ProductType.NRML, tag="CASGAME")
             res = broker.place_order(req)
-            return {"ok": True, "order_id": getattr(res, "order_id", None)}
+            # no order id means the broker did not accept it — saying "ok" here would let a
+            # refused sell book a phantom exit, which is exactly what _close now guards against
+            oid = getattr(res, "order_id", None) or ((res or {}).get("order_id") if res else None)
+            return {"ok": bool(oid), "order_id": oid,
+                    "error": None if oid else "no order id returned"}
         except Exception as exc:
             logger.error("cas game: order failed: %s", exc)
             return {"ok": False, "error": str(exc)[:200]}

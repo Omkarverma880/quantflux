@@ -375,6 +375,11 @@ def _run_strategies_for_user(uid: int):
                 if _me_svc.broker is not None:
                     _me_alerts.tick(db, uid, _me_svc)
                     _me_svc.warm(db, uid, limit=2)
+                    # Auto F&O: only for stocks you explicitly opted in, once per level per day,
+                    # and the order path still refuses in paper mode or behind the risk fence.
+                    from research.my_equity import autofno as _me_auto
+                    for _d in _me_auto.check(db, uid, _me_svc):
+                        print(f"[BG] auto-fno {uid}: {_d}", flush=True)
             except Exception as exc:
                 print(f"[BG] My Equity Workspace error user {uid}: {exc}", flush=True)
     finally:
@@ -445,6 +450,7 @@ async def lifespan(app: FastAPI):
             "sector_source": "VARCHAR(8)",
             "alerts_on": "BOOLEAN DEFAULT TRUE",
             "alert_state": "JSONB DEFAULT '{}'::jsonb",
+            "auto_fno": "BOOLEAN DEFAULT FALSE",
         })
     except Exception as e:
         print(f"[LIFESPAN] DB init error (non-fatal): {e}", flush=True)

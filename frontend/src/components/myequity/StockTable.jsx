@@ -3,8 +3,9 @@ import { Check, Loader2, Pencil, Trash2, X, Maximize2, Plus } from 'lucide-react
 import { api } from '../../api';
 import {
   N, PCT, signTone, rowTone, ROW_CLASS, LevelChips, PnLCell, NotePills, CategoryPicker, Empty,
-  AlertBell,
+  AlertBell, FnoTag, AutoFnoToggle,
 } from './ui';
+import BookTrade from './BookTrade';
 
 /**
  * The workspace table.
@@ -15,11 +16,11 @@ import {
  * is doing — the tint never swallows the data.
  */
 
+// 52-week high and RSI are deliberately not here: both are in the X-ray, which opens on a row
+// click, and the table reads better with the research itself given the room.
 const COLS = [
   ['stock', 'Stock', 'left'],
   ['ltp', 'LTP', 'right'],
-  ['high52', '52w high', 'right'],
-  ['rsi', 'RSI', 'right'],
   ['levels', 'Research levels', 'left'],
   ['pnl', 'P&L since trigger', 'left'],
   ['added', 'Researched', 'right'],
@@ -86,6 +87,21 @@ function SectorTag({ row, onChanged }) {
 export default function StockTable({ rows = [], onOpen, onChanged, onTrade, loading, dense }) {
   const [editing, setEditing] = useState(null);
   const [removing, setRemoving] = useState(null);
+  const [booking, setBooking] = useState(null);     // {row, level} while the dialog is open
+
+  const setAutoFno = async (r, v) => {
+    try {
+      const d = await api.meUpdate(r.id, { auto_fno: v });
+      if (d.status === 'ok') onChanged?.();
+    } catch { /* the table refreshes on its own schedule anyway */ }
+  };
+
+  const undoBooking = async (r, price) => {
+    try {
+      const d = await api.meUnbook(r.id, price);
+      if (d.status === 'ok') onChanged?.();
+    } catch { /* the table refreshes on its own schedule anyway */ }
+  };
   const pad = dense ? 'px-2.5 py-1' : 'px-2.5 py-2';
 
   const remove = async (row, e) => {
@@ -199,12 +215,18 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
 
   return (
     <>
+      {booking && (
+        <BookTrade row={booking.row} level={booking.level}
+          onClose={() => setBooking(null)}
+          onBooked={() => { setBooking(null); onChanged?.(); }} />
+      )}
+
       {/* phones get cards: the same information without a sideways scroll */}
       <div className="grid gap-2 md:hidden">{rows.map(card)}</div>
 
       <div className="card !p-0 overflow-hidden hidden md:block">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1150px] text-[12px]">
+        <table className="w-full min-w-[1000px] text-[12px]">
           <thead className="sticky top-0 z-10">
             {/* its own solid background and a hard bottom rule: the header has to read as a
                 header when it sits directly above a tinted row */}
@@ -230,6 +252,9 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
                         <div className="flex items-center gap-1.5">
                           <span className="font-semibold text-gray-100 truncate">{r.symbol}</span>
                           <span className="text-[9.5px] text-gray-500">{r.exchange}</span>
+                          <FnoTag on={r.fno} />
+                          <AutoFnoToggle on={r.auto_fno} fno={r.fno}
+                            onToggle={(v) => setAutoFno(r, v)} />
                           <CategoryPicker category={r.category} small onChange={(v) => setCategory(r, v)} />
                         </div>
                         <div className="flex items-center gap-1.5 min-w-0">
@@ -249,25 +274,15 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
                     )}
                   </td>
 
-                  <td className={`${pad} text-right mono whitespace-nowrap`}>
-                    <div className="text-gray-200">{N(r.high_52w)}</div>
-                    <div className={`text-[10.5px] ${signTone(r.from_52w_high)}`}>{PCT(r.from_52w_high, 1)}</div>
-                  </td>
-
-                  <td className={`${pad} text-right mono whitespace-nowrap`}>
-                    <span className={`text-[13px] font-semibold ${r.rsi == null ? 'text-gray-600'
-                      : r.rsi <= 30 ? 'text-emerald-400' : r.rsi >= 80 ? 'text-red-400' : 'text-gray-300'}`}>
-                      {r.rsi == null ? '—' : r.rsi.toFixed(1)}
-                    </span>
-                  </td>
-
                   <td className={pad}>
                     {editing === r.id
                       ? <EditLevels row={r} onSaved={() => { setEditing(null); onChanged?.(); }} onCancel={() => setEditing(null)} />
                       : (
                         <div className="flex items-start gap-1.5">
                           <LevelChips watch={r.watch} onEdit={() => setEditing(r.id)}
-                            onToggle={(price) => toggleLevel(r, price)} />
+                            onToggle={(price) => toggleLevel(r, price)}
+                            onBook={(price) => setBooking({ row: r, level: price })}
+                            onUndo={(price) => undoBooking(r, price)} />
                           <button onClick={(e) => { e.stopPropagation(); setEditing(r.id); }}
                             className="text-gray-600 hover:text-brand-400 p-0.5 mt-0.5" title="edit levels">
                             <Pencil className="w-3 h-3" />

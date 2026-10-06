@@ -353,7 +353,7 @@ class Desk:
             req = OrderRequest(
                 tradingsymbol=t["symbol"],
                 exchange=Exchange.BFO if t["exchange"] == "BFO" else Exchange.NFO,
-                transaction_type=OrderSide.BUY if side == "BUY" else OrderSide.SELL,
+                side=OrderSide.BUY if side == "BUY" else OrderSide.SELL,
                 quantity=int(t["qty"]), order_type=OrderType.MARKET, product=ProductType.MIS)
             res = broker.place_order(req)
             oid = getattr(res, "order_id", None) or (res or {}).get("order_id") if res else None

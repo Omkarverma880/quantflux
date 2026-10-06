@@ -11,6 +11,8 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 from core.logger import get_logger
+from sqlalchemy.orm.attributes import flag_modified
+
 from core.models import MyEquityStock
 from research.my_equity import levels as LV
 
@@ -58,6 +60,7 @@ def to_dict(row: MyEquityStock) -> dict:
         "sector_source": row.sector_source, "note": row.note or "",
         "touch_pct": float(row.touch_pct if row.touch_pct is not None else 0.25),
         "archived": bool(row.archived), "alerts_on": bool(getattr(row, "alerts_on", True)),
+        "auto_fno": bool(getattr(row, "auto_fno", False)),
         "last_touch_at": row.last_touch_at.strftime("%Y-%m-%d %H:%M") if row.last_touch_at else None,
         "last_touch_level": float(row.last_touch_level) if row.last_touch_level is not None else None,
     }
@@ -129,6 +132,8 @@ def update(db, user_id: int, stock_id: int, **fields) -> MyEquityStock:
         row.category = clean_category(fields["category"])
     if fields.get("alerts_on") is not None:
         row.alerts_on = bool(fields["alerts_on"])
+    if fields.get("auto_fno") is not None:
+        row.auto_fno = bool(fields["auto_fno"])
     if fields.get("sector") is not None:
         row.sector = str(fields["sector"]).strip()[:60] or None
         row.industry = (str(fields.get("industry") or "").strip()[:90] or None) or row.industry
@@ -149,6 +154,83 @@ def remove(db, user_id: int, stock_id: int) -> bool:
     db.commit()
     logger.info("my-equity: user %s removed %s", user_id, row.symbol)
     return True
+
+
+def book_level(db, user_id: int, stock_id: int, level: float, *, kind: str = "",
+               qty: float = 0, entry: float = 0, exit: float = 0,
+               entered_on=None, exited_on=None, note: str = "") -> dict:
+    """Close out a trade on one research level and re-arm it.
+
+    The booking is appended to that level's history and ``reset_on`` is set to the exit date, so
+    the level starts hunting for its next trigger from there. The level itself is untouched — the
+    same price can be used again, or edited to a new one, without losing what it did.
+    """
+    row = get(db, user_id, stock_id)
+    if row is None:
+        raise ValueError("stock not found")
+    level = float(level)
+    levels = LV.normalise(row.levels)
+    target = next((l for l in levels if abs(l["price"] - level) < 1e-6), None)
+    if target is None:
+        raise ValueError(f"{level:g} is not a research level on {row.symbol}")
+
+    entry = float(entry or level)
+    exit_px = float(exit or 0)
+    if exit_px <= 0:
+        raise ValueError("an exit price is needed to book a trade")
+    qty = float(qty or 0)
+    d_in = LV._as_date(entered_on) or LV._as_date(row.added_on) or date.today()
+    d_out = LV._as_date(exited_on) or date.today()
+    if d_out < d_in:
+        raise ValueError("the exit date is before the entry date")
+
+    pnl_per = exit_px - entry
+    pnl = round(pnl_per * qty, 2) if qty else None
+    kind = (kind or "").strip().upper()
+    if kind not in ("PROFIT", "LOSS"):
+        kind = "PROFIT" if pnl_per >= 0 else "LOSS"
+
+    booking = {"kind": kind, "qty": qty or None, "entry": round(entry, 2),
+               "exit": round(exit_px, 2), "entered_on": d_in.isoformat(),
+               "exited_on": d_out.isoformat(), "days": (d_out - d_in).days,
+               "pnl": pnl, "pnl_pct": round(pnl_per / entry * 100, 2) if entry else None,
+               "note": (note or "").strip()[:200]}
+    target["booked"] = [*(target.get("booked") or []), booking][-LV.MAX_BOOKED:]
+    # re-arm from the exit date: the trade just closed must not be found again
+    target["reset_on"] = d_out.isoformat()
+
+    row.levels = LV.normalise(levels)
+    flag_modified(row, "levels")
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    logger.info("my-equity: user %s booked %s on %s %s", user_id, kind, row.symbol, level)
+    return {"stock": to_dict(row), "booking": booking}
+
+
+def clear_booking(db, user_id: int, stock_id: int, level: float, index: int = -1) -> dict:
+    """Undo a booking — remove it and, if it was the last one, re-arm from the research date."""
+    row = get(db, user_id, stock_id)
+    if row is None:
+        raise ValueError("stock not found")
+    levels = LV.normalise(row.levels)
+    target = next((l for l in levels if abs(l["price"] - float(level)) < 1e-6), None)
+    if target is None or not target.get("booked"):
+        raise ValueError("nothing booked on that level")
+    hist = list(target["booked"])
+    try:
+        hist.pop(index)
+    except IndexError:
+        raise ValueError("no booking at that position")
+    if hist:
+        target["booked"] = hist
+        target["reset_on"] = hist[-1]["exited_on"]
+    else:
+        target.pop("booked", None)
+        target.pop("reset_on", None)
+    row.levels = LV.normalise(levels)
+    flag_modified(row, "levels")
+    db.commit()
+    return {"stock": to_dict(row)}
 
 
 def mark_touch(db, row: MyEquityStock, level: float) -> None:

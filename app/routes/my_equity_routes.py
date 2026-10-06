@@ -115,6 +115,18 @@ class UpdateReq(BaseModel):
     sector: str | None = None
     industry: str | None = None
     alerts_on: bool | None = None
+    auto_fno: bool | None = None
+
+
+class BookReq(BaseModel):
+    level: float
+    kind: str | None = ""               # PROFIT | LOSS; inferred from the prices when blank
+    qty: float | None = 0
+    entry: float | None = 0             # defaults to the level itself
+    exit: float
+    entered_on: str | None = None
+    exited_on: str | None = None
+    note: str | None = ""
 
 
 class ImportReq(BaseModel):
@@ -190,6 +202,27 @@ def remove_stock(stock_id: int, user_id: int = Depends(login_required),
     if not ST.remove(db, user_id, stock_id):
         return {"status": "error", "message": "that stock is not in your workspace"}
     return {"status": "ok"}
+
+
+@router.post("/stocks/{stock_id}/book")
+@safe("book_level")
+def book_level(stock_id: int, req: BookReq, user_id: int = Depends(login_required),
+               db: Session = Depends(get_db)):
+    """Close a trade on one research level and re-arm that level for its next touch."""
+    out = ST.book_level(db, user_id, stock_id, req.level, kind=req.kind or "",
+                        qty=req.qty or 0, entry=req.entry or 0, exit=req.exit,
+                        entered_on=req.entered_on, exited_on=req.exited_on, note=req.note or "")
+    _service(db, user_id).invalidate(user_id)
+    return {"status": "ok", **out}
+
+
+@router.delete("/stocks/{stock_id}/book")
+@safe("clear_booking")
+def clear_booking(stock_id: int, level: float, index: int = -1,
+                  user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    out = ST.clear_booking(db, user_id, stock_id, level, index)
+    _service(db, user_id).invalidate(user_id)
+    return {"status": "ok", **out}
 
 
 @router.get("/fno")

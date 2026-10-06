@@ -38,6 +38,9 @@ DEFAULT_CONFIG = {
     "close_digest": True,
     "close_at": "15:35",
     "near_pct": 2.0,                # "close to a level" in the morning digest
+    # The master switch for automatic option buying. Off, nothing buys, whatever an individual
+    # stock's own AUTO flag says — so one tick box disarms the whole workspace.
+    "auto_fno_enabled": False,
 }
 CHECK_EVERY_S = 30.0
 
