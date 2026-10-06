@@ -117,6 +117,83 @@ export default function CasGame() {
   const live = desk?.mode === 'live';
   const isPair = (params?.structure || 'strangle') === 'strangle';
 
+  // one definition, rendered on both tabs: the backtest runs on exactly these settings,
+  // so hiding them on another tab made the result impossible to read
+  const settingsBlock = params ? (
+          <Section title="Settings"
+                   right={<button disabled={busy}
+                     onClick={() => { if (window.confirm('Replace your saved settings with the shipped rule?')) act(api.casReset); }}
+                     className="btn-secondary !py-1 !px-2 text-[11.5px]">Reset to the shipped rule</button>}>
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+              <Field label="Structure" hint="how the bet is placed">
+                <select value={params.structure || 'strangle'}
+                        onChange={(e) => saveParams({ structure: e.target.value })} className={input}>
+                  <option value="strangle">call + put, each with a stop</option>
+                  <option value="cheap">the old ₹1 lottery</option>
+                </select>
+              </Field>
+              <Field label="Target (points)" hint="0 = let the winner run">
+                <input type="number" value={params.target_points ?? 0}
+                       onChange={(e) => saveParams({ target_points: Number(e.target.value) })} className={input} />
+              </Field>
+              <Field label="Stop per leg (%)" hint="of what that leg cost">
+                <input type="number" value={params.stop_pct ?? 35}
+                       onChange={(e) => saveParams({ stop_pct: Number(e.target.value) })} className={input} />
+              </Field>
+              <Field label="Strike" hint="relative to the money">
+                <select value={String(params.moneyness ?? 0)}
+                        onChange={(e) => saveParams({ moneyness: Number(e.target.value) })} className={input}>
+                  <option value="-2">ATM − 2 (deeper in)</option>
+                  <option value="-1">ATM − 1 (in the money)</option>
+                  <option value="0">ATM (at the money)</option>
+                  <option value="1">ATM + 1 (out of the money)</option>
+                  <option value="2">ATM + 2 (further out)</option>
+                </select>
+              </Field>
+              <Field label="Lead before auction" hint="minutes; will not open inside this">
+                <input type="number" min="0" value={params.min_lead_min ?? 20}
+                       onChange={(e) => saveParams({ min_lead_min: Number(e.target.value) })} className={input} />
+              </Field>
+              <Field label="Skip above (₹)" hint="too dear a leg, 0 = off">
+                <input type="number" value={params.max_premium ?? 0}
+                       onChange={(e) => saveParams({ max_premium: Number(e.target.value) })} className={input} />
+              </Field>
+              <Field label="Index">
+                <select value={params.index} onChange={(e) => saveParams({ index: e.target.value })} className={input}>
+                  {meta.indices.map((i) => <option key={i} value={i}>{i}</option>)}
+                </select>
+              </Field>
+              <Field label="Price from" hint={isPair ? 'only for the ₹1 rule' : 'the cheap end of the band'}>
+                <input type="number" step="0.05" value={params.price_min} disabled={isPair}
+                       onChange={(e) => saveParams({ price_min: Number(e.target.value) })}
+                       className={`${input} ${isPair ? 'opacity-40' : ''}`} />
+              </Field>
+              <Field label="Price to">
+                <input type="number" disabled={isPair} step="0.05" value={params.price_max} onChange={(e) => saveParams({ price_max: Number(e.target.value) })} className={`${input} ${isPair ? 'opacity-40' : ''}`} />
+              </Field>
+              <Field label="Budget (₹)" hint="the whole risk">
+                <input type="number" step="500" value={params.budget} onChange={(e) => saveParams({ budget: Number(e.target.value) })} className={input} />
+              </Field>
+              <Field label="Sides">
+                <select value={params.sides} onChange={(e) => saveParams({ sides: e.target.value })} className={input}>
+                  <option value="both">call and put</option>
+                  <option value="call">calls only</option>
+                  <option value="put">puts only</option>
+                </select>
+              </Field>
+              <Field label="Per side" hint="how many contracts">
+                <input type="number" min="1" max="10" value={params.per_side} onChange={(e) => saveParams({ per_side: Number(e.target.value) })} className={input} />
+              </Field>
+              <Field label="Window from"><input type="number" value={params.entry_from} onChange={(e) => saveParams({ entry_from: Number(e.target.value) })} className={input} /></Field>
+              <Field label="Window to"><input type="number" value={params.entry_to} onChange={(e) => saveParams({ entry_to: Number(e.target.value) })} className={input} /></Field>
+              <Field label="Square-off"><input type="number" value={params.squareoff} onChange={(e) => saveParams({ squareoff: Number(e.target.value) })} className={input} /></Field>
+            </div>
+            <div className="text-[11px] text-gray-500 mt-2">
+              Times are minutes from midnight: 15:15 is 915, 15:35 is 935, 15:39 is 939.
+            </div>
+          </Section>
+  ) : null;
+
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-[1500px] mx-auto">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -125,7 +202,10 @@ export default function CasGame() {
             <Dice5 className="w-5 h-5 text-brand-400" />CAS Game Play
           </h1>
           <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-            A fixed, small bet on the closing-auction dislocation: buy the ~₹1 options and sell if they run.
+            {isPair
+              ? 'A call and a put bought together before the closing auction. Whichever leg the auction '
+                + 'goes against is cut at a fixed loss; the other is left to run.'
+              : 'A fixed, small bet on the closing-auction dislocation: buy the ~₹1 options and sell if they run.'}
             {' '}{meta.schedule?.cash_auction}; {meta.schedule?.derivatives_close}.
           </p>
         </div>
@@ -227,81 +307,7 @@ export default function CasGame() {
             </Section>
           )}
 
-          <Section title="Settings"
-                   right={<button disabled={busy}
-                     onClick={() => { if (window.confirm('Replace your saved settings with the shipped rule?')) act(api.casReset); }}
-                     className="btn-secondary !py-1 !px-2 text-[11.5px]">Reset to the shipped rule</button>}>
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-              <Field label="Structure" hint="how the bet is placed">
-                <select value={params.structure || 'strangle'}
-                        onChange={(e) => saveParams({ structure: e.target.value })} className={input}>
-                  <option value="strangle">call + put, each with a stop</option>
-                  <option value="cheap">the old ₹1 lottery</option>
-                </select>
-              </Field>
-              <Field label="Target (points)" hint="0 = let the winner run">
-                <input type="number" value={params.target_points ?? 0}
-                       onChange={(e) => saveParams({ target_points: Number(e.target.value) })} className={input} />
-              </Field>
-              <Field label="Stop per leg (%)" hint="of what that leg cost">
-                <input type="number" value={params.stop_pct ?? 35}
-                       onChange={(e) => saveParams({ stop_pct: Number(e.target.value) })} className={input} />
-              </Field>
-              <Field label="Strike" hint="relative to the money">
-                <select value={String(params.moneyness ?? 0)}
-                        onChange={(e) => saveParams({ moneyness: Number(e.target.value) })} className={input}>
-                  <option value="-2">ATM − 2 (deeper in)</option>
-                  <option value="-1">ATM − 1 (in the money)</option>
-                  <option value="0">ATM (at the money)</option>
-                  <option value="1">ATM + 1 (out of the money)</option>
-                  <option value="2">ATM + 2 (further out)</option>
-                </select>
-              </Field>
-              <Field label="Lead before auction" hint="minutes; will not open inside this">
-                <input type="number" min="0" value={params.min_lead_min ?? 20}
-                       onChange={(e) => saveParams({ min_lead_min: Number(e.target.value) })} className={input} />
-              </Field>
-              <Field label="Skip above (₹)" hint="too dear a leg, 0 = off">
-                <input type="number" value={params.max_premium ?? 0}
-                       onChange={(e) => saveParams({ max_premium: Number(e.target.value) })} className={input} />
-              </Field>
-              <Field label="Index">
-                <select value={params.index} onChange={(e) => saveParams({ index: e.target.value })} className={input}>
-                  {meta.indices.map((i) => <option key={i} value={i}>{i}</option>)}
-                </select>
-              </Field>
-              <Field label="Price from" hint={isPair ? 'only for the ₹1 rule' : 'the cheap end of the band'}>
-                <input type="number" step="0.05" value={params.price_min} disabled={isPair}
-                       onChange={(e) => saveParams({ price_min: Number(e.target.value) })}
-                       className={`${input} ${isPair ? 'opacity-40' : ''}`} />
-              </Field>
-              <Field label="Price to">
-                <input type="number" disabled={isPair} step="0.05" value={params.price_max} onChange={(e) => saveParams({ price_max: Number(e.target.value) })} className={`${input} ${isPair ? 'opacity-40' : ''}`} />
-              </Field>
-              <Field label="Budget (₹)" hint="the whole risk">
-                <input type="number" step="500" value={params.budget} onChange={(e) => saveParams({ budget: Number(e.target.value) })} className={input} />
-              </Field>
-              <Field label="Target (points)">
-                <input type="number" step="1" value={params.target_points} onChange={(e) => saveParams({ target_points: Number(e.target.value) })} className={input} />
-              </Field>
-              <Field label="Sides">
-                <select value={params.sides} onChange={(e) => saveParams({ sides: e.target.value })} className={input}>
-                  <option value="both">call and put</option>
-                  <option value="call">calls only</option>
-                  <option value="put">puts only</option>
-                </select>
-              </Field>
-              <Field label="Per side" hint="how many contracts">
-                <input type="number" min="1" max="10" value={params.per_side} onChange={(e) => saveParams({ per_side: Number(e.target.value) })} className={input} />
-              </Field>
-              <Field label="Window from"><input type="number" value={params.entry_from} onChange={(e) => saveParams({ entry_from: Number(e.target.value) })} className={input} /></Field>
-              <Field label="Window to"><input type="number" value={params.entry_to} onChange={(e) => saveParams({ entry_to: Number(e.target.value) })} className={input} /></Field>
-              <Field label="Square-off"><input type="number" value={params.squareoff} onChange={(e) => saveParams({ squareoff: Number(e.target.value) })} className={input} /></Field>
-            </div>
-            <div className="text-[11px] text-gray-500 mt-2">
-              Times are minutes from midnight: 15:15 is 915, 15:35 is 935, 15:39 is 939.
-            </div>
-          </Section>
+          {settingsBlock}
 
           {!!(desk?.log || []).length && (
             <Section title="What it did">
@@ -319,7 +325,7 @@ export default function CasGame() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
               <Field label="From"><input type="date" value={bt.start} onChange={(e) => setBt({ ...bt, start: e.target.value })} className={input} /></Field>
               <Field label="To"><input type="date" value={bt.end} onChange={(e) => setBt({ ...bt, end: e.target.value })} className={input} /></Field>
-              <div className="text-[11.5px] text-gray-500">Uses the settings on the Live desk tab, expiry days only.</div>
+              <div className="text-[11.5px] text-gray-500">Expiry days only. The settings are below.</div>
               <button disabled={bt.running} onClick={runBacktest} className="btn-primary !py-1.5 text-[12.5px] flex items-center justify-center gap-1.5">
                 {bt.running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
                 {bt.running ? 'Running…' : 'Run backtest'}
@@ -327,6 +333,8 @@ export default function CasGame() {
             </div>
             {bt.running && <div className="text-[11.5px] text-gray-500 mt-2">{bt.progress}</div>}
           </Section>
+
+          {settingsBlock}
 
           {s && (
             <Section title="Result">
