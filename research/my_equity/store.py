@@ -20,14 +20,16 @@ logger = get_logger("research.my_equity.store")
 
 MAX_STOCKS = 500
 MAX_LEVELS = LV.MAX_LEVELS
-CATEGORIES = ("INVESTMENT", "SWING")
+CATEGORIES = ("INVESTMENT", "SWING", "FNO")
 _SYMBOL_RE = re.compile(r"^[A-Z0-9&\-\.]{1,32}$")
 
 
 def clean_category(raw) -> str:
-    c = str(raw or "SWING").strip().upper().replace(" ", "_")
+    c = str(raw or "SWING").strip().upper().replace(" ", "_").replace("&", "")
     if c.startswith("INVEST"):
         return "INVESTMENT"
+    if c in ("FNO", "FO", "FUTURESOPTIONS", "OPTIONS", "DERIVATIVE", "DERIVATIVES"):
+        return "FNO"
     return "SWING"
 
 
@@ -41,14 +43,24 @@ def clean_symbol(raw: str) -> str:
 def parse_levels(raw) -> list[dict]:
     """Accept a list of numbers or level objects, or text like '3100, 2900' — however you type it.
 
-    Stored shape is always ``[{"price": 3100.0, "track": True}, …]``; ``track`` says whether the
-    level counts towards the P&L, so you can keep a level on the chart without following it.
+    Stored shape is always ``[{"price": 3100.0, "track": True, "side": "LONG"}, …]``; ``track``
+    says whether the level counts towards the P&L, so you can keep a level on the chart without
+    following it, and ``side`` says which way you expect it to go.
+
+    A level with no ``added_at`` is stamped now. That stamp is what stops a level written down
+    at noon from being "triggered" by the morning's move.
     """
     if raw is None:
         return []
     if isinstance(raw, str):
         raw = [p for p in re.split(r"[\s,;|]+", raw) if p]
-    return LV.normalise(raw)
+    levels = LV.normalise(raw)
+    # IST, not UTC: the stamp is compared against the 09:15 market open, and the server may
+    # well be running in UTC (Railway does)
+    stamp = LV.now_ist().isoformat(timespec="seconds")
+    for lv in levels:
+        lv.setdefault("added_at", stamp)
+    return levels
 
 
 def to_dict(row: MyEquityStock) -> dict:
@@ -231,6 +243,45 @@ def clear_booking(db, user_id: int, stock_id: int, level: float, index: int = -1
     flag_modified(row, "levels")
     db.commit()
     return {"stock": to_dict(row)}
+
+
+def set_level_side(db, user_id: int, stock_id: int, level: float, side: str) -> dict:
+    """Point one level long or short. Nothing else about it changes."""
+    row = get(db, user_id, stock_id)
+    if row is None:
+        raise ValueError("stock not found")
+    levels = LV.normalise(row.levels)
+    target = next((l for l in levels if abs(l["price"] - float(level)) < 1e-6), None)
+    if target is None:
+        raise ValueError(f"{float(level):g} is not a research level on {row.symbol}")
+    target["side"] = LV.clean_side(side)
+    row.levels = LV.normalise(levels)
+    flag_modified(row, "levels")
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"stock": to_dict(row)}
+
+
+def booking_stats(row: MyEquityStock) -> dict:
+    """How this stock's research has actually worked out, across every level."""
+    wins = losses = 0
+    net = 0.0
+    days: list[int] = []
+    for lv in LV.normalise(row.levels):
+        for b in lv.get("booked") or []:
+            if b.get("kind") == "PROFIT":
+                wins += 1
+            else:
+                losses += 1
+            if b.get("pnl") is not None:
+                net += float(b["pnl"])
+            if b.get("days") is not None:
+                days.append(int(b["days"]))
+    total = wins + losses
+    return {"booked": total, "wins": wins, "losses": losses,
+            "net": round(net, 2) if total else None,
+            "win_rate": round(wins / total * 100, 1) if total else None,
+            "avg_days": round(sum(days) / len(days), 1) if days else None}
 
 
 def mark_touch(db, row: MyEquityStock, level: float) -> None:

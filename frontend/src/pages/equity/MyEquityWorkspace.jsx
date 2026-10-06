@@ -40,6 +40,9 @@ const MATCHERS = {
   overbought: (r) => r.rsi != null && r.rsi >= 80,
   investment: (r) => r.category === 'INVESTMENT',
   swing: (r) => r.category === 'SWING',
+  fno: (r) => r.category === 'FNO' || !!r.fno,
+  armed: (r) => !!r.auto_fno,            // the stocks that can buy on their own
+  booked: (r) => (r.stats?.booked || 0) > 0,
 };
 
 const SORTERS = {

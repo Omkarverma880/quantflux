@@ -312,6 +312,7 @@ class MyEquityService:
         # whether the stock has listed options, so the table can say so without opening a ticket.
         # The dump is already cached for the day, so this costs nothing after the first row.
         base["fno"] = bool(self._fno_safe().get((s.symbol or "").strip().upper()))
+        base["stats"] = ST.booking_stats(s)        # how often this research has actually paid
         token = self.token_for(s)
         if token and token != s.token:
             ST.update(db, s.user_id, s.id, token=token)

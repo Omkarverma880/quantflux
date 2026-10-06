@@ -23,20 +23,16 @@ export const signTone = (v) => (v == null ? 'text-gray-400' : v > 0 ? 'text-emer
 export const LVL = (v) => (v == null ? '—' : N(v, Math.abs(Number(v)) < 100 ? 2 : 0));
 export const DAYS = (n) => (n == null ? '' : n === 0 ? 'today' : n === 1 ? '1 day' : `${n} days`);
 
-/** Row tint: a level touched right now wins; then a deeply oversold or very overbought RSI. */
+// A row blinks for one reason only: price is at a research level. RSI used to tint rows green
+// or red as well, which made the blink just another colour in a colourful table — the one thing
+// that should pull your eye no longer did. RSI lives in the X-ray and in its own filter chip.
 export function rowTone(row) {
-  if (row?.watch?.touched) return 'blink';
-  const rsi = row?.rsi;
-  if (rsi != null && rsi <= 30) return 'oversold';
-  if (rsi != null && rsi >= 80) return 'overbought';
-  return 'plain';
+  return row?.watch?.touched ? 'blink' : 'plain';
 }
 
 export const ROW_CLASS = {
   blink: 'row-blink',
-  oversold: 'bg-emerald-500/10 hover:bg-emerald-500/20',
-  overbought: 'bg-red-500/10 hover:bg-red-500/20',
-  // the zebra stripe is applied by the table; hover only has to be stronger than either stripe
+  // the zebra stripe is applied by the table; hover only has to be stronger than the stripe
   plain: 'hover:bg-brand-500/10',
 };
 
@@ -79,12 +75,14 @@ export function Stat({ label, value, sub, tone = 'text-gray-100', title }) {
 export const CATEGORY_STYLE = {
   INVESTMENT: 'bg-violet-500/15 text-violet-300 border-violet-500/40',
   SWING: 'bg-sky-500/15 text-sky-300 border-sky-500/40',
+  FNO: 'bg-amber-500/15 text-amber-300 border-amber-500/40',
 };
-const CATEGORY_LABEL = { INVESTMENT: 'Investment', SWING: 'Swing' };
+const CATEGORY_LABEL = { INVESTMENT: 'Investment', SWING: 'Swing', FNO: 'F&O' };
+const CATEGORY_KEY = (c) => (c === 'INVESTMENT' || c === 'FNO' ? c : 'SWING');
 
 /** A read-only badge. Use ``CategoryPicker`` wherever it can be changed. */
 export function CategoryChip({ category, small }) {
-  const key = category === 'INVESTMENT' ? 'INVESTMENT' : 'SWING';
+  const key = CATEGORY_KEY(category);
   return (
     <span className={`px-1.5 py-0.5 rounded border font-semibold whitespace-nowrap ${small ? 'text-[10px]' : 'text-[11px]'} ${CATEGORY_STYLE[key]}`}>
       {CATEGORY_LABEL[key]}
@@ -99,7 +97,7 @@ export function CategoryChip({ category, small }) {
  * positioned fixed so the table's own scrolling never clips it.
  */
 export function CategoryPicker({ category, onChange, small, disabled }) {
-  const key = category === 'INVESTMENT' ? 'INVESTMENT' : 'SWING';
+  const key = CATEGORY_KEY(category);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [at, setAt] = useState({ top: 0, left: 0 });
@@ -139,9 +137,9 @@ export function CategoryPicker({ category, onChange, small, disabled }) {
 
   return (
     <>
-      <button ref={btn} onClick={toggle} disabled={disabled} title="Investment or swing trade — click to change"
+      <button ref={btn} onClick={toggle} disabled={disabled} title="Investment, swing or F&O — click to change"
         className={`inline-flex items-center gap-0.5 pl-1.5 pr-1 py-0.5 rounded border font-semibold whitespace-nowrap
-          ${small ? 'text-[10px]' : 'text-[11px]'} ${CATEGORY_STYLE[key]} hover:brightness-125 disabled:opacity-50`}>
+          ${small ? 'text-[10px]' : 'text-[11px]'} ${CATEGORY_STYLE[key] || CATEGORY_STYLE.SWING} hover:brightness-125 disabled:opacity-50`}>
         {busy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}
         {CATEGORY_LABEL[key]}
         <ChevronDown className="w-2.5 h-2.5 opacity-70" />
@@ -150,15 +148,15 @@ export function CategoryPicker({ category, onChange, small, disabled }) {
         <div style={{ position: 'fixed', top: at.top, left: at.left, zIndex: 60 }}
           onClick={(e) => e.stopPropagation()}
           className="w-[150px] rounded-lg border border-surface-3 bg-surface-1 shadow-xl overflow-hidden">
-          {['SWING', 'INVESTMENT'].map((v) => (
+          {[['SWING', 'Swing trade'], ['INVESTMENT', 'Investment'], ['FNO', 'F&O']].map(([v, label]) => (
             <button key={v} onClick={(e) => pick(e, v)}
               className="w-full flex items-center justify-between px-2.5 py-1.5 text-[12px] text-gray-200 hover:bg-surface-2">
-              <span>{v === 'INVESTMENT' ? 'Investment' : 'Swing trade'}</span>
+              <span>{label}</span>
               {v === key && <Check className="w-3 h-3 text-emerald-400" />}
             </button>
           ))}
           <div className="px-2.5 py-1 text-[10px] text-gray-500 border-t border-surface-3">
-            sets the horizon: 60 sessions or 10
+            the horizon the entry zones are tested over
           </div>
         </div>
       )}
@@ -196,6 +194,41 @@ export function LevelChip({ row, onToggle }) {
         )}
         {hit && <Check className="w-2.5 h-2.5 text-emerald-400" />}
       </span>
+    </span>
+  );
+}
+
+/** Which way a level is meant to go, and so whether an auto buy takes a call or a put. */
+export function SideChip({ row, onChange }) {
+  const short = String(row?.trade_side || 'LONG').toUpperCase() === 'SHORT';
+  return (
+    <button onClick={onChange ? (e) => { e.stopPropagation(); onChange(row.level, short ? 'LONG' : 'SHORT'); } : undefined}
+      disabled={!onChange}
+      title={short
+        ? 'Short: a touch buys the ATM put. Click for long.'
+        : 'Long: a touch buys the ATM call. Click for short.'}
+      className={`px-1 py-px rounded text-[9px] font-bold tracking-wide border whitespace-nowrap ${short
+        ? 'bg-red-500/15 border-red-500/40 text-red-300'
+        : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'} ${onChange ? 'hover:brightness-125' : ''}`}>
+      {short ? 'SHORT · PE' : 'LONG · CE'}
+    </button>
+  );
+}
+
+/** How often this stock's research has actually paid. */
+export function ResearchStats({ stats }) {
+  if (!stats?.booked) return null;
+  const { booked, wins, losses, win_rate: wr, net, avg_days: avg } = stats;
+  return (
+    <span title={`${booked} trade(s) booked on this research: ${wins} profit, ${losses} loss`
+      + (avg != null ? ` · ${avg} days on average` : '')}
+      className="inline-flex items-center gap-1 text-[9.5px] whitespace-nowrap">
+      <span className="px-1 py-px rounded border border-surface-4 text-gray-400">
+        {wins}W/{losses}L{wr != null ? ` · ${wr}%` : ''}
+      </span>
+      {net != null && (
+        <span className={`mono ${net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{RS(net)}</span>
+      )}
     </span>
   );
 }
@@ -261,7 +294,7 @@ export function FnoTag({ on }) {
   );
 }
 
-export function LevelChips({ watch, onEdit, onToggle, onBook, onUndo }) {
+export function LevelChips({ watch, onEdit, onToggle, onBook, onUndo, onSide }) {
   const rows = watch?.rows || [];
   if (!rows.length) {
     return (
@@ -275,7 +308,10 @@ export function LevelChips({ watch, onEdit, onToggle, onBook, onUndo }) {
       {rows.map((r) => (
         <div key={r.level} className="flex flex-col gap-0.5">
           <LevelChip row={r} onToggle={onToggle} />
-          <BookedChip row={r} onBook={onBook} onUndo={r.last_booked ? onUndo : null} />
+          <div className="flex items-center gap-1 flex-wrap">
+            <SideChip row={r} onChange={onSide} />
+            <BookedChip row={r} onBook={onBook} onUndo={r.last_booked ? onUndo : null} />
+          </div>
         </div>
       ))}
     </div>

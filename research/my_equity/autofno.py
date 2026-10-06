@@ -69,9 +69,17 @@ def _mark_fired(db, row, level: float, day: str, detail: dict) -> None:
     db.commit()
 
 
-def levels_triggering_today(r: dict) -> list[float]:
-    """Levels whose day range contains them today — the blink, in other words."""
-    return [float(x) for x in ((r.get("watch") or {}).get("touched_today_levels") or [])]
+def levels_triggering_today(r: dict) -> list[dict]:
+    """Levels that touched today, each with the direction you gave it.
+
+    A LONG level buys a call, a SHORT level buys a put. The direction is the level's, not the
+    stock's, so one stock can hold both a long idea and a short one.
+    """
+    watch = r.get("watch") or {}
+    hit = {float(x) for x in (watch.get("touched_today_levels") or [])}
+    by_level = {float(row["level"]): row for row in (watch.get("rows") or []) if row.get("level") is not None}
+    return [{"level": p, "side": str((by_level.get(p) or {}).get("trade_side") or "LONG").upper()}
+            for p in sorted(hit)]
 
 
 def check(db, user_id: int, svc, rows: Optional[list] = None,
@@ -98,28 +106,34 @@ def check(db, user_id: int, svc, rows: Optional[list] = None,
         stock = ST.get(db, user_id, r["id"])
         if stock is None:
             continue
-        for level in hits:
+        for hit in hits:
+            level, side = hit["level"], hit["side"]
             if already_fired(stock, level, day):
                 continue
             try:
-                out = _buy_atm_call(db, user_id, svc, stock, r, level, day)
+                out = _buy_atm(db, user_id, svc, stock, r, level, side, day)
             except Exception as exc:
                 logger.error("auto-fno: %s level %s failed: %s", r.get("symbol"), level, exc)
                 out = {"ok": False, "error": str(exc)[:200]}
             _mark_fired(db, stock, level, day, {"at": datetime.now().strftime("%H:%M:%S"), **out})
-            done.append({"symbol": r.get("symbol"), "level": level, **out})
+            done.append({"symbol": r.get("symbol"), "level": level, "side": side, **out})
     return done
 
 
-def _buy_atm_call(db, user_id: int, svc, stock, r: dict, level: float, day: str) -> dict:
-    """Resolve the ATM call for this stock and send one lot through the manual desk."""
+def _buy_atm(db, user_id: int, svc, stock, r: dict, level: float, side: str, day: str) -> dict:
+    """Resolve the ATM option this level calls for and send one lot through the manual desk.
+
+    LONG buys the call, SHORT buys the put. Either way it is a BUY — a long option, so the most
+    that can be lost is the premium.
+    """
+    kind = "pe" if side == "SHORT" else "ce"
     chain = svc.option_chain(r["symbol"], float(r.get("ltp") or 0), around=1)
     if not chain.get("fno"):
         return {"ok": False, "error": chain.get("reason") or "no chain"}
     atm = next((c for c in chain["chain"] if c.get("atm")), None)
-    ce = (atm or {}).get("ce")
+    ce = (atm or {}).get(kind)
     if not ce:
-        return {"ok": False, "error": "no ATM call listed"}
+        return {"ok": False, "error": f"no ATM {kind.upper()} listed"}
     lot = int(ce.get("lot_size") or chain.get("lot_size") or 0)
     if lot <= 0:
         return {"ok": False, "error": "unknown lot size"}
@@ -140,12 +154,13 @@ def _buy_atm_call(db, user_id: int, svc, stock, r: dict, level: float, day: str)
     res = svc.broker.place_order(req)
     oid = getattr(res, "order_id", None) or ((res or {}).get("order_id") if res else None)
     out = {"ok": bool(oid), "order_id": oid, "symbol": ce["symbol"], "strike": atm["strike"],
-           "lots": DEFAULT_LOTS, "qty": lot * DEFAULT_LOTS, "entry": ce.get("ltp"),
-           "expiry": chain.get("expiry")}
+           "option_type": kind.upper(), "lots": DEFAULT_LOTS, "qty": lot * DEFAULT_LOTS,
+           "entry": ce.get("ltp"), "expiry": chain.get("expiry")}
     if not oid:
         out["error"] = "no order id returned"
     _record(db, user_id, r, level, out, day)
-    logger.info("auto-fno: %s level %s -> bought %s (%s)", r["symbol"], level, ce["symbol"], oid)
+    logger.info("auto-fno: %s %s level %s -> bought %s (%s)",
+                r["symbol"], side, level, ce["symbol"], oid)
     return out
 
 
@@ -159,6 +174,7 @@ def _record(db, user_id: int, r: dict, level: float, out: dict, day: str) -> Non
             option_symbol=out.get("symbol"), atm_strike=int(float(out.get("strike") or 0)),
             entry_price=out.get("entry"), lot_size=out.get("qty"),
             extra={"stock": r.get("symbol"), "level": level, "lots": out.get("lots"),
+                   "option_type": out.get("option_type"),
                    "expiry": out.get("expiry"), "order_id": out.get("order_id"),
                    "exit": "manual — close it yourself, then book it on the level"}))
         db.commit()

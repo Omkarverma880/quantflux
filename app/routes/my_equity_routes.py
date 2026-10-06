@@ -118,6 +118,11 @@ class UpdateReq(BaseModel):
     auto_fno: bool | None = None
 
 
+class SideReq(BaseModel):
+    level: float
+    side: str                           # LONG (buy a call) | SHORT (buy a put)
+
+
 class BookReq(BaseModel):
     level: float
     kind: str | None = ""               # PROFIT | LOSS; inferred from the prices when blank
@@ -202,6 +207,16 @@ def remove_stock(stock_id: int, user_id: int = Depends(login_required),
     if not ST.remove(db, user_id, stock_id):
         return {"status": "error", "message": "that stock is not in your workspace"}
     return {"status": "ok"}
+
+
+@router.post("/stocks/{stock_id}/level-side")
+@safe("level_side")
+def level_side(stock_id: int, req: SideReq, user_id: int = Depends(login_required),
+               db: Session = Depends(get_db)):
+    """Point one research level long or short — which decides call or put on an automatic buy."""
+    out = ST.set_level_side(db, user_id, stock_id, req.level, req.side)
+    _service(db, user_id).invalidate(user_id)
+    return {"status": "ok", **out}
 
 
 @router.post("/stocks/{stock_id}/book")

@@ -3,7 +3,7 @@ import { Check, Loader2, Pencil, Trash2, X, Maximize2, Plus } from 'lucide-react
 import { api } from '../../api';
 import {
   N, PCT, signTone, rowTone, ROW_CLASS, LevelChips, PnLCell, NotePills, CategoryPicker, Empty,
-  AlertBell, FnoTag, AutoFnoToggle,
+  AlertBell, FnoTag, AutoFnoToggle, ResearchStats,
 } from './ui';
 import BookTrade from './BookTrade';
 
@@ -89,6 +89,13 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
   const [removing, setRemoving] = useState(null);
   const [booking, setBooking] = useState(null);     // {row, level} while the dialog is open
 
+  const setSide = async (r, price, side) => {
+    try {
+      const d = await api.meLevelSide(r.id, { level: price, side });
+      if (d.status === 'ok') onChanged?.();
+    } catch { /* the table refreshes on its own schedule anyway */ }
+  };
+
   const setAutoFno = async (r, v) => {
     try {
       const d = await api.meUpdate(r.id, { auto_fno: v });
@@ -144,8 +151,7 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
     return (
       <div key={r.id} onClick={() => onOpen?.(r)}
         className={`card !p-3 cursor-pointer space-y-2 ${tone === 'blink' ? 'row-blink border-amber-500/30'
-          : tone === 'oversold' ? 'border-emerald-500/30 bg-emerald-500/5'
-            : tone === 'overbought' ? 'border-red-500/30 bg-red-500/5' : ''}`}>
+          : ''}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -260,6 +266,7 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
                         <div className="flex items-center gap-1.5 min-w-0">
                           <span className="text-[10.5px] text-gray-500 truncate max-w-[150px]">{r.company || '—'}</span>
                           <SectorTag row={r} onChanged={onChanged} />
+                          <ResearchStats stats={r.stats} />
                         </div>
                       </div>
                     </div>
@@ -282,7 +289,8 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
                           <LevelChips watch={r.watch} onEdit={() => setEditing(r.id)}
                             onToggle={(price) => toggleLevel(r, price)}
                             onBook={(price) => setBooking({ row: r, level: price })}
-                            onUndo={(price) => undoBooking(r, price)} />
+                            onUndo={(price) => undoBooking(r, price)}
+                            onSide={(price, side) => setSide(r, price, side)} />
                           <button onClick={(e) => { e.stopPropagation(); setEditing(r.id); }}
                             className="text-gray-600 hover:text-brand-400 p-0.5 mt-0.5" title="edit levels">
                             <Pencil className="w-3 h-3" />

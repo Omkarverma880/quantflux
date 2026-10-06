@@ -17,12 +17,19 @@ price above the level. Nothing is a position and nothing is an order.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import pandas as pd
 
 MAX_LEVELS = 12
+SESSION_OPEN = 9 * 60 + 15
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def now_ist() -> datetime:
+    """Naive IST wall clock — the only clock the market cares about."""
+    return datetime.now(IST).replace(tzinfo=None)
 MAX_BOOKED = 20          # how much history one level keeps
 
 
@@ -32,6 +39,41 @@ def _num(v) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return f if f > 0 else None
+
+
+def clean_side(raw) -> str:
+    """LONG unless SHORT was asked for. A level always has a direction."""
+    v = str(raw or "").strip().upper()
+    return "SHORT" if v in ("SHORT", "SELL", "PUT", "PE", "DOWN") else "LONG"
+
+
+def hunts_from(lv: dict, research_date, today: Optional[date] = None) -> Optional[date]:
+    """The first session this level may be triggered on.
+
+    A level written down before the open can be triggered that same day. One added during the
+    session cannot — the day's high and low already contain moves that happened before you had
+    the idea, and counting those would be reading the past as a signal. Those levels start the
+    next session; a live touch after you added it is still seen by the desk in real time.
+
+    This guard applies only to research dated the day it was typed. Back-dating a research date
+    is a deliberate way to reconstruct an idea from stored history, so it is left alone.
+    """
+    base = _as_date(lv.get("reset_on")) or _as_date(research_date)
+    stamp = lv.get("added_at")
+    if not stamp:
+        return base
+    try:
+        at = datetime.fromisoformat(str(stamp))
+    except ValueError:
+        return base
+    # back-dated research: the user is asking for history, not for a live watch
+    if base and base < at.date():
+        return base
+    if (at.hour * 60 + at.minute) < SESSION_OPEN:
+        first = at.date()
+    else:
+        first = at.date() + timedelta(days=1)
+    return max(first, base) if base else first
 
 
 def normalise(raw) -> list[dict]:
@@ -44,6 +86,11 @@ def normalise(raw) -> list[dict]:
     ``booked`` is the list of completed trades on this level, and ``reset_on`` is the date the
     level starts looking for its NEXT trigger from. Together they let one level be used over and
     over without losing what it did last time.
+
+    ``side`` is LONG (the default) or SHORT: which way you expect price to go from here, and so
+    whether an automatic option buy takes a call or a put. ``added_at`` is when the level was
+    written down — a level added mid-session cannot be triggered by a move that happened earlier
+    that same day, which is the difference between research and hindsight.
     """
     if raw is None:
         return []
@@ -52,13 +99,15 @@ def normalise(raw) -> list[dict]:
     seen: set[float] = set()
     for it in items:
         track, target, stop = True, None, None
-        booked, reset_on = [], None
+        booked, reset_on, side, added_at = [], None, "LONG", None
         if isinstance(it, dict):
             price = it.get("price")
             track = bool(it.get("track", True))
             target, stop = _num(it.get("target")), _num(it.get("stop"))
             booked = [b for b in (it.get("booked") or []) if isinstance(b, dict)][-MAX_BOOKED:]
             reset_on = _as_date(it.get("reset_on"))
+            side = clean_side(it.get("side"))
+            added_at = str(it.get("added_at") or "") or None
         else:
             price = it
         p = _num(price)
@@ -66,15 +115,25 @@ def normalise(raw) -> list[dict]:
             continue
         seen.add(p)
         row = {"price": p, "track": track}
-        # a target below the level, or a stop above it, is a typo — drop it rather than mislead
-        if target and target > p:
-            row["target"] = target
-        if stop and stop < p:
-            row["stop"] = stop
+        # a target must sit the way the trade is meant to go, and the stop the other way;
+        # anything else is a typo, so it is dropped rather than shown as a plan
+        if side == "SHORT":
+            if target and target < p:
+                row["target"] = target
+            if stop and stop > p:
+                row["stop"] = stop
+        else:
+            if target and target > p:
+                row["target"] = target
+            if stop and stop < p:
+                row["stop"] = stop
         if booked:
             row["booked"] = booked
         if reset_on:
             row["reset_on"] = reset_on.isoformat()
+        row["side"] = side
+        if added_at:
+            row["added_at"] = added_at
         out.append(row)
     return sorted(out, key=lambda x: x["price"], reverse=True)[:MAX_LEVELS]
 
@@ -133,17 +192,29 @@ def evaluate(d: pd.DataFrame, raw_levels, research_date, ltp: Optional[float],
             row["distance_pct"] = round((px - level) / level * 100, 2)
             row["side"] = "above" if px > level else "below" if px < level else "at"
             row["near"] = abs(row["distance_pct"]) <= out["tolerance_pct"]
-        if day_low and day_high and day_low <= level <= day_high:
-            out["touched_today_levels"].append(level)
+        # a re-armed level hunts from its reset date, and one written down mid-session only
+        # starts the next day — neither can be triggered by something that already happened
+        level_since = hunts_from(lv, research_date, today)
+        # NOTE: row["side"] already means "price is above/below this level". The level's own
+        # direction is trade_side, so the two never fight over the same key.
+        row["trade_side"] = lv.get("side", "LONG")
+        if lv.get("reset_on"):
+            row["reset_on"] = lv["reset_on"]
+        if lv.get("added_at"):
+            row["added_at"] = lv["added_at"]
+        row["hunts_from"] = level_since.isoformat() if level_since else None
         if lv.get("booked"):
             row["booked"] = lv["booked"]
             row["booked_count"] = len(lv["booked"])
             row["last_booked"] = lv["booked"][-1]
-        # a level that has been closed and re-armed hunts from the reset date, so the trade you
-        # already booked can never be counted a second time
-        level_since = _as_date(lv.get("reset_on")) or since
-        if lv.get("reset_on"):
-            row["reset_on"] = lv["reset_on"]
+        # "touched today" drives the blink and the automatic buy, so it must not fire on a range
+        # the level was not yet watching. For one added mid-session, only a live touch counts —
+        # the day's own high and low are already history by the time you wrote it down.
+        if level_since and level_since > today:
+            if row.get("near"):
+                out["touched_today_levels"].append(level)
+        elif day_low and day_high and day_low <= level <= day_high:
+            out["touched_today_levels"].append(level)
         if len(d):
             hit = _trigger_row(d, level, level_since)
             if hit is not None:

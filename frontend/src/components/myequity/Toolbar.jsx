@@ -17,6 +17,9 @@ export const FILTERS = [
   ['overbought', 'RSI ≥ 80'],
   ['investment', 'Investment'],
   ['swing', 'Swing'],
+  ['fno', 'F&O'],
+  ['armed', 'Auto buy armed'],
+  ['booked', 'Has bookings'],
 ];
 
 export const SORTS = [
