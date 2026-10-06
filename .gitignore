@@ -13,3 +13,6 @@ data/strategy_configs/
 data/market_store/
 data/oi_lab/
 data/ingest_staging/
+
+# throwaway run output — rebuildable from the market store at any time
+data/cache/
