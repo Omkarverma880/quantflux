@@ -111,6 +111,51 @@ function EditExit({ stockId, levels, level, suggestion, onSaved, onCancel }) {
 }
 
 /** Your levels: what triggered, when, what it has earned since, and where it is heading. */
+/**
+ * The research as a thread: when it was written down, each level as it was set, when price
+ * reached it, and every trade booked on it.
+ */
+function Timeline({ events }) {
+  const ICON = {
+    research: { dot: 'bg-brand-500', label: 'researched' },
+    level: { dot: 'bg-sky-500', label: 'level set' },
+    trigger: { dot: 'bg-amber-500', label: 'reached' },
+    booked: { dot: 'bg-emerald-500', label: 'booked' },
+  };
+  return (
+    <ol className="relative pl-4">
+      <span className="absolute left-[3px] top-1 bottom-1 w-px bg-surface-3" aria-hidden="true" />
+      {events.map((e, i) => {
+        const meta = ICON[e.kind] || ICON.level;
+        const loss = e.kind === 'booked' && (e.pnl ?? 0) < 0;
+        return (
+          <li key={i} className="relative pb-2.5 last:pb-0">
+            <span className={`absolute -left-4 top-1.5 w-1.5 h-1.5 rounded-full ${loss ? 'bg-red-500' : meta.dot}`} />
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className="mono text-[11px] text-gray-500">{e.on || '—'}{e.at ? ` ${e.at}` : ''}</span>
+              <span className={`text-[12.5px] ${loss ? 'text-red-300' : 'text-gray-200'}`}>{e.text}</span>
+              {e.kind === 'booked' && (
+                <span className="text-[11.5px] mono text-gray-400">
+                  {e.qty ? `${N(e.qty, 0)} @ ` : ''}{N(e.entry)} → {N(e.exit)}
+                  {e.pnl != null && (
+                    <span className={loss ? 'text-red-400' : 'text-emerald-400'}> · ₹{N(Math.abs(e.pnl), 0)}</span>
+                  )}
+                  {e.pnl_pct != null && ` (${e.pnl_pct > 0 ? '+' : ''}${e.pnl_pct}%)`}
+                  {e.days != null && ` · ${e.days}d`}
+                </span>
+              )}
+            </div>
+            {e.detail && <div className="text-[11px] text-gray-500 mt-0.5">{e.detail}</div>}
+            {e.kind === 'booked' && e.bought_on && (
+              <div className="text-[11px] text-gray-600 mt-0.5">bought {e.bought_on}</div>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function LevelLedger({ watch, horizon, stockId, levels, suggestion, onChanged }) {
   const rows = watch?.rows || [];
   const [editing, setEditing] = useState(null);
@@ -359,6 +404,13 @@ export default function XRay({ stockId, onClose, onChanged }) {
 
         {data && (
           <div className="p-4 space-y-4">
+            {!!data.timeline?.length && (
+              <Section title="What has happened"
+                right={<span className="text-[10.5px] text-gray-500">oldest first</span>}>
+                <Timeline events={data.timeline} />
+              </Section>
+            )}
+
             <Section title="Your research levels"
               right={<span className="text-[10.5px] text-gray-500">P&L measured from the level, per share</span>}>
               <LevelLedger watch={data.watch} horizon={data.horizon} stockId={stockId}

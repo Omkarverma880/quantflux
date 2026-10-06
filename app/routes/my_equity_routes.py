@@ -131,6 +131,7 @@ class BookReq(BaseModel):
     exit: float
     entered_on: str | None = None
     exited_on: str | None = None
+    triggered_on: str | None = None
     note: str | None = ""
 
 
@@ -226,7 +227,8 @@ def book_level(stock_id: int, req: BookReq, user_id: int = Depends(login_require
     """Close a trade on one research level and re-arm that level for its next touch."""
     out = ST.book_level(db, user_id, stock_id, req.level, kind=req.kind or "",
                         qty=req.qty or 0, entry=req.entry or 0, exit=req.exit,
-                        entered_on=req.entered_on, exited_on=req.exited_on, note=req.note or "")
+                        entered_on=req.entered_on, exited_on=req.exited_on, note=req.note or "",
+                        triggered_on=req.triggered_on)
     _service(db, user_id).invalidate(user_id)
     return {"status": "ok", **out}
 

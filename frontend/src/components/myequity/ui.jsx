@@ -272,15 +272,18 @@ export function BookedChip({ row, onBook, onUndo }) {
 export function AutoFnoToggle({ on, fno, onToggle }) {
   if (!fno) return null;
   return (
-    <button onClick={(e) => { e.stopPropagation(); onToggle?.(!on); }}
+    <label onClick={(e) => e.stopPropagation()}
       title={on
-        ? 'Armed: when a research level triggers, 1 ATM call is bought automatically. Click to disarm.'
-        : 'Off. Click to buy 1 ATM call automatically when a research level triggers.'}
-      className={`px-1 py-px rounded text-[9px] font-bold tracking-wide border transition-colors ${on
-        ? 'bg-amber-500/20 border-amber-500/60 text-amber-300'
-        : 'bg-transparent border-surface-4 text-gray-600 hover:text-gray-300'}`}>
+        ? 'Armed: when a research level triggers, one ATM option is bought automatically.'
+        : 'Off: nothing is bought automatically for this stock.'}
+      className={`inline-flex items-center gap-1 px-1 py-px rounded border cursor-pointer text-[9px]
+        font-bold tracking-wide transition-colors ${on
+          ? 'bg-amber-500/20 border-amber-500/60 text-amber-300'
+          : 'bg-transparent border-surface-4 text-gray-500 hover:text-gray-300'}`}>
+      <input type="checkbox" checked={!!on} onChange={(e) => onToggle?.(e.target.checked)}
+        className="w-2.5 h-2.5 accent-amber-500 cursor-pointer" />
       AUTO
-    </button>
+    </label>
   );
 }
 
@@ -294,7 +297,7 @@ export function FnoTag({ on }) {
   );
 }
 
-export function LevelChips({ watch, onEdit, onToggle, onBook, onUndo, onSide }) {
+export function LevelChips({ watch, onEdit, onToggle, onBook, onUndo, onSide, fno }) {
   const rows = watch?.rows || [];
   if (!rows.length) {
     return (
@@ -309,7 +312,8 @@ export function LevelChips({ watch, onEdit, onToggle, onBook, onUndo, onSide }) 
         <div key={r.level} className="flex flex-col gap-0.5">
           <LevelChip row={r} onToggle={onToggle} />
           <div className="flex items-center gap-1 flex-wrap">
-            <SideChip row={r} onChange={onSide} />
+            {/* direction decides call vs put, so it is only shown where options exist */}
+            {fno && <SideChip row={r} onChange={onSide} />}
             <BookedChip row={r} onBook={onBook} onUndo={r.last_booked ? onUndo : null} />
           </div>
         </div>

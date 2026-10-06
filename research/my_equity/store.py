@@ -40,15 +40,17 @@ def clean_symbol(raw: str) -> str:
     return s
 
 
-def parse_levels(raw) -> list[dict]:
+def parse_levels(raw, on=None) -> list[dict]:
     """Accept a list of numbers or level objects, or text like '3100, 2900' — however you type it.
 
     Stored shape is always ``[{"price": 3100.0, "track": True, "side": "LONG"}, …]``; ``track``
     says whether the level counts towards the P&L, so you can keep a level on the chart without
     following it, and ``side`` says which way you expect it to go.
 
-    A level with no ``added_at`` is stamped now. That stamp is what stops a level written down
-    at noon from being "triggered" by the morning's move.
+    A level with no ``added_at`` is stamped with ``on`` — the research date it belongs to —
+    or with the current moment when that date is today. The stamp is what stops a level written
+    down at noon from being "triggered" by the morning's move, and it is also what puts the
+    level in the right place in the record.
     """
     if raw is None:
         return []
@@ -57,10 +59,37 @@ def parse_levels(raw) -> list[dict]:
     levels = LV.normalise(raw)
     # IST, not UTC: the stamp is compared against the 09:15 market open, and the server may
     # well be running in UTC (Railway does)
-    stamp = LV.now_ist().isoformat(timespec="seconds")
+    now = LV.now_ist()
+    research = on if isinstance(on, date) else (date.fromisoformat(str(on)[:10]) if on else None)
+    if research and research < now.date():
+        stamp = f"{research.isoformat()}T00:00:00"      # research done earlier: it is dated then
+    else:
+        stamp = now.isoformat(timespec="seconds")
     for lv in levels:
         lv.setdefault("added_at", stamp)
     return levels
+
+
+def merge_levels(existing, incoming, on=None) -> list[dict]:
+    """Re-type the level list without losing what each level already knows.
+
+    Editing levels is usually "3000, 2900" typed into a box, which carries no direction, no
+    bookings and no re-arm date. A level at a price that is already there keeps all of that —
+    only genuinely new prices start fresh. Deleting a price still deletes its history, which is
+    what removing a level means.
+    """
+    old = {round(l["price"], 4): l for l in LV.normalise(existing)}
+    out = []
+    for lv in parse_levels(incoming, on):
+        prev = old.get(round(lv["price"], 4))
+        if prev:
+            merged = {**prev}
+            # the only things the text box can actually change
+            merged["track"] = lv.get("track", True)
+            out.append(merged)
+        else:
+            out.append(lv)
+    return LV.normalise(out)
 
 
 def to_dict(row: MyEquityStock) -> dict:
@@ -113,7 +142,9 @@ def add(db, user_id: int, *, symbol: str, exchange: str = "NSE", token: Optional
         raise ValueError(f"the workspace holds at most {MAX_STOCKS} stocks")
     row = MyEquityStock(
         user_id=user_id, symbol=symbol, exchange=exchange, token=token, company=company,
-        added_on=added_on or date.today(), levels=parse_levels(levels), note=(note or "").strip()[:2000],
+        added_on=added_on or date.today(),
+        levels=parse_levels(levels, added_on or date.today()),
+        note=(note or "").strip()[:2000],
         touch_pct=max(0.01, min(float(touch_pct or 0.25), 10.0)), archived=False,
         category=clean_category(category), sector=sector, industry=industry,
         sector_source="auto" if sector else None,
@@ -130,7 +161,8 @@ def update(db, user_id: int, stock_id: int, **fields) -> MyEquityStock:
     if row is None:
         raise ValueError("that stock is not in your workspace")
     if "levels" in fields and fields["levels"] is not None:
-        row.levels = parse_levels(fields["levels"])
+        on = fields.get("added_on") or row.added_on
+        row.levels = merge_levels(row.levels, fields["levels"], on)
     if fields.get("note") is not None:
         row.note = str(fields["note"]).strip()[:2000]
     if fields.get("added_on"):
@@ -170,7 +202,7 @@ def remove(db, user_id: int, stock_id: int) -> bool:
 
 def book_level(db, user_id: int, stock_id: int, level: float, *, kind: str = "",
                qty: float = 0, entry: float = 0, exit: float = 0,
-               entered_on=None, exited_on=None, note: str = "") -> dict:
+               entered_on=None, exited_on=None, note: str = "", triggered_on=None) -> dict:
     """Close out a trade on one research level and re-arm it.
 
     The booking is appended to that level's history and ``reset_on`` is set to the exit date, so
@@ -207,6 +239,9 @@ def book_level(db, user_id: int, stock_id: int, level: float, *, kind: str = "",
                "exited_on": d_out.isoformat(), "days": (d_out - d_in).days,
                "pnl": pnl, "pnl_pct": round(pnl_per / entry * 100, 2) if entry else None,
                "note": (note or "").strip()[:200]}
+    t_on = LV._as_date(triggered_on)
+    if t_on:
+        booking["triggered_on"] = t_on.isoformat()
     target["booked"] = [*(target.get("booked") or []), booking][-LV.MAX_BOOKED:]
     # re-arm from the exit date: the trade just closed must not be found again
     target["reset_on"] = d_out.isoformat()
@@ -282,6 +317,54 @@ def booking_stats(row: MyEquityStock) -> dict:
             "net": round(net, 2) if total else None,
             "win_rate": round(wins / total * 100, 1) if total else None,
             "avg_days": round(sum(days) / len(days), 1) if days else None}
+
+
+def timeline(row: MyEquityStock, watch: Optional[dict] = None) -> list[dict]:
+    """Everything that has happened to this research, oldest first.
+
+    One readable thread: the day the research was done, each level as it was written down, when
+    price reached it, and every trade booked on it. This is the record the workspace is for —
+    without it a level only ever shows its latest state and the history is invisible.
+    """
+    events: list[dict] = []
+    if row.added_on:
+        events.append({"on": row.added_on.isoformat(), "kind": "research",
+                       "text": f"Researched {row.symbol}",
+                       "detail": (row.note or "").strip() or None})
+
+    by_level = {}
+    for r in ((watch or {}).get("rows") or []):
+        if r.get("level") is not None:
+            by_level[round(float(r["level"]), 4)] = r
+
+    for lv in LV.normalise(row.levels):
+        price = lv["price"]
+        side = lv.get("side", "LONG")
+        stamp = lv.get("added_at")
+        on = str(stamp)[:10] if stamp else (row.added_on.isoformat() if row.added_on else None)
+        if on:
+            events.append({"on": on, "at": str(stamp)[11:16] if stamp else None, "kind": "level",
+                           "level": price, "side": side,
+                           "text": f"Level {price:g} set ({'short' if side == 'SHORT' else 'long'})"})
+        w = by_level.get(round(price, 4)) or {}
+        if w.get("triggered_on"):
+            events.append({"on": w["triggered_on"], "kind": "trigger", "level": price,
+                           "text": f"Price reached {price:g}",
+                           "detail": (f"{w['days_since']} day(s) ago" if w.get("days_since") else None)})
+        for b in lv.get("booked") or []:
+            if b.get("triggered_on"):
+                events.append({"on": b["triggered_on"], "kind": "trigger", "level": price,
+                               "text": f"Price reached {price:g}"})
+            events.append({
+                "on": b.get("exited_on"), "kind": "booked", "level": price,
+                "text": ("Profit booked" if b.get("kind") == "PROFIT" else "Loss booked"),
+                "pnl": b.get("pnl"), "pnl_pct": b.get("pnl_pct"), "days": b.get("days"),
+                "qty": b.get("qty"), "entry": b.get("entry"), "exit": b.get("exit"),
+                "detail": (b.get("note") or "").strip() or None,
+                "bought_on": b.get("entered_on")})
+
+    events.sort(key=lambda e: (str(e.get("on") or ""), str(e.get("at") or "")))
+    return events
 
 
 def mark_touch(db, row: MyEquityStock, level: float) -> None:

@@ -40,6 +40,7 @@ export default function BookTrade({ row, level, onClose, onBooked }) {
       const r = await api.meBook(row.id, {
         level: Number(lv.level), qty: Number(qty) || 0, entry: Number(entry) || 0,
         exit: Number(exitPx), entered_on: enteredOn, exited_on: exitedOn, note,
+        triggered_on: lv.triggered_on || null,
       });
       if (r.status !== 'ok') throw new Error(r.message || 'could not book it');
       onBooked?.(r);

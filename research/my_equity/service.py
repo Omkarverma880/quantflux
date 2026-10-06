@@ -393,6 +393,7 @@ class MyEquityService:
                     "prev_close": day.get("close"), "volume": quote.get("volume")},
             "snapshot": snap, "extremes": ext, "volume": flow, "sensitivity": sens,
             "watch": watch, "notes": _watch_notes(snap, ext, flow, watch),
+            "timeline": ST.timeline(s, watch),          # the record, oldest first
             "performance": MX.performance(d, ltp), "risk": MX.risk_stats(d, ltp),
             "seasonality": MX.seasonality(d), "pivots": MX.pivots(d),
             "order_book": MX.order_book(quote),

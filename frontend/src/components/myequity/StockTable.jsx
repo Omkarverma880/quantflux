@@ -6,6 +6,7 @@ import {
   AlertBell, FnoTag, AutoFnoToggle, ResearchStats,
 } from './ui';
 import BookTrade from './BookTrade';
+import EditStock from './EditStock';
 
 /**
  * The workspace table.
@@ -88,6 +89,7 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
   const [editing, setEditing] = useState(null);
   const [removing, setRemoving] = useState(null);
   const [booking, setBooking] = useState(null);     // {row, level} while the dialog is open
+  const [editingStock, setEditingStock] = useState(null);
 
   const setSide = async (r, price, side) => {
     try {
@@ -221,6 +223,11 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
 
   return (
     <>
+      {editingStock && (
+        <EditStock row={editingStock} onClose={() => setEditingStock(null)}
+          onSaved={() => { setEditingStock(null); onChanged?.(); }} />
+      )}
+
       {booking && (
         <BookTrade row={booking.row} level={booking.level}
           onClose={() => setBooking(null)}
@@ -290,7 +297,8 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
                             onToggle={(price) => toggleLevel(r, price)}
                             onBook={(price) => setBooking({ row: r, level: price })}
                             onUndo={(price) => undoBooking(r, price)}
-                            onSide={(price, side) => setSide(r, price, side)} />
+                            onSide={(price, side) => setSide(r, price, side)}
+                            fno={r.fno} />
                           <button onClick={(e) => { e.stopPropagation(); setEditing(r.id); }}
                             className="text-gray-600 hover:text-brand-400 p-0.5 mt-0.5" title="edit levels">
                             <Pencil className="w-3 h-3" />
@@ -322,6 +330,11 @@ export default function StockTable({ rows = [], onOpen, onChanged, onTrade, load
                       <button onClick={(e) => { e.stopPropagation(); onTrade?.(r, 'SELL'); }}
                         className="px-1.5 py-0.5 rounded border border-red-500/40 text-red-400 hover:bg-red-500/15 text-[10.5px] font-bold"
                         title="sell this stock">SELL</button>
+                      <button onClick={(e) => { e.stopPropagation(); setEditingStock(r); }}
+                        className="text-gray-500 hover:text-brand-400 p-1"
+                        title="edit the research date, levels, category and more">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
                       <button onClick={(e) => { e.stopPropagation(); onOpen?.(r); }}
                         className="text-gray-500 hover:text-brand-400 p-1" title="open the X-ray">
                         <Maximize2 className="w-3.5 h-3.5" />

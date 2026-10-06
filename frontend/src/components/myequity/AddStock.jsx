@@ -123,17 +123,20 @@ export default function AddStock({ onAdded, connected }) {
         <div>
           <div className="text-[10px] uppercase tracking-wider text-gray-500">Trade category</div>
           <div className="flex items-center gap-2 mt-1.5">
-            {['SWING', 'INVESTMENT'].map((c) => (
+            {[['SWING', 'Swing trade', 'bg-sky-500/20 text-sky-200 border-sky-500/50'],
+              ['INVESTMENT', 'Investment', 'bg-violet-500/20 text-violet-200 border-violet-500/50'],
+              ['FNO', 'F&O', 'bg-amber-500/20 text-amber-200 border-amber-500/50']].map(([c, label, on]) => (
               <button key={c} onClick={() => set({ category: c })}
                 className={`px-2.5 py-1 rounded border text-[11.5px] font-semibold ${form.category === c
-                  ? (c === 'INVESTMENT' ? 'bg-violet-500/20 text-violet-200 border-violet-500/50' : 'bg-sky-500/20 text-sky-200 border-sky-500/50')
-                  : 'border-surface-3 text-gray-400 hover:text-gray-200'}`}>
-                {c === 'INVESTMENT' ? 'Investment' : 'Swing trade'}
+                  ? on : 'border-surface-3 text-gray-400 hover:text-gray-200'}`}>
+                {label}
               </button>
             ))}
           </div>
           <div className="text-[10.5px] text-gray-500 mt-1">
-            {form.category === 'INVESTMENT' ? 'Judged over 60 sessions' : 'Judged over 10 sessions'}
+            {form.category === 'INVESTMENT' ? 'Judged over 60 sessions'
+              : form.category === 'FNO' ? 'Judged over 10 sessions · options can be bought on a level'
+                : 'Judged over 10 sessions'}
           </div>
         </div>
 
