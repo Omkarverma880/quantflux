@@ -175,7 +175,7 @@ def run(start: str, end: str, p: ST.Params = ST.P,
     say(f"done · {len(trades)} tickets over {days} sessions")
     return {"status": "ok", "trades": trades, "sessions": days, "short_data_sessions": short_data,
             "notes": notes[:20], "params": p.as_dict(), "start": start, "end": end,
-            "summary": summarise(trades, days, short_data, p)}
+            "summary": summarise(trades, days, short_data, p, notes)}
 
 
 def _by_day(t) -> list:
@@ -245,11 +245,31 @@ def _timing(t) -> dict:
     }
 
 
-def summarise(trades: list[dict], sessions: int, short_data: int, p: ST.Params) -> dict:
+def why_nothing(p: ST.Params, notes: list) -> str:
+    """Why a run took no trade. Zeros with no reason are indistinguishable from a bug."""
+    latest = int(p.auction_at) - int(p.min_lead_min)
+    if p.min_lead_min and int(p.entry_from) > latest:
+        return (f"Every minute of {ST.hhmm(p.entry_from)}–{ST.hhmm(p.entry_to)} is inside the "
+                f"{p.min_lead_min}-minute lead before the {ST.hhmm(p.auction_at)} auction, so "
+                f"nothing could open. Move the window to {ST.hhmm(latest)} or earlier — or press "
+                "“Reset to the shipped rule”.")
+    if ST.is_pair(p):
+        if p.max_premium:
+            return (f"No session had a call and a put at the money for ₹{p.max_premium:g} or less. "
+                    "Raise “Skip above” or set it to 0.")
+        return ("No session had both an at-the-money call and put priced in the stored chain for "
+                "this window. Check the dates have expiry sessions in them.")
+    return (f"No option priced ₹{p.price_min:g}–₹{p.price_max:g} was available in this window. "
+            "Widen the band, or switch the structure to the paired trade.")
+
+
+def summarise(trades: list[dict], sessions: int, short_data: int, p: ST.Params,
+              notes: list | None = None) -> dict:
     t = pd.DataFrame(trades)
     base = {"sessions": sessions, "short_data_sessions": short_data, "tickets": int(len(t))}
     if t.empty:
-        return {**base, "message": "no ₹1 option was available to buy in this window"}
+        return {**base, "message": why_nothing(p, notes or []),
+                "why_not": (notes or [])[:8]}
     by_day = t.groupby("date").agg(pnl=("pnl", "sum"), cost=("cost", "sum"), tickets=("pnl", "size"))
     wins = t[t.pnl > 0]
     return {

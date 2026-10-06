@@ -338,6 +338,19 @@ export default function CasGame() {
 
           {s && (
             <Section title="Result">
+              {/* a run that took no trade has to say why — a row of dashes reads like a bug */}
+              {!s.tickets && s.message && (
+                <div className="mb-3">
+                  <Note tone="warn">
+                    <b>Nothing was taken.</b> {s.message}
+                    {!!(s.why_not || []).length && (
+                      <span className="block mt-1 text-[11px] text-gray-500">
+                        {s.why_not.slice(0, 3).join(' · ')}
+                      </span>
+                    )}
+                  </Note>
+                </div>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mb-3">
                 <Stat label="Expiry sessions" value={N0(s.sessions)} sub={`${s.days_traded || 0} had a ticket`} />
                 <Stat label="Tickets" value={N0(s.tickets)} />
