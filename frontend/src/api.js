@@ -626,6 +626,7 @@ export const api = {
   casMeta: () => request('/index-strategy/cas-game/meta'),
   casDesk: () => request('/index-strategy/cas-game/desk'),
   casConfig: (body) => request('/index-strategy/cas-game/config', { method: 'POST', body: JSON.stringify(body || {}) }),
+  casReset: () => request('/index-strategy/cas-game/reset', { method: 'POST' }),
   casStart: () => request('/index-strategy/cas-game/start', { method: 'POST' }),
   casStop: () => request('/index-strategy/cas-game/stop', { method: 'POST' }),
   casHuntNow: () => request('/index-strategy/cas-game/hunt-now', { method: 'POST' }),

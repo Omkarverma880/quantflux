@@ -116,6 +116,13 @@ def config(req: ConfigReq, user_id: int = Depends(login_required), db: Session =
     return {"status": "ok", "config": LIVE.save_config(db, user_id, updates)}
 
 
+@router.post("/reset")
+@safe("reset")
+def reset(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Discard saved settings and take the shipped rule, defaults and all."""
+    return {"status": "ok", "config": LIVE.reset_params(db, user_id)}
+
+
 @router.post("/start")
 @safe("start")
 def start(user_id: int = Depends(login_required), db: Session = Depends(get_db)):

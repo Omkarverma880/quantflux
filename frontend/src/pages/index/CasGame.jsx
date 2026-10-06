@@ -227,7 +227,10 @@ export default function CasGame() {
             </Section>
           )}
 
-          <Section title="Settings">
+          <Section title="Settings"
+                   right={<button disabled={busy}
+                     onClick={() => { if (window.confirm('Replace your saved settings with the shipped rule?')) act(api.casReset); }}
+                     className="btn-secondary !py-1 !px-2 text-[11.5px]">Reset to the shipped rule</button>}>
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
               <Field label="Structure" hint="how the bet is placed">
                 <select value={params.structure || 'strangle'}

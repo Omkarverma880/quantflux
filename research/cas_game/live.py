@@ -79,6 +79,26 @@ def save_config(db, user_id: int, updates: dict) -> dict:
     return load_config(db, user_id)
 
 
+def reset_params(db, user_id: int) -> dict:
+    """Throw away the saved settings and take the shipped ones.
+
+    load_config merges what you saved OVER the defaults, which is right day to day and wrong
+    after the rule itself changes: a window and a budget saved for the old ₹1 trade would keep
+    overriding the new ones and quietly run the old bet on the new engine.
+    """
+    cfg = load_config(db, user_id)
+    cfg["params"] = ST.P.as_dict()
+    row = (db.query(StrategyConfig)
+             .filter(StrategyConfig.user_id == user_id, StrategyConfig.strategy_name == CONFIG_NAME).first())
+    if row is None:
+        db.add(StrategyConfig(user_id=user_id, strategy_name=CONFIG_NAME, config=cfg))
+    else:
+        row.config = cfg
+    db.commit()
+    logger.info("cas game: user %s reset settings to the shipped defaults", user_id)
+    return load_config(db, user_id)
+
+
 def params_of(cfg: dict) -> ST.Params:
     return ST.Params(**{k: v for k, v in (cfg.get("params") or {}).items() if k in ST.P.as_dict()})
 
