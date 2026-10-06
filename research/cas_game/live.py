@@ -302,6 +302,9 @@ class Desk:
                                      else "done for the day — tickets closed")}
         if minute > close_m:
             return {**out, "state": f"window closed at {ST.hhmm(close_m)}, nothing taken"}
+        if ST.too_late(minute, p):
+            return {**out, "state": (f"too close to the {ST.hhmm(p.auction_at)} auction "
+                                     f"({ST.lead_minutes(minute, p)} min) — not opening")}
 
         for pick in scanned["picks"]:
             if not pick.get("lots"):
@@ -411,6 +414,7 @@ def dashboard(db, user_id: int, broker=None) -> dict:
                              else ("hunting now" if hunting else "in the window") if minute <= close_m
                              else "after the window")},
         "scan": scanned, "tickets": tickets, "log": st.get("log", [])[-40:],
+        "pair": ST.pair_outcome([t for t in tickets if t.get("closed")]) if ST.is_pair(p) else None,
         "totals": {"tickets": len(tickets), "spent": round(sum(t.get("cost", 0) for t in tickets), 2),
                    "realised": round(sum(t.get("pnl", 0) for t in closed), 2),
                    "unrealised": round(sum(t.get("unrealised", 0) for t in tickets if not t.get("closed")), 2)},

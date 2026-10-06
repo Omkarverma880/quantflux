@@ -115,6 +115,7 @@ export default function CasGame() {
   }
   const s = bt.result?.summary;
   const live = desk?.mode === 'live';
+  const isPair = (params?.structure || 'strangle') === 'strangle';
 
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-[1500px] mx-auto">
@@ -228,16 +229,51 @@ export default function CasGame() {
 
           <Section title="Settings">
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+              <Field label="Structure" hint="how the bet is placed">
+                <select value={params.structure || 'strangle'}
+                        onChange={(e) => saveParams({ structure: e.target.value })} className={input}>
+                  <option value="strangle">call + put, each with a stop</option>
+                  <option value="cheap">the old ₹1 lottery</option>
+                </select>
+              </Field>
+              <Field label="Target (points)" hint="0 = let the winner run">
+                <input type="number" value={params.target_points ?? 0}
+                       onChange={(e) => saveParams({ target_points: Number(e.target.value) })} className={input} />
+              </Field>
+              <Field label="Stop per leg (%)" hint="of what that leg cost">
+                <input type="number" value={params.stop_pct ?? 35}
+                       onChange={(e) => saveParams({ stop_pct: Number(e.target.value) })} className={input} />
+              </Field>
+              <Field label="Strike" hint="relative to the money">
+                <select value={String(params.moneyness ?? 0)}
+                        onChange={(e) => saveParams({ moneyness: Number(e.target.value) })} className={input}>
+                  <option value="-2">ATM − 2 (deeper in)</option>
+                  <option value="-1">ATM − 1 (in the money)</option>
+                  <option value="0">ATM (at the money)</option>
+                  <option value="1">ATM + 1 (out of the money)</option>
+                  <option value="2">ATM + 2 (further out)</option>
+                </select>
+              </Field>
+              <Field label="Lead before auction" hint="minutes; will not open inside this">
+                <input type="number" min="0" value={params.min_lead_min ?? 20}
+                       onChange={(e) => saveParams({ min_lead_min: Number(e.target.value) })} className={input} />
+              </Field>
+              <Field label="Skip above (₹)" hint="too dear a leg, 0 = off">
+                <input type="number" value={params.max_premium ?? 0}
+                       onChange={(e) => saveParams({ max_premium: Number(e.target.value) })} className={input} />
+              </Field>
               <Field label="Index">
                 <select value={params.index} onChange={(e) => saveParams({ index: e.target.value })} className={input}>
                   {meta.indices.map((i) => <option key={i} value={i}>{i}</option>)}
                 </select>
               </Field>
-              <Field label="Price from" hint="the cheap end of the band">
-                <input type="number" step="0.05" value={params.price_min} onChange={(e) => saveParams({ price_min: Number(e.target.value) })} className={input} />
+              <Field label="Price from" hint={isPair ? 'only for the ₹1 rule' : 'the cheap end of the band'}>
+                <input type="number" step="0.05" value={params.price_min} disabled={isPair}
+                       onChange={(e) => saveParams({ price_min: Number(e.target.value) })}
+                       className={`${input} ${isPair ? 'opacity-40' : ''}`} />
               </Field>
               <Field label="Price to">
-                <input type="number" step="0.05" value={params.price_max} onChange={(e) => saveParams({ price_max: Number(e.target.value) })} className={input} />
+                <input type="number" disabled={isPair} step="0.05" value={params.price_max} onChange={(e) => saveParams({ price_max: Number(e.target.value) })} className={`${input} ${isPair ? 'opacity-40' : ''}`} />
               </Field>
               <Field label="Budget (₹)" hint="the whole risk">
                 <input type="number" step="500" value={params.budget} onChange={(e) => saveParams({ budget: Number(e.target.value) })} className={input} />
@@ -305,18 +341,62 @@ export default function CasGame() {
                 exits {Object.entries(s.exits || {}).map(([k, v]) => `${k} ${v}`).join(' · ')}
               </div>
               {s.note && <div className="mt-2"><Note tone="warn">{s.note}</Note></div>}
-              {!!(s.by_day || []).length && (
+              {s.timing && (
+                <div className="mt-3 text-[11.5px] text-gray-400">
+                  <b className="text-gray-300">Timing</b> — entered {s.timing.median_entry} (first
+                  {' '}{s.timing.first_entry}, last {s.timing.last_entry}), typical exit
+                  {' '}{s.timing.median_exit}. A position is held {s.timing.median_held_min} min on a
+                  typical day and up to {s.timing.longest_held_min} min on the days that run;
+                  a stopped leg is gone in {s.timing.median_minutes_to_stop} min.
+                </div>
+              )}
+
+              {!!(s.by_month || []).length && (
                 <div className="overflow-x-auto mt-3">
-                  <table className="w-full text-[12px] min-w-[420px]">
+                  <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Month by month</div>
+                  <table className="w-full text-[12px] min-w-[560px]">
                     <thead><tr className="text-[10px] uppercase tracking-wider text-gray-500 border-b border-surface-3">
-                      {['Expiry day', 'Tickets', 'Staked', 'Net'].map((h) => <th key={h} className="px-2 py-1 text-left font-medium">{h}</th>)}
+                      {['Month', 'Sessions', 'Green', 'Staked', 'Best day', 'Worst day', 'Net']
+                        .map((h) => <th key={h} className="px-2 py-1 text-left font-medium">{h}</th>)}
                     </tr></thead>
+                    <tbody>
+                      {s.by_month.map((m) => (
+                        <tr key={m.month} className="border-b border-surface-3/40">
+                          <td className="px-2 py-1 mono text-gray-300">{m.month}</td>
+                          <td className="px-2 py-1 mono text-gray-400">{m.sessions}</td>
+                          <td className="px-2 py-1 mono text-gray-400">{m.green_days}/{m.sessions}</td>
+                          <td className="px-2 py-1 mono text-gray-400">{RS(m.spent)}</td>
+                          <td className="px-2 py-1 mono text-emerald-400">{RS(m.best_day)}</td>
+                          <td className="px-2 py-1 mono text-red-400">{RS(m.worst_day)}</td>
+                          <td className={`px-2 py-1 mono font-semibold ${tone(m.net)}`}>{RS(m.net)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {!!(s.by_day || []).length && (
+                <div className="overflow-x-auto mt-3 max-h-[420px]">
+                  <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Day by day</div>
+                  <table className="w-full text-[12px] min-w-[720px]">
+                    <thead className="sticky top-0 bg-surface-1">
+                      <tr className="text-[10px] uppercase tracking-wider text-gray-500 border-b border-surface-3">
+                        {['Expiry day', 'In', 'Out', 'Lots', 'Staked', 'Winner', 'Loser', 'Exits', 'Net']
+                          .map((h) => <th key={h} className="px-2 py-1 text-left font-medium">{h}</th>)}
+                      </tr>
+                    </thead>
                     <tbody>
                       {s.by_day.map((d) => (
                         <tr key={d.date} className="border-b border-surface-3/40">
                           <td className="px-2 py-1 mono text-gray-300">{d.date}</td>
-                          <td className="px-2 py-1 mono text-gray-400">{d.tickets}</td>
+                          <td className="px-2 py-1 mono text-gray-400">{d.entry_time}</td>
+                          <td className="px-2 py-1 mono text-gray-400">{d.exit_time}</td>
+                          <td className="px-2 py-1 mono text-gray-400">{d.lots ?? '—'}</td>
                           <td className="px-2 py-1 mono text-gray-400">{RS(d.spent)}</td>
+                          <td className="px-2 py-1 mono text-emerald-400">{d.winner} {RS(d.winner_pnl)}</td>
+                          <td className="px-2 py-1 mono text-red-400">{d.loser} {RS(d.loser_pnl)}</td>
+                          <td className="px-2 py-1 text-[10.5px] text-gray-500">{d.exits}</td>
                           <td className={`px-2 py-1 mono font-semibold ${tone(d.net)}`}>{RS(d.net)}</td>
                         </tr>
                       ))}

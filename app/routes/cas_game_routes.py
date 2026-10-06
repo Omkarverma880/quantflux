@@ -92,7 +92,7 @@ def meta(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     return {
         "status": "ok", "defaults": ST.P.as_dict(), "config": cfg,
         "rules": ST.describe(LIVE.params_of(cfg)),
-        "indices": list(ST.LOT_SIZE),
+        "indices": list(ST.LOT_SIZE), "structures": ["strangle", "cheap"],
         "app_paper_mode": bool(settings.PAPER_TRADE or not settings.TRADING_ENABLED),
         "connected": _broker(db, user_id) is not None,
         "schedule": {
@@ -110,6 +110,9 @@ def config(req: ConfigReq, user_id: int = Depends(login_required), db: Session =
     updates = req.model_dump(exclude_none=True)
     if updates.get("mode") not in (None, "paper", "live"):
         raise ValueError("mode must be paper or live")
+    st = (updates.get("params") or {}).get("structure")
+    if st is not None and str(st).lower() not in ("strangle", "cheap"):
+        raise ValueError("structure must be strangle or cheap")
     return {"status": "ok", "config": LIVE.save_config(db, user_id, updates)}
 
 

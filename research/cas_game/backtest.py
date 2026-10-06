@@ -70,6 +70,9 @@ def run_session(d: date, day: dict, p: ST.Params) -> dict:
     for minute in range(p.entry_from, min(p.entry_to, last_minute - 1) + 1):
         if entered:
             break
+        if ST.too_late(minute, p):
+            notes.append(f"{ST.hhmm(minute)} is inside the auction's lead time — not opening")
+            break
         snap = g[g["m"] == minute]
         if snap.empty:
             continue
@@ -84,6 +87,8 @@ def run_session(d: date, day: dict, p: ST.Params) -> dict:
 
         # fill on the next minute, the way a live order would
         fill_min = minute + 1
+        lot = p.lot
+        filled = []
         for b in buys:
             fut = g[(g["option_type"] == b["option_type"]) & (g["strike"] == b["strike"])
                     & (g["m"] >= fill_min)].sort_values("m")
@@ -92,24 +97,40 @@ def run_session(d: date, day: dict, p: ST.Params) -> dict:
                 continue
             fill = fut.iloc[0]
             entry = float(fill["open"] if np.isfinite(fill["open"]) else fill["close"]) + p.slippage_ticks * ST.TICK
-            if entry <= 0:
-                continue
-            lot = p.lot
-            lots = int((p.budget / max(len(buys), 1)) // (entry * lot))
+            if entry > 0:
+                filled.append((b, fut, entry))
+        if not filled:
+            continue
+
+        # A pair is ONE trade and must carry the same number of lots on each leg. Splitting the
+        # budget by rupees would buy many lots of the cheap leg and few of the dear one, so the
+        # "defined loss" would be whatever the cheap side happened to cost — not a choice at all.
+        if ST.is_pair(p) and len(filled) > 1:
+            per_lot = sum(e for _, _, e in filled) * lot
+            lots_each = int(p.budget // per_lot) if per_lot > 0 else 0
+            lots_for = {id(b): lots_each for b, _, _ in filled}
+        else:
+            lots_for = {id(b): int((p.budget / len(filled)) // (e * lot)) for b, _, e in filled}
+
+        for b, fut, entry in filled:
+            lots = lots_for.get(id(b), 0)
             if lots < 1:
-                notes.append(f"{b['option_type']} {b['strike']:g} cost more than its share of the budget")
+                notes.append(f"{b['option_type']} {b['strike']:g} cost more than the budget allows")
                 continue
             qty = lots * lot
-            pos = {"target": entry + p.target_points,
-                   "stop": (entry - p.stop_points) if p.stop_points else None}
+            # a zero target means "no cap". Writing entry + 0 here would put the target AT the
+            # entry price and sell the position the minute after it was opened.
+            pos = {"target": (entry + p.target_points) if p.target_points and p.target_points > 0 else None,
+                   "stop": ST.leg_stop(entry, p)}
             exit_px, why, exit_min = None, "SQUAREOFF", min(p.squareoff, last_minute)
             for r in fut.itertuples():
-                reason = ST.exit_reason(float(r.high), pos, int(r.m), p)
-                if reason == "TARGET":
-                    exit_px, why, exit_min = pos["target"], "TARGET", int(r.m)
-                    break
-                if reason == "STOP":
+                # adverse first: inside one minute the stop is tested against the LOW before the
+                # target is tested against the high, so a bar that touched both is read as a loss
+                if pos["stop"] and float(r.low) <= pos["stop"]:
                     exit_px, why, exit_min = pos["stop"], "STOP", int(r.m)
+                    break
+                if pos["target"] and float(r.high) >= pos["target"]:
+                    exit_px, why, exit_min = pos["target"], "TARGET", int(r.m)
                     break
                 if int(r.m) >= min(p.squareoff, last_minute):
                     exit_px, why, exit_min = float(r.close), "SQUAREOFF", int(r.m)
@@ -157,6 +178,73 @@ def run(start: str, end: str, p: ST.Params = ST.P,
             "summary": summarise(trades, days, short_data, p)}
 
 
+def _by_day(t) -> list:
+    """One row per session: when it went on, when it came off, and which leg carried it."""
+    out = []
+    for d, g in t.groupby("date"):
+        won = g.loc[g.pnl.idxmax()]
+        lost = g.loc[g.pnl.idxmin()]
+        out.append({
+            "date": d,
+            "entry_time": str(g.entry_time.min()),
+            "exit_time": str(g.exit_time.max()),
+            "tickets": int(len(g)),
+            "lots": int(g.lots.max()) if "lots" in g else None,
+            "spent": round(float(g.cost.sum()), 2),
+            "net": round(float(g.pnl.sum()), 2),
+            "winner": f"{won.option_type} {won.strike:g}",
+            "winner_pnl": round(float(won.pnl), 2),
+            "loser": f"{lost.option_type} {lost.strike:g}",
+            "loser_pnl": round(float(lost.pnl), 2),
+            "exits": " / ".join(sorted(set(g.exit_reason))),
+        })
+    return out
+
+
+def _by_month(t) -> list:
+    """The month-by-month record, which is the honest unit for judging this."""
+    out = []
+    for m, g in t.groupby("month"):
+        day = g.groupby("date")["pnl"].sum()
+        out.append({
+            "month": m, "sessions": int(day.size), "tickets": int(len(g)),
+            "spent": round(float(g.cost.sum()), 2),
+            "net": round(float(g.pnl.sum()), 2),
+            "green_days": int((day > 0).sum()),
+            "best_day": round(float(day.max()), 2),
+            "worst_day": round(float(day.min()), 2),
+        })
+    return out
+
+
+def _timing(t) -> dict:
+    """When the trade actually goes on and comes off, and how long a leg survives."""
+    def mins(v):
+        try:
+            h, m = str(v).split(":")
+            return int(h) * 60 + int(m)
+        except Exception:
+            return None
+    ins = [m for m in (mins(v) for v in t.entry_time) if m is not None]
+    outs = [m for m in (mins(v) for v in t.exit_time) if m is not None]
+    held = [b - a for a, b in zip(ins, outs) if b >= a]
+    def hhmm_(x):
+        return f"{int(x) // 60:02d}:{int(x) % 60:02d}"
+    stopped = t[t.exit_reason == "STOP"]
+    st_held = [b - a for a, b in zip(
+        [mins(v) for v in stopped.entry_time], [mins(v) for v in stopped.exit_time])
+        if a is not None and b is not None and b >= a]
+    return {
+        "first_entry": hhmm_(min(ins)) if ins else None,
+        "last_entry": hhmm_(max(ins)) if ins else None,
+        "median_entry": hhmm_(sorted(ins)[len(ins) // 2]) if ins else None,
+        "median_exit": hhmm_(sorted(outs)[len(outs) // 2]) if outs else None,
+        "median_held_min": int(sorted(held)[len(held) // 2]) if held else None,
+        "longest_held_min": int(max(held)) if held else None,
+        "median_minutes_to_stop": int(sorted(st_held)[len(st_held) // 2]) if st_held else None,
+    }
+
+
 def summarise(trades: list[dict], sessions: int, short_data: int, p: ST.Params) -> dict:
     t = pd.DataFrame(trades)
     base = {"sessions": sessions, "short_data_sessions": short_data, "tickets": int(len(t))}
@@ -181,10 +269,11 @@ def summarise(trades: list[dict], sessions: int, short_data: int, p: ST.Params) 
         "best_day": round(float(by_day.pnl.max()), 2),
         "worst_day": round(float(by_day.pnl.min()), 2),
         "avg_day": round(float(by_day.pnl.mean()), 2),
-        "by_day": [{"date": d, "tickets": int(r.tickets), "spent": round(float(r.cost), 2),
-                    "net": round(float(r.pnl), 2)} for d, r in by_day.iterrows()],
+        "by_day": _by_day(t),
         "by_side": [{"side": s, "tickets": int(len(x)), "net": round(float(x.pnl.sum()), 2)}
                     for s, x in t.groupby("option_type")],
+        "by_month": _by_month(t),
+        "timing": _timing(t),
         "note": (f"{short_data} of {sessions} sessions have data only up to 15:29, so the "
                  "15:30–15:40 minutes the auction moves are missing there"),
     }
