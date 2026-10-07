@@ -323,6 +323,28 @@ def _pct(v) -> Optional[float]:
         return None
 
 
+def _fetch_html(url: str, referer: Optional[str] = None, timeout: int = 25) -> str:
+    """GET a page, and name a refusal for what it is.
+
+    A site that blocks us returns a small 403 page, which any parser then reports as "the data
+    was not found" — sending whoever reads the error off to debug a parser that is working fine.
+    The status is checked first so the message says "refused us", because the fix for a block is
+    a different fix entirely.
+    """
+    r = _web_session(referer).get(url, timeout=timeout)
+    if r.status_code == 403:
+        raise ValueError("the source refused this request (HTTP 403) — this host appears to be "
+                         "blocked, which is not something a retry will fix")
+    if r.status_code == 429:
+        raise ValueError("the source is rate-limiting this host (HTTP 429)")
+    if r.status_code != 200:
+        raise ValueError("the source returned HTTP %s" % r.status_code)
+    if len(r.text) < 2000:
+        raise ValueError("the source returned a %d-byte page, which is not the real one"
+                         % len(r.text))
+    return r.text
+
+
 def _mc_block(page: str, div_id: str) -> Optional[dict]:
     """The one-row figures table inside a named Moneycontrol div.
 
@@ -359,7 +381,7 @@ def _mc_block(page: str, div_id: str) -> Optional[dict]:
     return rec if (rec["buy"] is not None or rec["net"] is not None) else None
 
 
-def fetch_fii_dii_moneycontrol(force: bool = False) -> dict:
+def fetch_fii_dii_moneycontrol(force: bool = False, timeout: int = 20) -> dict:
     """Provisional NSE+BSE combined FII/DII cash activity for the latest session.
 
     Gross purchase, gross sales and net, in Rs crore — the same three numbers NSE publishes.
@@ -375,7 +397,7 @@ def fetch_fii_dii_moneycontrol(force: bool = False) -> dict:
             "source": "Moneycontrol — institutional trading activity (provisional, NSE+BSE)",
             "source_url": MC_MARKETSTATS}
     try:
-        page = _web_session().get(MC_MARKETSTATS, timeout=20).text
+        page = _fetch_html(MC_MARKETSTATS, timeout=timeout)
         fii = _mc_block(page, "instprovfii")
         dii = _mc_block(page, "instprovdii")
         if not fii and not dii:
@@ -426,7 +448,7 @@ def fetch_fii_dii_history(force: bool = False) -> dict:
             "source_url": MC_FII_DII}
     try:
         import json as _json
-        page = _web_session().get(MC_FII_DII, timeout=25).text
+        page = _fetch_html(MC_FII_DII, timeout=25)
         m = _NEXT_DATA_RE.search(page)
         if not m:
             raise ValueError("the page's data block was not found")
@@ -539,7 +561,7 @@ def fetch_et_holder_stocks(institution: str, side: str, force: bool = False) -> 
                         "quarterly. Not a transaction value and not a day's buying."
                         % spec["label"])}
     try:
-        page = _web_session("https://economictimes.indiatimes.com/markets").get(url, timeout=30).text
+        page = _fetch_html(url, referer="https://economictimes.indiatimes.com/markets", timeout=30)
         tables = _TABLE_RE.findall(page)
         if len(tables) < 2:
             raise ValueError("expected two tables on the page, found %d" % len(tables))
@@ -614,3 +636,263 @@ def fetch_et_fii_stocks(side: str, force: bool = False) -> dict:
              "fii_holding_yoy_change_pct": r["holding_yoy_change_pct"]}
             for r in out.get("rows") or []]
     return {**out, "rows": rows}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NSE delivery data — the one daily, stock-level number that is actually published
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Nobody publishes which stocks FIIs bought today. What NSE does publish, every session for
+# every stock, is how much of the traded volume was taken to delivery rather than squared off
+# intraday. A day where most of the volume went to delivery is a day somebody wanted the shares,
+# not the move — which is the closest honest proxy there is for accumulation.
+#
+# It attributes nothing. It does not say who took delivery, and this module never pretends it
+# does. What it supports is a different and answerable question: which stocks are being taken
+# home at a rate unlike their own recent norm.
+#
+# Two traps this handles:
+#   * on a holiday the archive serves the previous session's file under the holiday's name, so
+#     the session is read from DATE1 inside the file and never from the URL;
+#   * the file includes ETFs and liquid funds, which sit at the top of any delivery ranking and
+#     mean nothing there. They are removed by intersecting with NSE's own equity list rather
+#     than by a hand-kept list of symbols to ignore.
+
+BHAV_URL = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_%s.csv"
+
+DELIVERY_TTL_S = 6 * 3600.0
+DELIVERY_MAX_DAYS = 30
+
+_delivery: dict = {}        # "DD-MON-YYYY" -> {symbol: row}
+_delivery_miss: dict = {}   # filename key -> when we last failed, so a 404 is not re-asked
+
+
+def _f(v) -> Optional[float]:
+    try:
+        s = str(v).replace(",", "").strip()
+        return float(s) if s and s not in {"-", "", "NA"} else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_bhav(text: str) -> tuple[Optional[str], dict]:
+    """One bhavcopy into {symbol: row}, plus the ISO session it actually belongs to.
+
+    The session is normalised here rather than carried as NSE prints it: the archive is not
+    consistent about case between files ("06-Oct-2026" in the bhavcopy, "06-OCT-2026" in the
+    bulk-deal file), and a de-duplication that keys on the raw string would let a holiday's
+    duplicate through on a casing difference alone.
+    """
+    import csv as _csv
+    import io as _io
+    rows = {}
+    raw_session = None
+    for raw in _csv.DictReader(_io.StringIO(text)):
+        r = {(k or "").strip(): (v or "").strip() for k, v in raw.items()}
+        if r.get("SERIES") != "EQ":
+            continue
+        sym = r.get("SYMBOL")
+        if not sym:
+            continue
+        raw_session = raw_session or r.get("DATE1")
+        close, prev = _f(r.get("CLOSE_PRICE")), _f(r.get("PREV_CLOSE"))
+        turn = _f(r.get("TURNOVER_LACS"))
+        rows[sym] = {
+            "symbol": sym,
+            "close": close, "previous_close": prev,
+            "open": _f(r.get("OPEN_PRICE")), "high": _f(r.get("HIGH_PRICE")),
+            "low": _f(r.get("LOW_PRICE")), "vwap": _f(r.get("AVG_PRICE")),
+            "change_pct": (round((close - prev) / prev * 100, 2)
+                           if (close and prev) else None),
+            "volume": _f(r.get("TTL_TRD_QNTY")),
+            "turnover_cr": round(turn / 100.0, 2) if turn is not None else None,
+            "trades": _f(r.get("NO_OF_TRADES")),
+            "delivery_qty": _f(r.get("DELIV_QTY")),
+            "delivery_pct": _f(r.get("DELIV_PER")),
+        }
+    parsed = _as_date(raw_session)
+    return (parsed.isoformat() if parsed else None), rows
+
+
+def fetch_delivery_day(d: date, force: bool = False) -> dict:
+    """One session's delivery and price data, keyed on the date the file itself declares.
+
+    A holiday is served as a copy of the previous session, so the returned ``session`` may not
+    be the date asked for. Callers key on what comes back, never on what they asked for.
+    """
+    key = d.strftime("%d%m%Y")
+    now = time.time()
+    with _lock:
+        if not force:
+            miss = _delivery_miss.get(key)
+            if miss and now - miss < FAIL_RETRY_S:
+                return {"available": False, "asked_for": d.isoformat(), "session": None,
+                        "rows": {}, "error": "not published"}
+            for sess, cached in _delivery.items():
+                if cached.get("_asked") == key and now - cached["_at"] < DELIVERY_TTL_S:
+                    return {"available": True, "asked_for": d.isoformat(), "session": sess,
+                            "rows": cached["rows"], "cached": True}
+    try:
+        r = _web_session("https://www.nseindia.com").get(BHAV_URL % key, timeout=30)
+        if r.status_code != 200 or "SYMBOL" not in r.text[:400]:
+            raise ValueError("HTTP %s" % r.status_code)
+        session, rows = _parse_bhav(r.text)
+        if not rows or not session:
+            raise ValueError("no EQ rows in the file")
+    except Exception as exc:
+        logger.debug("bhavcopy %s unavailable: %s", key, exc)
+        with _lock:
+            _delivery_miss[key] = now
+        return {"available": False, "asked_for": d.isoformat(), "session": None,
+                "rows": {}, "error": str(exc)[:120]}
+    with _lock:
+        _delivery[session] = {"rows": rows, "_at": now, "_asked": key}
+        # never let the cache grow without bound
+        if len(_delivery) > DELIVERY_MAX_DAYS * 2:
+            for old in sorted(_delivery, key=lambda k: _delivery[k]["_at"])[:10]:
+                _delivery.pop(old, None)
+    return {"available": True, "asked_for": d.isoformat(), "session": session,
+            "rows": rows, "cached": False}
+
+
+def fetch_delivery_window(end: date, sessions: int = 11,
+                          is_trading_day=None, previous_trading_day=None) -> dict:
+    """The most recent N published sessions, newest first and de-duplicated by real session.
+
+    Walks back over calendar days asking for each file, because which days NSE publishes for is
+    its own business — a holiday that serves a duplicate is detected by the session inside the
+    file and dropped rather than counted twice.
+    """
+    want = max(1, min(int(sessions), DELIVERY_MAX_DAYS))
+    out: dict = {}
+    order: list[str] = []
+    cursor = end
+    tried = 0
+    while len(order) < want and tried < want * 3 + 10:
+        tried += 1
+        if cursor.weekday() < 5 and (is_trading_day is None or is_trading_day(cursor)):
+            got = fetch_delivery_day(cursor)
+            if got.get("available"):
+                sess = got["session"]
+                if sess not in out:
+                    out[sess] = got["rows"]
+                    order.append(sess)
+        cursor = cursor - timedelta(days=1)
+    if not order:
+        return {"available": False, "sessions": [], "by_session": {},
+                "source": "NSE — securities bhavcopy with delivery",
+                "error": "no published session could be read",
+                "retrieved_at": now_ist().isoformat(timespec="seconds")}
+    return {"available": True, "sessions": order, "by_session": out,
+            "latest": order[0], "count": len(order),
+            "source": "NSE — securities bhavcopy with delivery",
+            "source_url": BHAV_URL % end.strftime("%d%m%Y"),
+            "data_type": "stock_delivery",
+            "retrieved_at": now_ist().isoformat(timespec="seconds"), "error": None}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Index closes, from NSE's own archive
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The index reaction beside each session used to come from Moneycontrol, which means it vanished
+# the moment Moneycontrol refused us — and it does refuse, with a 403, from hosts it does not
+# like. NSE publishes the same closes in its own archive, so the column is sourced from there
+# instead and survives losing Moneycontrol entirely.
+#
+# Moneycontrol is still the only free source for FII's four derivative books, so that view keeps
+# depending on it and says so when it is unavailable.
+
+INDEX_CLOSE_URL = "https://nsearchives.nseindia.com/content/indices/ind_close_all_%s.csv"
+INDEX_TTL_S = 6 * 3600.0
+
+_index_closes: dict = {}      # iso date -> {index name -> row}
+_index_miss: dict = {}
+
+_WANTED_INDICES = {"NIFTY 50": "nifty", "NIFTY BANK": "banknifty", "NIFTY NEXT 50": "next50"}
+
+
+def _index_date(v) -> Optional[date]:
+    """The index archive stamps rows '06-10-2026' — day first, numeric month.
+
+    Parsed here rather than by widening the shared date parser: every other source in this
+    module writes an alphabetic month, and teaching the shared parser to accept a numeric
+    day-month pair would make '01-02-2026' ambiguous for all of them.
+    """
+    for fmt in ("%d-%m-%Y", "%d-%b-%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(str(v).strip(), fmt).date()
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def fetch_index_close_day(d: date, force: bool = False) -> dict:
+    """One session's index closes. Like the bhavcopy, the session is read from the file."""
+    key = d.strftime("%d%m%Y")
+    now = time.time()
+    with _lock:
+        if not force:
+            miss = _index_miss.get(key)
+            if miss and now - miss < FAIL_RETRY_S:
+                return {"available": False, "session": None, "indices": {}}
+            for sess, c in _index_closes.items():
+                if c.get("_asked") == key and now - c["_at"] < INDEX_TTL_S:
+                    return {"available": True, "session": sess, "indices": c["indices"],
+                            "cached": True}
+    try:
+        import csv as _csv
+        import io as _io
+        r = _web_session("https://www.nseindia.com").get(INDEX_CLOSE_URL % key, timeout=25)
+        if r.status_code != 200 or "Index Name" not in r.text[:400]:
+            raise ValueError("HTTP %s" % r.status_code)
+        out, session = {}, None
+        for raw in _csv.DictReader(_io.StringIO(r.text)):
+            row = {(k or "").strip(): (v or "").strip() for k, v in raw.items()}
+            name = row.get("Index Name", "").strip().upper()
+            if name not in _WANTED_INDICES:
+                continue
+            session = session or _index_date(row.get("Index Date"))
+            out[_WANTED_INDICES[name]] = {
+                "close": _num(row.get("Closing Index Value")),
+                "open": _num(row.get("Open Index Value")),
+                "high": _num(row.get("High Index Value")),
+                "low": _num(row.get("Low Index Value")),
+                "points_change": _num(row.get("Points Change")),
+                # NSE writes these without a leading zero (".98%", "-.76%"), which float() reads
+                "change_pct": _num(str(row.get("Change(%)") or "").replace("%", "")),
+            }
+        if not out or not session:
+            raise ValueError("no index rows in the file")
+        iso = session.isoformat()
+    except Exception as exc:
+        logger.debug("index close %s unavailable: %s", key, exc)
+        with _lock:
+            _index_miss[key] = now
+        return {"available": False, "session": None, "indices": {}, "error": str(exc)[:120]}
+    with _lock:
+        _index_closes[iso] = {"indices": out, "_at": now, "_asked": key}
+        if len(_index_closes) > 90:
+            for old in sorted(_index_closes, key=lambda k: _index_closes[k]["_at"])[:20]:
+                _index_closes.pop(old, None)
+    return {"available": True, "session": iso, "indices": out, "cached": False}
+
+
+def fetch_index_closes(end: date, sessions: int = 12, is_trading_day=None) -> dict:
+    """The most recent N sessions of index closes, newest first, keyed by real session."""
+    want = max(1, min(int(sessions), 60))
+    by_date: dict = {}
+    cursor, tried = end, 0
+    while len(by_date) < want and tried < want * 3 + 10:
+        tried += 1
+        if cursor.weekday() < 5 and (is_trading_day is None or is_trading_day(cursor)):
+            got = fetch_index_close_day(cursor)
+            if got.get("available") and got["session"] not in by_date:
+                by_date[got["session"]] = got["indices"]
+        cursor = cursor - timedelta(days=1)
+    return {"available": bool(by_date), "by_session": by_date,
+            "sessions": sorted(by_date, reverse=True),
+            "source": "NSE — daily index close archive",
+            "source_url": INDEX_CLOSE_URL % end.strftime("%d%m%Y"),
+            "retrieved_at": now_ist().isoformat(timespec="seconds"),
+            "error": None if by_date else "no index close file could be read"}

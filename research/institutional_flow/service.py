@@ -92,6 +92,51 @@ def reaction(change_pct: Optional[float], rvol: Optional[float],
     return "Negative confirmation"
 
 
+DII_STOCK_MESSAGE = (
+    "DII aggregate data is available. Security-level DII activity requires a stock-level "
+    "institutional-data provider — no free source publishes which stocks DIIs bought or sold, "
+    "and this screen will not infer a list of names from an aggregate figure."
+)
+
+
+def _as_iso(nse_date: str):
+    """'06-OCT-2026' -> '2026-10-06'. Returns the input untouched if it is already ISO."""
+    from datetime import datetime as _dt
+    s = str(nse_date or "").strip()
+    for fmt in ("%d-%b-%Y", "%d-%B-%Y", "%Y-%m-%d"):
+        try:
+            return _dt.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return s or None
+
+
+def delivery_reading(change_pct, delivery_pct, baseline_pct, surge) -> str:
+    """What one session's delivery says, against that stock's own habit.
+
+    A description of two numbers — where the price went, and whether an unusual share of the
+    volume settled. It names no buyer, because NSE attributes none, and it is backward-looking:
+    it says what the session looked like, never what the next one will do.
+    """
+    if surge is None or delivery_pct is None:
+        return "No baseline yet"
+    if change_pct is None:
+        return "No price change recorded"
+    heavy, light = surge >= 1.25, surge <= 0.80
+    up, down = change_pct > 0.25, change_pct < -0.25
+    if heavy and up:
+        return "Delivery surge on a rising day"
+    if heavy and down:
+        return "Delivery surge into a fall"
+    if heavy:
+        return "Delivery surge, price flat"
+    if light and up:
+        return "Rose on unusually low delivery"
+    if light and down:
+        return "Fell on unusually low delivery"
+    return "In line with its own norm"
+
+
 class InstitutionalFlowService:
     """One per user, holding the broker connection and a short-lived view cache."""
 
@@ -110,7 +155,13 @@ class InstitutionalFlowService:
         us — which it does — Moneycontrol carries the screen instead of the screen going blank.
         """
         raw = SRC.fetch_fii_dii_daily(force=force)
-        alt = SRC.fetch_fii_dii_moneycontrol(force=force)
+        # The cross-check is a second opinion, not the number. When NSE has already answered it
+        # gets a short leash, because a slow or sulking secondary must never hold up the figure
+        # the whole screen is built around — the page would paint "unavailable" while waiting on
+        # a source it does not need. When NSE has failed, this *is* the number, so it gets the
+        # full timeout.
+        alt = SRC.fetch_fii_dii_moneycontrol(force=force,
+                                             timeout=5 if raw.get("available") else 20)
         cross = None
         if raw.get("available") and alt.get("available"):
             if raw.get("data_date") == alt.get("data_date"):
@@ -272,9 +323,13 @@ class InstitutionalFlowService:
             "market": status,
             "aggregate": agg,
             "intraday": self.fetch_intraday(),
-            "fii_stocks": self.fii_stock_lists(refresh=False),
-            "dii_stocks": self.dii_stock_note(),
-            "derivatives": self.derivatives_history(days=15),
+            # The stock lists, the fund lists and the derivative books each have their own
+            # endpoint and the page fetches them separately. Doing them here too meant the
+            # session band — the one thing a trader looks at first — waited on two megabytes of
+            # someone else's HTML before it could paint.
+            "dii_stocks": {"available": False, "institution": "DII",
+                           "data_type": "dii_shareholding_change",
+                           "message": DII_STOCK_MESSAGE},
             "universe": {k: v for k, v in uni.items() if k != "meta"},
             "stocks": stocks,
             "connected": self.broker is not None,
@@ -372,11 +427,24 @@ class InstitutionalFlowService:
             if better(rows.get(d), cand):
                 rows[d] = cand
 
-        for r in rows.values():
+        status = SESS.market_status()
+        cursor = cursor_end = date.fromisoformat(status["session_date"])
+
+        # The index reaction comes from NSE's own close archive rather than from the history
+        # page, so the column survives losing Moneycontrol — which is a 403 away on any host it
+        # dislikes, and was previously enough to blank it.
+        idx = SRC.fetch_index_closes(cursor_end, sessions=max(12, min(int(days) + 4, 60)),
+                                     is_trading_day=SESS.is_trading_day)
+        for d, r in rows.items():
             r.setdefault("backfilled", False)
             r["gross_available"] = r.get("fii_buy") is not None
-        status = SESS.market_status()
-        cursor = date.fromisoformat(status["session_date"])
+            marks = (idx.get("by_session") or {}).get(d) or {}
+            nifty = marks.get("nifty") or {}
+            bank = marks.get("banknifty") or {}
+            r["nifty_close"] = nifty.get("close")
+            r["nifty_change_pct"] = nifty.get("change_pct")
+            r["banknifty_close"] = bank.get("close")
+            r["banknifty_change_pct"] = bank.get("change_pct")
         # walk back over real trading days so weekends never appear as missing sessions
         wanted: list[str] = []
         for _ in range(max(1, min(int(days), 400))):
@@ -410,7 +478,9 @@ class InstitutionalFlowService:
                 "pending": pending, "not_captured": missed,
                 "earliest_recorded": earliest,
                 "backfilled": sum(1 for r in out if r.get("backfilled")),
+                "index_source": idx.get("source") if idx.get("available") else None,
                 "sources": [x for x in ["NSE — FII/DII trading activity (cash market)",
+                                        idx.get("source") if idx.get("available") else None,
                                         series.get("source") if series.get("available") else None]
                             if x],
                 "note": ("Figures are published once, after the close. Today's session is read "
@@ -740,10 +810,7 @@ class InstitutionalFlowService:
             "available": False, "institution": "DII",
             "data_type": "dii_shareholding_change",
             "rows": [],
-            "message": ("DII aggregate data is available. Security-level DII activity requires "
-                        "a stock-level institutional-data provider — no free source publishes "
-                        "which stocks DIIs bought or sold, and this screen will not infer a "
-                        "list of names from an aggregate figure."),
+            "message": DII_STOCK_MESSAGE,
             "mutual_funds": mf,
             "mutual_funds_caveat": ("Mutual fund shareholding is published by stock, and funds "
                                     "are the largest part of DII — but DII also covers banks, "
@@ -893,6 +960,150 @@ class InstitutionalFlowService:
                 "note": ("Cash figures are net ₹ crore in the equity market. The four FII "
                          "derivative columns are net ₹ crore in index futures, index options, "
                          "stock futures and stock options.")}
+
+
+    # ── delivery: the daily, stock-level number that does exist ──────
+    def delivery_screen(self, lookback: int = 11, min_turnover_cr: float = 25.0,
+                        universe: str = "ALL", limit: int = 40, db=None,
+                        rank: str = "surge") -> dict:
+        """Which stocks were taken to delivery at a rate unlike their own recent norm.
+
+        Delivery percentage is volume that settled rather than squared off intraday. It is the
+        only daily per-stock figure NSE publishes that speaks to intent, and it attributes
+        nothing — it does not say who took delivery, and nothing here claims it was an FII.
+
+        A stock's own baseline is what matters: 60% delivery is unremarkable for a name that
+        always runs at 60% and notable for one that usually runs at 25%. So the ranking is the
+        ratio of today's delivery to the mean of the preceding sessions, not the raw figure.
+
+        Rows need a real baseline to be ranked by surge, and a stock with too few prior
+        sessions is carried with ``surge: None`` rather than given a flattering default.
+        """
+        from research.institutional_flow import symbols as SYM
+
+        status = SESS.market_status()
+        end = date.fromisoformat(status["session_date"])
+        win = SRC.fetch_delivery_window(end, sessions=max(2, min(int(lookback), 30)),
+                                        is_trading_day=SESS.is_trading_day)
+        if not win.get("available"):
+            return {"available": False, "rows": [], "error": win.get("error"),
+                    "source": win.get("source"),
+                    "message": ("NSE's delivery file for the latest session could not be read, "
+                                "so there is nothing to screen. It is published after the close "
+                                "and is not available during the session.")}
+
+        sessions = win["sessions"]
+        latest, priors = sessions[0], sessions[1:]
+        today = win["by_session"][latest]
+
+        listed = (SYM.index().get("by_symbol") or {})
+        companies = (SYM.index().get("companies") or {})
+        allowed = self._universe_filter(universe, db)
+
+        rows = []
+        for sym, r in today.items():
+            # NSE's equity list is the ETF filter: a liquid fund or gold ETF settles almost
+            # entirely to delivery and would own the top of this table while meaning nothing.
+            if sym not in listed:
+                continue
+            if allowed is not None and sym not in allowed:
+                continue
+            if r["turnover_cr"] is None or r["turnover_cr"] < float(min_turnover_cr):
+                continue
+            if r["delivery_pct"] is None:
+                continue
+            hist = [win["by_session"][s][sym]["delivery_pct"]
+                    for s in priors
+                    if sym in win["by_session"][s]
+                    and win["by_session"][s][sym]["delivery_pct"] is not None]
+            base = round(sum(hist) / len(hist), 2) if len(hist) >= 3 else None
+            surge = round(r["delivery_pct"] / base, 2) if (base and base > 0) else None
+            vols = [win["by_session"][s][sym]["volume"]
+                    for s in priors
+                    if sym in win["by_session"][s] and win["by_session"][s][sym]["volume"]]
+            vbase = (sum(vols) / len(vols)) if len(vols) >= 3 else None
+            rows.append({
+                **r,
+                "company": companies.get(sym) or "",
+                "delivery_baseline_pct": base,
+                "delivery_surge": surge,
+                "baseline_sessions": len(hist),
+                "relative_volume": (round(r["volume"] / vbase, 2)
+                                    if (vbase and r["volume"]) else None),
+                "delivery_value_cr": (round(r["delivery_qty"] * r["vwap"] / 1e7, 2)
+                                      if (r["delivery_qty"] and r["vwap"]) else None),
+                "reading": delivery_reading(r["change_pct"], r["delivery_pct"], base, surge),
+            })
+
+        keyed = {
+            "surge": lambda x: (x["delivery_surge"] if x["delivery_surge"] is not None else -1),
+            "delivery": lambda x: (x["delivery_pct"] or 0),
+            "value": lambda x: (x["delivery_value_cr"] or 0),
+            "gain": lambda x: (x["change_pct"] if x["change_pct"] is not None else -999),
+            "loss": lambda x: (-(x["change_pct"]) if x["change_pct"] is not None else -999),
+            "turnover": lambda x: (x["turnover_cr"] or 0),
+        }
+        rows.sort(key=keyed.get(rank, keyed["surge"]), reverse=True)
+        cut = max(1, min(int(limit), 200))
+
+        agg = self.fetch_fii_dii_daily()
+        same_day = bool(agg.get("available") and agg.get("data_date") == _as_iso(latest))
+        return {
+            "available": True,
+            "session": _as_iso(latest), "session_label": latest,
+            "baseline_sessions": priors,
+            "rows": rows[:cut], "count": len(rows), "shown": min(cut, len(rows)),
+            "universe": universe, "rank": rank,
+            "min_turnover_cr": float(min_turnover_cr),
+            "data_type": "stock_delivery",
+            "source": win["source"], "source_url": win.get("source_url"),
+            "retrieved_at": win.get("retrieved_at"),
+            "context": ({"fii_net": (agg.get("fii") or {}).get("net"),
+                         "dii_net": (agg.get("dii") or {}).get("net"),
+                         "same_session": same_day} if agg.get("available") else None),
+            "measure": ("Delivery percentage is the share of the day's traded volume that "
+                        "settled rather than being squared off intraday. Ranked against each "
+                        "stock's own mean over the previous %d sessions, because the level only "
+                        "means something relative to that stock's habit." % len(priors)),
+            "caveat": ("This says nothing about who took delivery. NSE does not attribute it, "
+                       "and neither does this screen — it is not FII activity, and a high "
+                       "reading is a description of one session, not a signal."),
+        }
+
+    def _universe_filter(self, universe: str, db=None):
+        """The set of symbols a screen is allowed to show, or None for no restriction."""
+        key = (universe or "ALL").upper()
+        if key in ("ALL", ""):
+            return None
+        if key == "NIFTY50":
+            u = SRC.nifty50_symbols()
+            return {x["symbol"] for x in u.get("symbols", [])} or None
+        if key == "FNO":
+            try:
+                if self.broker is None:
+                    return None
+                return {str(i.get("name") or "").strip().upper()
+                        for i in self.broker.get_instruments("NFO") or []
+                        if i.get("instrument_type") == "FUT" and i.get("name")} or None
+            except Exception as exc:
+                logger.debug("F&O universe unavailable: %s", exc)
+                return None
+        if key == "WATCHLIST" and db is not None and self.user_id:
+            try:
+                from research.my_equity import store as MEST
+                return {r.symbol for r in MEST.list_stocks(db, self.user_id)} or None
+            except Exception as exc:
+                logger.debug("watchlist universe unavailable: %s", exc)
+                return None
+        if key == "FII_LIST":
+            lists = self.fii_stock_lists()
+            syms = set()
+            for blk in (lists.get("sides") or {}).values():
+                for r in blk.get("rows") or []:
+                    if r.get("symbol"):
+                        syms.add(r["symbol"])
+            return syms or None
+        return None
 
     def conflict(self, agg: Optional[dict] = None) -> dict:
         """FII and DII pulling against each other, stated from the aggregate only."""

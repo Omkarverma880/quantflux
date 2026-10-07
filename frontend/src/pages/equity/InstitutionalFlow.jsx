@@ -49,6 +49,23 @@ const TONE_TEXT = { live: 'text-emerald-400', closed: 'text-red-400', delayed: '
 const LEDGER_SPANS = [['10', '10 sessions'], ['22', '1 month'], ['30', '30 sessions'],
   ['66', '3 months'], ['132', '6 months'], ['260', '1 year']];
 
+const DELIV_UNIVERSES = [
+  ['ALL', 'All equities'],
+  ['NIFTY50', 'NIFTY 50'],
+  ['FNO', 'F&O names'],
+  ['FII_LIST', 'On an FII list'],
+  ['WATCHLIST', 'My watchlist'],
+];
+
+const DELIV_RANKS = [
+  ['surge', 'Delivery vs its own norm'],
+  ['delivery', 'Highest delivery %'],
+  ['value', 'Largest delivered value'],
+  ['gain', 'Biggest gainers'],
+  ['loss', 'Biggest fallers'],
+  ['turnover', 'Highest turnover'],
+];
+
 const RANKS = [
   ['rvol', 'Highest relative volume'],
   ['gain', 'Highest price gain'],
@@ -68,6 +85,9 @@ export default function InstitutionalFlow() {
   const [side, setSide] = useState('bought');
   const [mfSide, setMfSide] = useState('bought');
   const [moveRank, setMoveRank] = useState('confirming');
+  const [deliv, setDeliv] = useState(null);
+  const [delivOpts, setDelivOpts] = useState({ universe: 'ALL', rank: 'surge', min_turnover_cr: 25 });
+  const [delivBusy, setDelivBusy] = useState(false);
   const [ledgerView, setLedgerView] = useState('cash');
   const [showImport, setShowImport] = useState(false);
   const [universe, setUniverse] = useState('NIFTY50');
@@ -98,6 +118,15 @@ export default function InstitutionalFlow() {
   useEffect(() => { api.instFlowTable(span).then(setFlow).catch(() => {}); }, [span]);
   useEffect(() => { api.instDerivatives(60).then(setDeriv).catch(() => {}); }, []);
   useEffect(() => { loadStocks(); }, [loadStocks]);
+  useEffect(() => {
+    let dead = false;
+    setDelivBusy(true);
+    api.instDeliveryScreen({ ...delivOpts, lookback: 11, limit: 60 })
+      .then((d) => { if (!dead) setDeliv(d); })
+      .catch(() => {})
+      .finally(() => { if (!dead) setDelivBusy(false); });
+    return () => { dead = true; };
+  }, [delivOpts]);
 
   // poll only while the market is actually open — never out of hours, which is where most
   // dashboards quietly burn their rate limit
@@ -126,14 +155,13 @@ export default function InstitutionalFlow() {
   const agg = snap?.aggregate;
   const fii = agg?.fii, dii = agg?.dii;
 
-  // the index reaction per session, so the ledger can show what the flow actually bought
-  const idxByDate = useMemo(() => {
-    const out = {};
-    (deriv?.rows || []).forEach((r) => { out[r.trading_date] = r; });
-    return out;
-  }, [deriv]);
-
-  const latestIdx = useMemo(() => (deriv?.rows || [])[0] || null, [deriv]);
+  // The index reaction travels on the ledger rows themselves, sourced from NSE's close archive.
+  // It used to come from the Moneycontrol history call, which meant a 403 there blanked the
+  // column as well as the derivatives view.
+  const latestIdx = useMemo(
+    () => (flow?.rows || []).find((r) => r.published && r.nifty_close != null) || null,
+    [flow],
+  );
 
   const block = fiiStocks?.sides?.[side];
   const mf = diiNote?.mutual_funds;
@@ -188,7 +216,7 @@ export default function InstitutionalFlow() {
       'DII buy (Cr)', 'DII sell (Cr)', 'DII net (Cr)', 'NIFTY %', 'State', 'Source'];
     const body = rows.map((r) => [r.trading_date, r.fii_buy ?? '', r.fii_sell ?? '', r.fii_net ?? '',
       r.dii_buy ?? '', r.dii_sell ?? '', r.dii_net ?? '',
-      idxByDate[r.trading_date]?.nifty_change_pct ?? '',
+      r.nifty_change_pct ?? '',
       r.published ? (r.backfilled ? 'published (net only)' : 'published') : r.state,
       r.source || ''].join(','));
     const blob = new Blob([[head.join(','), ...body].join('\n')], { type: 'text/csv' });
@@ -237,7 +265,7 @@ export default function InstitutionalFlow() {
               value={latestIdx ? PCT(latestIdx.nifty_change_pct) : '—'}
               valueTone={tone(latestIdx?.nifty_change_pct)}
               foot={latestIdx
-                ? `NIFTY ${N(latestIdx.nifty_close)} · SENSEX ${N(latestIdx.sensex_close)} (${PCT(latestIdx.sensex_change_pct)})`
+                ? `NIFTY ${N(latestIdx.nifty_close)} · BANK NIFTY ${N(latestIdx.banknifty_close)} (${PCT(latestIdx.banknifty_change_pct)})`
                 : 'Index close unavailable.'} />
           </div>
 
@@ -309,9 +337,7 @@ export default function InstitutionalFlow() {
         {ledgerView === 'cash' ? (
           <Table cols={['Date', 'FII buy', 'FII sell', 'FII net', 'DII buy', 'DII sell', 'DII net', 'NIFTY']}
             align={['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right']}>
-            {(flow?.rows || []).map((r) => {
-              const ix = idxByDate[r.trading_date];
-              return (
+            {(flow?.rows || []).map((r) => (
                 <tr key={r.trading_date}
                   className={`border-b border-surface-3/40 hover:bg-surface-2/40 ${r.published ? '' : 'opacity-75'}`}>
                   <td className="px-2 py-1.5 whitespace-nowrap">
@@ -334,16 +360,15 @@ export default function InstitutionalFlow() {
                       <td className="px-2 py-1.5 text-right mono text-gray-400">{CR(r.dii_buy, 2)}</td>
                       <td className="px-2 py-1.5 text-right mono text-gray-400">{CR(r.dii_sell, 2)}</td>
                       <td className={`px-2 py-1.5 text-right mono font-semibold ${tone(r.dii_net)}`}>{CRS(r.dii_net, 2)}</td>
-                      <td className={`px-2 py-1.5 text-right mono ${tone(ix?.nifty_change_pct)}`}>
-                        {ix ? PCT(ix.nifty_change_pct) : '—'}
+                      <td className={`px-2 py-1.5 text-right mono ${tone(r.nifty_change_pct)}`}>
+                        {r.nifty_change_pct == null ? '—' : PCT(r.nifty_change_pct)}
                       </td>
                     </>
                   ) : (
                     <td colSpan={7} className="px-2 py-1.5 text-[11.5px] text-gray-500 italic">{r.note}</td>
                   )}
                 </tr>
-              );
-            })}
+            ))}
           </Table>
         ) : deriv?.available ? (
           <Table cols={['Date', 'FII cash', 'Index futures', 'Index options', 'Stock futures', 'Stock options', 'NIFTY', 'SENSEX']}
@@ -363,7 +388,14 @@ export default function InstitutionalFlow() {
               </tr>
             ))}
           </Table>
-        ) : <Note tone="info">{deriv?.error || 'The derivatives series is unavailable.'}</Note>}
+        ) : (
+          <Note tone="warn">
+            <b>FII derivative positions are unavailable.</b>{' '}
+            {deriv?.error || 'The source did not answer.'}{' '}
+            This view is the one part of the screen with a single source — the cash figures,
+            index closes and stock lists above all come from elsewhere and are unaffected.
+          </Note>
+        )}
 
         <p className="text-[11px] text-gray-600 mt-2">
           {ledgerView === 'cash' ? flow?.note : deriv?.note}
@@ -492,6 +524,101 @@ export default function InstitutionalFlow() {
         )}
       </Card>
 
+      {/* ── delivery: the daily per-stock number that does exist ─── */}
+      <Card title="Delivery accumulation screen"
+        right={
+          <div className="flex flex-wrap items-center gap-2">
+            {delivBusy && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-500" />}
+            <select value={delivOpts.universe} className={SEL}
+              onChange={(e) => setDelivOpts((o) => ({ ...o, universe: e.target.value }))}>
+              {DELIV_UNIVERSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+            <select value={delivOpts.rank} className={SEL}
+              onChange={(e) => setDelivOpts((o) => ({ ...o, rank: e.target.value }))}>
+              {DELIV_RANKS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+            <select value={delivOpts.min_turnover_cr} className={SEL}
+              onChange={(e) => setDelivOpts((o) => ({ ...o, min_turnover_cr: Number(e.target.value) }))}>
+              {[5, 25, 50, 100, 250].map((v) => (
+                <option key={v} value={v}>{`min ₹${v} Cr turnover`}</option>
+              ))}
+            </select>
+          </div>
+        }>
+        {!deliv ? <Loading /> : deliv.available ? (
+          <>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 mb-2">
+              <Chip>{deliv.session}</Chip>
+              <Chip tone="good">{deliv.shown} of {deliv.count} names</Chip>
+              <span>baseline: each stock&apos;s own mean over {deliv.baseline_sessions?.length || 0} prior sessions</span>
+              {deliv.context?.same_session && (
+                <span>
+                  · that session FII were{' '}
+                  <b className={tone(deliv.context.fii_net)}>{CRS(deliv.context.fii_net)}</b>, DII{' '}
+                  <b className={tone(deliv.context.dii_net)}>{CRS(deliv.context.dii_net)}</b>
+                </span>
+              )}
+            </div>
+
+            <Note tone="warn">
+              <b>Delivery, not attribution.</b> {deliv.caveat}
+            </Note>
+
+            <div className="mt-2">
+              <Table cols={['Stock', 'Close', 'Chg %', 'Delivery %', 'Its norm', 'Surge',
+                'Delivered', 'Turnover', 'Reading']}
+                align={['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'left']}>
+                {deliv.rows.map((r) => (
+                  <tr key={r.symbol} className="border-b border-surface-3/40 hover:bg-surface-2/40">
+                    <td className="px-2 py-1.5 whitespace-nowrap">
+                      <span className="font-semibold text-gray-100">{r.symbol}</span>
+                      {r.company && (
+                        <span className="text-[10.5px] text-gray-500 ml-1.5">{r.company.slice(0, 28)}</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right mono text-gray-200">{N(r.close)}</td>
+                    <td className={`px-2 py-1.5 text-right mono ${tone(r.change_pct)}`}>{PCT(r.change_pct)}</td>
+                    <td className="px-2 py-1.5 text-right mono text-gray-200">
+                      {r.delivery_pct == null ? '—' : `${N(r.delivery_pct)}%`}
+                    </td>
+                    <td className="px-2 py-1.5 text-right mono text-gray-500">
+                      {r.delivery_baseline_pct == null ? '—' : `${N(r.delivery_baseline_pct)}%`}
+                    </td>
+                    <td className={`px-2 py-1.5 text-right mono font-semibold ${
+                      r.delivery_surge == null ? 'text-gray-500'
+                        : r.delivery_surge >= 1.25 ? 'text-amber-300'
+                          : r.delivery_surge <= 0.8 ? 'text-gray-500' : 'text-gray-300'}`}>
+                      {r.delivery_surge == null ? '—' : `${N(r.delivery_surge, 2)}x`}
+                    </td>
+                    <td className="px-2 py-1.5 text-right mono text-gray-400">
+                      {r.delivery_value_cr == null ? '—' : `₹${N0(r.delivery_value_cr)} Cr`}
+                    </td>
+                    <td className="px-2 py-1.5 text-right mono text-gray-500">
+                      {r.turnover_cr == null ? '—' : `₹${N0(r.turnover_cr)} Cr`}
+                    </td>
+                    <td className={`px-2 py-1.5 text-[11.5px] ${
+                      String(r.reading).startsWith('Delivery surge on a rising') ? 'text-emerald-400'
+                        : String(r.reading).startsWith('Delivery surge into') ? 'text-red-400'
+                          : String(r.reading).startsWith('Delivery surge') ? 'text-amber-300'
+                            : 'text-gray-400'}`}>{r.reading}</td>
+                  </tr>
+                ))}
+              </Table>
+            </div>
+
+            <p className="text-[11px] text-gray-600 mt-2">
+              {deliv.measure} ETFs and liquid funds are excluded — they settle almost entirely to
+              delivery and would own the top of this table without meaning anything there.
+              {' '}{deliv.source}.
+            </p>
+          </>
+        ) : (
+          <Note tone="warn">
+            <b>Not available.</b> {deliv.message || deliv.error}
+          </Note>
+        )}
+      </Card>
+
       {/* ── conflict and intraday, side by side ───────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <Card title="Institutional conflict">
@@ -584,6 +711,10 @@ export default function InstitutionalFlow() {
           <li><b>Published quarterly, by stock:</b> FII shareholding as a percentage of equity, and
             its change. That is the stock table. It is <b>not</b> a day's buying, and no rupee
             value exists for it.</li>
+          <li><b>Published daily, by stock:</b> how much of each stock&apos;s volume settled to
+            delivery rather than being squared off intraday. That is the delivery screen. NSE
+            attributes it to nobody, so it is <b>not</b> FII activity — it is the closest daily,
+            per-stock figure that exists, and it describes intent, not identity.</li>
           <li><b>Live from your broker:</b> price, volume and 20-day relative volume — and nothing
             institutional. Zerodha does not publish FII/DII activity.</li>
           <li><b>Not published anywhere free:</b> intraday institutional flow, and which stocks

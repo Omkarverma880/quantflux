@@ -102,7 +102,8 @@ def meta(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
             {"key": "ALL", "label": "All available equities"},
             {"key": "WATCHLIST", "label": "Watchlist"},
         ],
-        "data_types": ["aggregate_cash_flow", "intraday_cash_flow", "fii_shareholding_change",
+        "data_types": ["aggregate_cash_flow", "intraday_cash_flow", "stock_delivery",
+                       "fii_shareholding_change",
                        "mf_shareholding_change", "dii_shareholding_change",
                        "stock_price", "stock_volume"],
         "sources": [
@@ -128,6 +129,9 @@ def meta(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
             {"name": "Economic Times — sold by MF", "url": SRC.ET_SOLD_BY_MF,
              "provides": "mf_shareholding_change (decrease) — a percentage, never a rupee value",
              "cadence": "as shareholdings are filed, quarterly"},
+            {"name": "NSE — securities bhavcopy with delivery", "url": SRC.BHAV_URL % "DDMMYYYY",
+             "provides": "stock_delivery, stock_price — per stock, never attributed to anyone",
+             "cadence": "once, after the close"},
             {"name": "NSE — list of equities available for trading", "url": SYM.EQUITY_LIST_CSV,
              "provides": "company name to trading symbol", "cadence": "as revised"},
             {"name": "NSE — NIFTY 50 constituent list", "url": SRC.NIFTY50_CSV,
@@ -246,6 +250,22 @@ def derivatives(days: int = 15, user_id: int = Depends(login_required),
                 db: Session = Depends(get_db)):
     """FII's four derivative books per session, beside the index close."""
     return {"status": "ok", **_service(db, user_id).derivatives_history(days=days)}
+
+
+@router.get("/delivery-screen")
+@safe("delivery_screen")
+def delivery_screen(lookback: int = 11, min_turnover_cr: float = 25.0, universe: str = "ALL",
+                    rank: str = "surge", limit: int = 40,
+                    user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Which stocks were taken to delivery at a rate unlike their own recent norm.
+
+    The only daily per-stock figure NSE publishes that speaks to intent. It attributes nothing:
+    the payload says in two places that this is not FII activity, because a delivery ranking
+    sitting on an institutional-flow screen is exactly the thing a reader would assume it was.
+    """
+    return {"status": "ok", **_service(db, user_id).delivery_screen(
+        lookback=lookback, min_turnover_cr=min_turnover_cr, universe=universe,
+        rank=rank, limit=limit, db=db)}
 
 
 @router.post("/backfill")
