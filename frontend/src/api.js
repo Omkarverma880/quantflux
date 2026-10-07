@@ -664,6 +664,13 @@ export const api = {
   flCompare: (runId) => request(`/index-strategy/flux-lab/paper/compare/${runId}`),
 
   // My Equity Workspace — personal research desk
+  instMeta: () => request('/equity-strategy/institutional-flow/meta'),
+  instSnapshot: (p) => request(`/equity-strategy/institutional-flow/snapshot?${new URLSearchParams(p || {})}`),
+  instAggregate: (force = 0) => request(`/equity-strategy/institutional-flow/aggregate?force=${force}`),
+  instHistory: (days = 10) => request(`/equity-strategy/institutional-flow/history?days=${days}`),
+  instYesterday: (universe = 'NIFTY50') => request(`/equity-strategy/institutional-flow/yesterday?universe=${encodeURIComponent(universe)}`),
+  instSync: () => request('/equity-strategy/institutional-flow/sync', { method: 'POST' }),
+
   meMeta: () => request('/equity-strategy/my-workspace/meta'),
   meSearch: (q, limit = 15) => request(`/equity-strategy/my-workspace/search?${new URLSearchParams({ q, limit })}`),
   meStocks: (p) => request(`/equity-strategy/my-workspace/stocks?${new URLSearchParams(p || {})}`),
@@ -706,15 +713,6 @@ export const api = {
   wyConfigSave: (partial) => request('/wyckoff/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
 
   // Chart Simulation — single-instrument charting desk
-  simMeta: () => request('/simulation/meta'),
-  simChart: (body) => request('/simulation/chart', { method: 'POST', body: JSON.stringify(body || {}) }),
-  simChain: (name) => request(`/simulation/chain?name=${encodeURIComponent(name)}`),
-  simLevels: (key) => request(`/simulation/levels?instrument_key=${encodeURIComponent(key)}`),
-  simAllLevels: () => request('/simulation/levels/all'),
-  simAddLevel: (body) => request('/simulation/levels', { method: 'POST', body: JSON.stringify(body || {}) }),
-  simUpdateLevel: (id, body) => request(`/simulation/levels/${id}`, { method: 'PUT', body: JSON.stringify(body || {}) }),
-  simDeleteLevel: (id) => request(`/simulation/levels/${id}`, { method: 'DELETE' }),
-  simConfigSave: (partial) => request('/simulation/config', { method: 'POST', body: JSON.stringify(partial || {}) }),
 
   // NIFTY open ±offset mean reversion — backtest + live/paper
   norMeta: () => request('/nifty-open-reversion/meta'),

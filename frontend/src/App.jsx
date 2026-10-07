@@ -46,8 +46,8 @@ import FourthCandleEquity from './pages/equity/FourthCandleEquity';
 import HammerBreakout from './pages/equity/HammerBreakout';
 import Hunter from './pages/equity/Hunter';
 import MyEquityWorkspace from './pages/equity/MyEquityWorkspace';
+import InstitutionalFlow from './pages/equity/InstitutionalFlow';
 import Wyckoff from './pages/equity/Wyckoff';
-import Simulation from './pages/equity/Simulation';
 import NiftyOpenReversion from './pages/index/NiftyOpenReversion';
 import IndexStraddle from './pages/index/IndexStraddle';
 import OptionsLab from './pages/index/OptionsLab';
@@ -117,8 +117,8 @@ export default function App() {
           <Route path="equity-strategy/hunter" element={<Hunter />} />
           <Route path="equity-strategy/workspace" element={<Navigate to="/equity-strategy/hunter" replace />} />
           <Route path="equity-strategy/my-workspace" element={<MyEquityWorkspace />} />
+          <Route path="equity-strategies/fii-dii-equity-activity-watcher" element={<InstitutionalFlow />} />
           <Route path="equity-strategy/wyckoff" element={<Wyckoff />} />
-          <Route path="equity-strategy/simulation" element={<Simulation />} />
           <Route path="research/market-dashboard" element={<MarketDashboard />} />
           <Route path="portfolio" element={<PortfolioAnalytics />} />
           <Route path="portfolio/analytics-world" element={<AnalyticsWorld />} />

@@ -4,7 +4,7 @@ Maps to the PostgreSQL tables in quantflux_db.
 """
 from datetime import datetime, date, timezone
 from sqlalchemy import (
-    Column, Integer, String, Boolean, Float, Date, DateTime,
+    Column, Integer, BigInteger, String, Boolean, Float, Date, DateTime,
     Text, Numeric, ForeignKey, UniqueConstraint, Index, LargeBinary,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -121,6 +121,69 @@ class TradeLog(Base):
     __table_args__ = (Index("idx_trade_logs_user_date", "user_id", "trade_date"),)
 
     user = relationship("User", back_populates="trade_logs")
+
+
+class InstitutionalDailySummary(Base):
+    """One completed trading session's aggregate FII/DII cash-market flow.
+
+    This is the only institutional number NSE publishes, so it is stored exactly as published:
+    buy, sell and net in ₹ crore, against the date NSE stamped it with — not the date we read
+    it. ``is_final`` says whether the session had closed when it was captured, and ``source``
+    keeps the provenance with the row so a number can never be shown without saying where it
+    came from. Auto-created via ``create_all``.
+    """
+    __tablename__ = "institutional_daily_summary"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trading_date = Column(Date, nullable=False, unique=True, index=True)
+    fii_buy = Column(Numeric(16, 2))
+    fii_sell = Column(Numeric(16, 2))
+    fii_net = Column(Numeric(16, 2))
+    dii_buy = Column(Numeric(16, 2))
+    dii_sell = Column(Numeric(16, 2))
+    dii_net = Column(Numeric(16, 2))
+    market_status = Column(String(16))                 # LIVE | CLOSED when captured
+    data_type = Column(String(32), default="aggregate_cash_flow")
+    source = Column(String(160))
+    source_url = Column(String(300))
+    is_final = Column(Boolean, default=False)
+    retrieved_at = Column(DateTime)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (Index("idx_inst_daily_date", "trading_date"),)
+
+
+class InstitutionalStockActivity(Base):
+    """Per-stock market data for a session, with institutional attribution when it exists.
+
+    ``activity_type`` is deliberately explicit about what the number means — a shareholding
+    change is not a day's buying, and the two must never be collapsed into one column. Rows
+    written from price and volume alone carry institution ``NONE`` and say so.
+    """
+    __tablename__ = "institutional_stock_activity"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trading_date = Column(Date, nullable=False, index=True)
+    symbol = Column(String(32), nullable=False, index=True)
+    institution = Column(String(8))                    # FII | DII | NONE
+    activity_type = Column(String(32))                 # shareholding_increase | ... | price_volume_only
+    activity_value = Column(Numeric(16, 2))
+    activity_percentage = Column(Numeric(10, 4))
+    price = Column(Numeric(14, 2))
+    price_change_pct = Column(Numeric(10, 4))
+    volume = Column(BigInteger)
+    average_volume = Column(BigInteger)
+    relative_volume = Column(Numeric(10, 3))
+    confirmation = Column(String(32))
+    source = Column(String(160))
+    retrieved_at = Column(DateTime)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("idx_inst_stock_date_sym", "trading_date", "symbol"),
+    )
 
 
 class Strategy11Leg(Base):
@@ -760,37 +823,6 @@ class HammerBreakoutPosition(Base):
 
     __table_args__ = (
         Index("idx_hammer_bo_user_date", "user_id", "trade_date"),
-    )
-
-
-class ChartLevel(Base):
-    """A horizontal level a user drew (or typed) on the Chart Simulation desk.
-
-    Saved per user per instrument, so re-opening a symbol brings back the levels
-    that were researched earlier along with how price has behaved around them.
-    Pure annotation — no order or strategy reads this. Auto-created via
-    ``create_all``.
-    """
-    __tablename__ = "chart_levels"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
-                        onupdate=lambda: datetime.now(timezone.utc))
-    instrument_key = Column(String(80), nullable=False)   # NSE:BSE, NFO:NIFTY26SEP24000CE
-    symbol = Column(String(60))                           # the friendly name
-    kind = Column(String(20), default="equity")           # equity | fno_option | index | index_option
-    price = Column(Numeric(14, 2), nullable=False)
-    label = Column(String(80))
-    color = Column(String(16), default="#f59e0b")
-    note = Column(String(500))
-    type = Column(String(10), default="line")             # line | text
-    anchor = Column(String(20))                           # candle timestamp a text note pins to
-    active = Column(Boolean, default=True)
-
-    __table_args__ = (
-        Index("idx_chart_levels_user_inst", "user_id", "instrument_key"),
     )
 
 

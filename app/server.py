@@ -42,8 +42,8 @@ from app.routes.fourth_candle_equity_routes import router as fourth_candle_equit
 from app.routes.hammer_breakout_routes import router as hammer_breakout_router
 from app.routes.hunter_routes import router as hunter_router
 from app.routes.my_equity_routes import router as my_equity_router
+from app.routes.institutional_flow_routes import router as institutional_flow_router
 from app.routes.wyckoff_routes import router as wyckoff_router
-from app.routes.simulation_routes import router as simulation_router
 from app.routes.nifty_open_reversion_routes import router as nifty_open_reversion_router
 from app.routes.vwap_options_routes import router as vwap_options_router
 from app.routes.index_straddle_routes import router as index_straddle_router
@@ -439,10 +439,6 @@ async def lifespan(app: FastAPI):
         print("[LIFESPAN] Database tables verified / created.", flush=True)
         # create_all never ALTERs an existing table, so columns added to a model
         # after its table was first created need a nudge. Idempotent and safe.
-        _ensure_columns(engine, "chart_levels", {
-            "type": "VARCHAR(10) DEFAULT 'line'",
-            "anchor": "VARCHAR(20)",
-        })
         _ensure_columns(engine, "my_equity_stocks", {
             "category": "VARCHAR(12) DEFAULT 'SWING'",
             "sector": "VARCHAR(60)",
@@ -553,8 +549,10 @@ app.include_router(fourth_candle_equity_router, prefix="/api/equity-strategy/fou
 app.include_router(hammer_breakout_router, prefix="/api/equity-strategy/hammer-breakout", tags=["Equity-HammerBreakout"])
 app.include_router(hunter_router, prefix="/api/equity-strategy/hunter", tags=["Equity-Hunter"])
 app.include_router(my_equity_router, prefix="/api/equity-strategy/my-workspace", tags=["Equity-MyWorkspace"])
+app.include_router(institutional_flow_router,
+                   prefix="/api/equity-strategy/institutional-flow",
+                   tags=["Equity-InstitutionalFlow"])
 app.include_router(wyckoff_router, prefix="/api/wyckoff", tags=["Wyckoff"])
-app.include_router(simulation_router, prefix="/api/simulation", tags=["ChartSimulation"])
 app.include_router(nifty_open_reversion_router, prefix="/api/nifty-open-reversion", tags=["NiftyOpenReversion"])
 app.include_router(vwap_options_router, prefix="/api/index-strategy/vwap-options", tags=["Index-VWAPOptions"])
 app.include_router(index_straddle_router, prefix="/api/index-strategy/straddle", tags=["Index-StraddleEngine"])
