@@ -67,6 +67,7 @@ export default function InstitutionalFlow() {
   const [yday, setYday] = useState(null);
   const [side, setSide] = useState('bought');
   const [mfSide, setMfSide] = useState('bought');
+  const [moveRank, setMoveRank] = useState('confirming');
   const [ledgerView, setLedgerView] = useState('cash');
   const [showImport, setShowImport] = useState(false);
   const [universe, setUniverse] = useState('NIFTY50');
@@ -137,6 +138,36 @@ export default function InstitutionalFlow() {
   const block = fiiStocks?.sides?.[side];
   const mf = diiNote?.mutual_funds;
   const mfBlock = mf?.sides?.[mfSide];
+
+  // what each name has done today, read off whichever price source we have. "Confirming first"
+  // puts the names whose move agrees with the list at the top of each column — the ones worth a
+  // second look — while "biggest movers" ignores direction and just ranks by size.
+  const movesOf = (blk, bullish) => {
+    const rows = (blk?.rows || []).map((r) => {
+      const pct = r.price_change_pct ?? r.et_change_pct ?? null;
+      const abs = r.price_move ?? r.et_price_change ?? null;
+      return { ...r, today_pct: pct, today_abs: abs,
+        agrees: pct == null ? null : (pct > 0) === bullish };
+    }).filter((r) => r.today_pct != null);
+    const by = moveRank === 'movers'
+      ? (a, b) => Math.abs(b.today_pct) - Math.abs(a.today_pct)
+      : bullish ? (a, b) => b.today_pct - a.today_pct : (a, b) => a.today_pct - b.today_pct;
+    return rows.sort(by);
+  };
+  const moves = useMemo(() => ({
+    bought: movesOf(fiiStocks?.sides?.bought, true),
+    sold: movesOf(fiiStocks?.sides?.sold, false),
+  // movesOf closes over moveRank, which is the only other input
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [fiiStocks, moveRank]);
+
+  const sinceBySymbol = useMemo(() => {
+    const out = {};
+    [...(yday?.increased || []), ...(yday?.decreased || [])].forEach((r) => {
+      if (r.symbol && r.price_then != null) out[r.symbol] = r.price_then;
+    });
+    return out;
+  }, [yday]);
 
   const stocks = useMemo(() => {
     const rows = [...(snap?.stocks || [])];
@@ -429,30 +460,35 @@ export default function InstitutionalFlow() {
         ) : null}
       </Card>
 
-      {/* ── yesterday → today ─────────────────────────────────────── */}
-      <Card title="Yesterday's list → today's tape"
-        right={yday?.available ? (
-          <span className="text-[10.5px] text-gray-500">
-            recorded {yday.previous_session}
-            {yday.is_latest_available ? ' (the most recent stored)' : ''}
-          </span>
-        ) : null}>
-        {yday?.available ? (
+      {/* ── the lists against today's tape, for trading ──────────── */}
+      <Card title="FII lists → today's move"
+        right={
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10.5px] text-gray-500">
+              {fiiStocks?.connected ? 'live from your broker' : "the source's own prices"}
+            </span>
+            <Switch value={moveRank} onChange={setMoveRank}
+              options={[['confirming', 'Confirming first'], ['movers', 'Biggest movers']]} />
+          </div>
+        }>
+        {!fiiStocks ? <Loading /> : fiiStocks.available ? (
           <>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              <Tracker label="Holding increased" rows={yday.increased} up />
-              <Tracker label="Holding decreased" rows={yday.decreased} />
+              <MoveList title="FII raised holding" sub="going up today agrees with the list"
+                rows={moves.bought} up since={sinceBySymbol} />
+              <MoveList title="FII cut holding" sub="going down today agrees with the list"
+                rows={moves.sold} since={sinceBySymbol} />
             </div>
-            <p className="text-[11px] text-gray-600 mt-2">{yday.note}</p>
-          </>
-        ) : (
-          <>
-            <Note tone="info">{yday?.message || 'Nothing recorded for the previous session yet.'}</Note>
             <p className="text-[11px] text-gray-600 mt-2">
-              Press <b>Sync now</b> to store today's lists. The comparison needs a stored snapshot
-              to measure against, so it starts working from the next session.
+              The names come from the quarterly shareholding lists; the move beside each one is
+              today&apos;s. Agreement between the two is a description of what has happened, not
+              a prediction and not a recommendation — and a quarterly filing says nothing about
+              what any institution did today.
+              {yday?.available && ` "Since" compares today's price with the one stored on ${yday.previous_session}.`}
             </p>
           </>
+        ) : (
+          <Note tone="warn">The lists could not be read, so there is nothing to measure today against.</Note>
         )}
       </Card>
 
@@ -653,42 +689,6 @@ function Side({ label, rec, icon: Icon }) {
   );
 }
 
-function Tracker({ label, rows, up }) {
-  return (
-    <div>
-      <div className="flex items-baseline gap-2 mb-1.5">
-        <span className={`text-[11px] font-semibold uppercase tracking-wider ${up ? 'text-emerald-400' : 'text-red-400'}`}>
-          {label}
-        </span>
-        <span className="text-[10.5px] text-gray-500">{(rows || []).length} names</span>
-      </div>
-      {(rows || []).length ? (
-        <Table cols={['Stock', 'QoQ', 'Price', 'Day %', 'Since', 'vs 20d', 'Reaction']}
-          align={['left', 'right', 'right', 'right', 'right', 'right', 'left']}>
-          {rows.map((r) => (
-            <tr key={`${r.symbol}-${r.company}`} className="border-b border-surface-3/40 hover:bg-surface-2/40">
-              <td className="px-2 py-1.5">
-                <span className="font-semibold text-gray-100">{r.symbol}</span>
-                {r.company && <span className="text-[10.5px] text-gray-500 ml-1.5">{r.company}</span>}
-              </td>
-              <td className={`px-2 py-1.5 text-right mono ${tone(r.holding_change_pct)}`}>{PP(r.holding_change_pct)}</td>
-              <td className="px-2 py-1.5 text-right mono text-gray-200">{N(r.price ?? r.price_then)}</td>
-              <td className={`px-2 py-1.5 text-right mono ${tone(r.price_change_pct)}`}>{PCT(r.price_change_pct)}</td>
-              <td className={`px-2 py-1.5 text-right mono ${tone(r.moved_since)}`}>
-                {r.moved_since == null ? '—' : `${r.moved_since > 0 ? '+' : '−'}${N(Math.abs(r.moved_since))}`}
-              </td>
-              <td className={`px-2 py-1.5 text-right mono ${r.relative_volume > 1 ? 'text-amber-300' : 'text-gray-400'}`}>
-                {r.relative_volume == null ? '—' : `${N(r.relative_volume, 2)}x`}
-              </td>
-              <td className="px-2 py-1.5 text-[11.5px] text-gray-300">{r.reaction}</td>
-            </tr>
-          ))}
-        </Table>
-      ) : <div className="text-[12px] text-gray-500">None recorded.</div>}
-    </div>
-  );
-}
-
 function Card({ title, right, children }) {
   return (
     <div className="card !p-4">
@@ -760,7 +760,10 @@ function HoldingTable({ rows, heldLabel }) {
           <td className="px-2 py-1.5 text-gray-100 font-medium whitespace-nowrap">{r.company}</td>
           <td className="px-2 py-1.5 mono text-[11.5px]">
             {r.symbol
-              ? <span className="text-brand-300">{r.symbol}</span>
+              ? <span className="text-brand-300"
+                  title={r.listed_as ? `${r.listed_as} — matched by ${r.resolved_via}` : undefined}>
+                  {r.symbol}
+                </span>
               : <span className="text-gray-600"
                   title="No unambiguous NSE match — shown without one rather than guessed">unmatched</span>}
           </td>
@@ -790,5 +793,86 @@ function HoldingTable({ rows, heldLabel }) {
         </tr>
       ))}
     </Table>
+  );
+}
+
+
+/**
+ * One side of a shareholding list, ranked by what those names have done today.
+ *
+ * The trading question this answers is narrow: of the stocks a published list names, which are
+ * moving with it and which against. That is an observation about two numbers, and the header
+ * says which direction counts as agreement so the colour coding cannot be read as advice.
+ *
+ * Rows with no price today are dropped upstream rather than shown as zero — a stock that did
+ * not trade has not disagreed with anything.
+ */
+function MoveList({ title, sub, rows, up, since }) {
+  const agreeing = (rows || []).filter((r) => r.agrees).length;
+  // "Since" only means something once a previous session's prices are on file, which takes a
+  // day to become true. Until then the column is dropped rather than shown full of dashes.
+  const showSince = (rows || []).some((r) => since?.[r.symbol] != null && r.price != null);
+  const cols = ['Stock', "Today's change", 'Today %',
+    ...(showSince ? ['Since'] : []), 'vs 20d', 'Agrees'];
+  const align = ['left', 'right', 'right',
+    ...(showSince ? ['right'] : []), 'right', 'left'];
+  return (
+    <div>
+      <div className="flex flex-wrap items-baseline gap-2 mb-1.5">
+        <span className={`text-[11px] font-semibold uppercase tracking-wider ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+          {title}
+        </span>
+        <span className="text-[10.5px] text-gray-500">{sub}</span>
+        {rows?.length ? (
+          <span className="text-[10.5px] text-gray-400 ml-auto">
+            <b className={up ? 'text-emerald-400' : 'text-red-400'}>{agreeing}</b>
+            {` of ${rows.length} agree`}
+          </span>
+        ) : null}
+      </div>
+      {rows?.length ? (
+        <Table cols={cols} align={align}>
+          {rows.map((r) => {
+            const then = since?.[r.symbol];
+            const drift = (then != null && r.price != null) ? r.price - then : null;
+            return (
+              <tr key={`${r.company}-${r.symbol}`} className="border-b border-surface-3/40 hover:bg-surface-2/40">
+                <td className="px-2 py-1.5 whitespace-nowrap">
+                  <span className="font-semibold text-gray-100">{r.company}</span>
+                  {r.symbol && (
+                    <span className="text-[10.5px] mono text-brand-300/70 ml-1.5"
+                      title={r.listed_as ? `${r.listed_as} — matched by ${r.resolved_via}` : undefined}>
+                      {r.symbol}
+                    </span>
+                  )}
+                </td>
+                <td className={`px-2 py-1.5 text-right mono ${tone(r.today_abs)}`}>
+                  {r.today_abs == null ? '—'
+                    : `${r.today_abs < 0 ? '−' : '+'}₹${N(Math.abs(r.today_abs))}`}
+                </td>
+                <td className={`px-2 py-1.5 text-right mono font-semibold ${tone(r.today_pct)}`}>
+                  {PCT(r.today_pct)}
+                </td>
+                {showSince && (
+                  <td className={`px-2 py-1.5 text-right mono ${tone(drift)}`}>
+                    {drift == null ? '—' : `${drift < 0 ? '−' : '+'}₹${N(Math.abs(drift))}`}
+                  </td>
+                )}
+                <td className={`px-2 py-1.5 text-right mono ${r.relative_volume > 1 ? 'text-amber-300' : 'text-gray-400'}`}>
+                  {r.relative_volume == null ? '—' : `${N(r.relative_volume, 2)}x`}
+                </td>
+                <td className="px-2 py-1.5">
+                  <span className={`text-[10.5px] px-1.5 py-px rounded border ${r.agrees
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                    : 'border-surface-4 bg-surface-3 text-gray-500'}`}>
+                    {r.agrees ? 'with the list' : 'against'}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </Table>
+      ) : <div className="text-[12px] text-gray-500">No prices available for these names yet.</div>}
+    </div>
   );
 }

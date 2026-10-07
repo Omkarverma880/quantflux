@@ -386,24 +386,26 @@ class InstitutionalFlowService:
         # earliest one on record is genuinely awaiting publication; one before it was published
         # long ago and simply never captured, because NSE only serves the latest day.
         earliest = min(rows) if rows else None
-        out = []
+        out, missed = [], 0
         for d in wanted:
             r = rows.get(d)
             if r:
                 out.append({**r, "published": True, "state": "published"})
                 continue
-            before_records = bool(earliest and d < earliest)
+            if earliest and d < earliest:
+                # Published long before anything here was recording, and no source we have
+                # serves it. A row of dashes for every such day is noise, not information, so
+                # the session is left out and only counted.
+                missed += 1
+                continue
             out.append({
-                "trading_date": d, "published": False,
-                "state": "not_captured" if before_records else "pending",
-                "note": ("Not captured — recording began "
-                         + (earliest or "later")) if before_records else "Not published yet",
+                "trading_date": d, "published": False, "state": "pending",
+                "note": "Not published yet",
                 "fii_buy": None, "fii_sell": None, "fii_net": None,
                 "dii_buy": None, "dii_sell": None, "dii_net": None,
                 "is_final": False, "source": None,
             })
         pending = sum(1 for r in out if r["state"] == "pending")
-        missed = sum(1 for r in out if r["state"] == "not_captured")
         return {"available": True, "rows": out, "count": len(out),
                 "pending": pending, "not_captured": missed,
                 "earliest_recorded": earliest,
@@ -415,8 +417,8 @@ class InstitutionalFlowService:
                          "from NSE with Moneycontrol as a cross-check; earlier sessions come "
                          "from Moneycontrol's history, which carries net figures only — so buy "
                          "and sell are blank on those rows rather than derived. Pending means "
-                         "awaiting publication; not captured means the session predates every "
-                         "source we have. Neither is ever shown as zero.")}
+                         "awaiting publication. A session no source can speak for is left out "
+                         "rather than shown as a blank row. Nothing is ever shown as zero.")}
 
     def history(self, db, days: int = 10) -> dict:
         """Completed sessions, newest first, straight from storage."""
@@ -636,7 +638,9 @@ class InstitutionalFlowService:
                     "dii_holding_pct": r.get("dii_holding_pct"),
                     # ET's own price, kept separately from the broker's — two readings of the
                     # same thing taken at different moments should not be merged into one column
-                    "et_price": r.get("et_price"), "et_change_pct": r.get("et_change_pct"),
+                    "et_price": r.get("et_price"),
+                    "et_price_change": r.get("et_price_change"),
+                    "et_change_pct": r.get("et_change_pct"),
                     **live,
                     "activity_type": "%s_shareholding_%s" % (who.lower(), raw["direction"]),
                     "confirmation": confirmation(
