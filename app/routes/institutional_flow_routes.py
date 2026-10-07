@@ -17,6 +17,7 @@ from functools import wraps
 
 import numpy as np
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from core.auth import login_required
@@ -132,6 +133,39 @@ def snapshot(universe: str = "NIFTY50", limit: int = 50, refresh: int = 1,
 @safe("aggregate")
 def aggregate(force: int = 0, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     return {"status": "ok", "aggregate": _service(db, user_id).fetch_fii_dii_daily(force=bool(force))}
+
+
+class ImportReq(BaseModel):
+    trading_date: str
+    institution: str = "FII"
+    increased: list[str] = []
+    decreased: list[str] = []
+    source: str
+
+
+@router.get("/flow-table")
+@safe("flow_table")
+def flow_table(days: int = 10, user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """FII/DII by date, with sessions NSE has not published yet marked pending."""
+    return {"status": "ok", **_service(db, user_id).flow_table(db, days=days)}
+
+
+@router.get("/stock-activity")
+@safe("stock_activity")
+def stock_activity(institution: str = "FII", trading_date: str | None = None,
+                   user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    return {"status": "ok",
+            **_service(db, user_id).stock_activity(db, trading_date, institution)}
+
+
+@router.post("/stock-activity/import")
+@safe("import_stock_activity")
+def import_stock_activity(req: ImportReq, user_id: int = Depends(login_required),
+                          db: Session = Depends(get_db)):
+    """Record a named stock-level list. The source is required — an unattributed list is not
+    evidence, and this screen will not display one as though it were."""
+    return {"status": "ok", **_service(db, user_id).import_stock_activity(
+        db, req.trading_date, req.institution, req.increased, req.decreased, req.source)}
 
 
 @router.get("/history")

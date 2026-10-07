@@ -3,6 +3,7 @@ import {
   Landmark, RefreshCw, Loader2, AlertTriangle, ArrowUpDown, Info,
 } from 'lucide-react';
 import { api } from '../../api';
+import { StockActivity, ImportList } from '../../components/institutional/StockActivity';
 
 /**
  * FII_DII_Equity Activity Watcher.
@@ -41,6 +42,11 @@ const RANKS = [
 export default function InstitutionalFlow() {
   const [meta, setMeta] = useState(null);
   const [snap, setSnap] = useState(null);
+  const [flow, setFlow] = useState(null);
+  const [fiiAct, setFiiAct] = useState(null);
+  const [diiAct, setDiiAct] = useState(null);
+  const [actTab, setActTab] = useState('FII');
+  const [showImport, setShowImport] = useState(false);
   const [hist, setHist] = useState(null);
   const [yday, setYday] = useState(null);
   const [universe, setUniverse] = useState('NIFTY50');
@@ -62,6 +68,12 @@ export default function InstitutionalFlow() {
   useEffect(() => { api.instMeta().then(setMeta).catch(() => {}); }, []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { api.instHistory(span).then(setHist).catch(() => {}); }, [span]);
+  useEffect(() => { api.instFlowTable(span).then(setFlow).catch(() => {}); }, [span]);
+  const loadActivity = useCallback(() => {
+    api.instStockActivity('FII').then(setFiiAct).catch(() => {});
+    api.instStockActivity('DII').then(setDiiAct).catch(() => {});
+  }, []);
+  useEffect(() => { loadActivity(); }, [loadActivity]);
   useEffect(() => { api.instYesterday(universe).then(setYday).catch(() => {}); }, [universe]);
 
   // poll only while the market is actually open — never out of hours, which is where most
@@ -165,15 +177,23 @@ export default function InstitutionalFlow() {
         </p>
       </Card>
 
-      {/* ── stock-level attribution, likewise ─────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card title="FII stock activity">
-          <Note tone="info">{snap?.fii_stocks?.message}</Note>
-        </Card>
-        <Card title="DII stock activity">
-          <Note tone="info">{snap?.dii_stocks?.message}</Note>
-        </Card>
-      </div>
+      {/* ── stock-level activity, from a named source ─────────────── */}
+      <Card title={`${actTab} stock activity`}
+        right={
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-lg border border-surface-3 overflow-hidden">
+              {['FII', 'DII'].map((k) => (
+                <button key={k} onClick={() => setActTab(k)}
+                  className={`px-2.5 py-1 text-[12px] ${actTab === k
+                    ? 'bg-brand-500 text-white' : 'text-gray-400 hover:text-white'}`}>{k}</button>
+              ))}
+            </div>
+            <button onClick={() => setShowImport(true)}
+              className="btn-secondary !py-1 !px-2 text-[11.5px]">Import a list</button>
+          </div>
+        }>
+        <StockActivity data={actTab === 'FII' ? fiiAct : diiAct} who={actTab} />
+      </Card>
 
       {/* ── conflict ─────────────────────────────────────────────── */}
       <Card title="Institutional conflict">
@@ -268,6 +288,48 @@ export default function InstitutionalFlow() {
         ) : <Note tone="info">{yday?.message || 'Nothing recorded for the previous session yet.'}</Note>}
       </Card>
 
+      {/* ── the by-date table, pending sessions included ──────────── */}
+      <Card title="FII / DII by session"
+        right={<span className="text-[10.5px] text-gray-500">
+          {flow?.pending ? `${flow.pending} awaiting publication` : 'all recent sessions published'}
+          {flow?.not_captured ? ` · ${flow.not_captured} before recording began` : ''}
+        </span>}>
+        <Table cols={['Date', 'FII buy', 'FII sell', 'FII net', 'DII buy', 'DII sell', 'DII net']}
+          align={['left', 'right', 'right', 'right', 'right', 'right', 'right']}>
+          {(flow?.rows || []).map((r) => (
+            <tr key={r.trading_date} className={`border-b border-surface-3/40 ${
+              r.published ? '' : 'opacity-70'}`}>
+              <td className="px-2 py-1.5 mono text-gray-300">
+                {r.trading_date}
+                {!r.published && (
+                  <span className={`ml-2 text-[10px] px-1 py-px rounded border ${
+                    r.state === 'pending'
+                      ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                      : 'bg-surface-3 border-surface-4 text-gray-500'}`}>
+                    {r.state === 'pending' ? 'pending' : 'not captured'}
+                  </span>
+                )}
+              </td>
+              {r.published ? (
+                <>
+                  <td className="px-2 py-1.5 text-right mono text-gray-400">{CR(r.fii_buy)}</td>
+                  <td className="px-2 py-1.5 text-right mono text-gray-400">{CR(r.fii_sell)}</td>
+                  <td className={`px-2 py-1.5 text-right mono font-semibold ${tone(r.fii_net)}`}>{CR(r.fii_net)}</td>
+                  <td className="px-2 py-1.5 text-right mono text-gray-400">{CR(r.dii_buy)}</td>
+                  <td className="px-2 py-1.5 text-right mono text-gray-400">{CR(r.dii_sell)}</td>
+                  <td className={`px-2 py-1.5 text-right mono font-semibold ${tone(r.dii_net)}`}>{CR(r.dii_net)}</td>
+                </>
+              ) : (
+                <td colSpan={6} className="px-2 py-1.5 text-[11.5px] text-gray-500 italic">
+                  {r.note}
+                </td>
+              )}
+            </tr>
+          ))}
+        </Table>
+        {flow?.note && <p className="text-[11px] text-gray-600 mt-2">{flow.note}</p>}
+      </Card>
+
       {/* ── history ──────────────────────────────────────────────── */}
       <Card title="Historical institutional flow"
         right={
@@ -319,6 +381,10 @@ export default function InstitutionalFlow() {
           </div>
         )}
       </Card>
+      {showImport && (
+        <ImportList onClose={() => setShowImport(false)}
+          onDone={() => { setShowImport(false); loadActivity(); }} />
+      )}
     </div>
   );
 }

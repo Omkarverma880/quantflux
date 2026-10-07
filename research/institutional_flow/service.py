@@ -284,6 +284,53 @@ class InstitutionalFlowService:
             logger.warning("could not persist institutional session: %s", exc)
             return {"saved": False, "reason": str(exc)[:160]}
 
+    def flow_table(self, db, days: int = 10) -> dict:
+        """The by-date FII/DII table, including sessions whose figures have not arrived.
+
+        NSE publishes once, after the close, so the session in progress — and sometimes the one
+        that just ended — has no figures yet. Those rows are shown as "Not published yet" rather
+        than omitted: a missing row reads as "nothing happened", which is a different claim.
+        """
+        hist = self.history(db, days=days)
+        rows = {r["trading_date"]: r for r in hist.get("rows", [])}
+        status = SESS.market_status()
+        cursor = date.fromisoformat(status["session_date"])
+        # walk back over real trading days so weekends never appear as missing sessions
+        wanted: list[str] = []
+        for _ in range(max(1, min(int(days), 400))):
+            wanted.append(cursor.isoformat())
+            cursor = SESS.previous_trading_day(cursor)
+        # Two different kinds of blank, and conflating them would mislead. A session after the
+        # earliest one on record is genuinely awaiting publication; one before it was published
+        # long ago and simply never captured, because NSE only serves the latest day.
+        earliest = min(rows) if rows else None
+        out = []
+        for d in wanted:
+            r = rows.get(d)
+            if r:
+                out.append({**r, "published": True, "state": "published"})
+                continue
+            before_records = bool(earliest and d < earliest)
+            out.append({
+                "trading_date": d, "published": False,
+                "state": "not_captured" if before_records else "pending",
+                "note": ("Not captured — recording began "
+                         + (earliest or "later")) if before_records else "Not published yet",
+                "fii_buy": None, "fii_sell": None, "fii_net": None,
+                "dii_buy": None, "dii_sell": None, "dii_net": None,
+                "is_final": False, "source": None,
+            })
+        pending = sum(1 for r in out if r["state"] == "pending")
+        missed = sum(1 for r in out if r["state"] == "not_captured")
+        return {"available": True, "rows": out, "count": len(out),
+                "pending": pending, "not_captured": missed,
+                "earliest_recorded": earliest,
+                "note": ("NSE publishes FII/DII cash-market activity once, after the close, and "
+                         "serves only the latest session — so a day before this module started "
+                         "recording cannot be backfilled. Pending means awaiting publication; "
+                         "not captured means it was published before recording began. Neither "
+                         "is shown as zero.")}
+
     def history(self, db, days: int = 10) -> dict:
         """Completed sessions, newest first, straight from storage."""
         from core.models import InstitutionalDailySummary
@@ -305,6 +352,119 @@ class InstitutionalFlowService:
                 "retrieved_at": r.retrieved_at.isoformat() if r.retrieved_at else None,
             })
         return {"available": True, "rows": out, "count": len(out), "error": None}
+
+    # ── stock-level activity, from a source the user names ───────────
+    def import_stock_activity(self, db, trading_date: str, institution: str,
+                              increased: list, decreased: list, source: str) -> dict:
+        """Record a stock-level activity list and say where it came from.
+
+        No public feed publishes daily per-stock FII/DII attribution, so the list has to be
+        named by whoever read it. What goes in the database is exactly that: symbols, a
+        direction, the date, and the source string — stored as a *shareholding change*, which
+        is what these lists actually report. The app then supplies the part it can verify by
+        itself: price, volume, relative volume and the reaction.
+        """
+        from core.models import InstitutionalStockActivity
+        d = date.fromisoformat(str(trading_date)[:10])
+        who = "FII" if str(institution).upper().startswith("F") else "DII"
+        src = (source or "").strip()[:160]
+        if not src:
+            raise ValueError("name the source of this list — an unattributed list is not evidence")
+
+        def clean(seq):
+            out, seen = [], set()
+            for x in seq or []:
+                sym = str(x).strip().upper()
+                if sym and sym not in seen:
+                    seen.add(sym)
+                    out.append(sym)
+            return out
+
+        pairs = ([(s_, f"{who.lower()}_shareholding_increase") for s_ in clean(increased)]
+                 + [(s_, f"{who.lower()}_shareholding_decrease") for s_ in clean(decreased)])
+        if not pairs:
+            raise ValueError("no symbols given")
+
+        # replace this date+institution wholesale, so a re-import corrects rather than doubles
+        db.query(InstitutionalStockActivity).filter(
+            InstitutionalStockActivity.trading_date == d,
+            InstitutionalStockActivity.institution == who).delete(synchronize_session=False)
+        now = datetime.utcnow()
+        for sym, kind in pairs:
+            db.add(InstitutionalStockActivity(
+                trading_date=d, symbol=sym, institution=who, activity_type=kind,
+                source=src, retrieved_at=now))
+        db.commit()
+        self.invalidate()
+        return {"saved": True, "trading_date": d.isoformat(), "institution": who,
+                "increased": len(clean(increased)), "decreased": len(clean(decreased)),
+                "source": src}
+
+    def stock_activity(self, db, trading_date: Optional[str] = None,
+                       institution: str = "FII") -> dict:
+        """A stored activity list, priced with today's tape and scored for confirmation."""
+        from core.models import InstitutionalStockActivity
+        who = "FII" if str(institution).upper().startswith("F") else "DII"
+        status = SESS.market_status()
+        d = date.fromisoformat(trading_date[:10]) if trading_date else date.fromisoformat(status["session_date"])
+        rows = (db.query(InstitutionalStockActivity)
+                  .filter(InstitutionalStockActivity.trading_date == d,
+                          InstitutionalStockActivity.institution == who).all())
+        asked_for, fell_back = d, False
+        if not rows and trading_date is None:
+            # These lists are published about the session that just ended, so asking for the
+            # session in progress usually finds nothing. Fall back to the most recent list
+            # there is and say which one — the same rule the rest of this screen follows.
+            latest = (db.query(InstitutionalStockActivity.trading_date)
+                        .filter(InstitutionalStockActivity.institution == who)
+                        .order_by(InstitutionalStockActivity.trading_date.desc()).first())
+            if latest and latest[0]:
+                d, fell_back = latest[0], True
+                rows = (db.query(InstitutionalStockActivity)
+                          .filter(InstitutionalStockActivity.trading_date == d,
+                                  InstitutionalStockActivity.institution == who).all())
+        if not rows:
+            return {"available": False, "institution": who, "date": d.isoformat(),
+                    "increased": [], "decreased": [],
+                    "message": (f"No {who} stock list recorded for {d.strftime('%d %b %Y')}. "
+                                "Daily per-stock attribution is not published by any free feed, "
+                                "so a list has to be imported and its source named.")}
+        syms = [r.symbol for r in rows]
+        quotes = self.fetch_live_market_data(syms)
+        inc, dec = [], []
+        for r in rows:
+            q = quotes.get(f"NSE:{r.symbol}") or {}
+            ohlc = q.get("ohlc") or {}
+            ltp = float(q.get("last_price") or 0) or None
+            prev = float(ohlc.get("close") or 0) or None
+            chg = round((ltp - prev) / prev * 100, 2) if (ltp and prev) else None
+            move = round(ltp - prev, 2) if (ltp and prev) else None
+            vol = q.get("volume") or q.get("volume_traded")
+            avg = self._average_volume(r.symbol)
+            rvol = calculate_relative_volume(vol, avg)
+            rec = {
+                "symbol": r.symbol, "activity_type": r.activity_type,
+                "price": ltp, "price_move": move, "price_change_pct": chg,
+                "volume": int(vol) if vol else None,
+                "average_volume": int(avg) if avg else None,
+                "relative_volume": rvol,
+                "confirmation": confirmation(r.activity_type, chg, rvol),
+                "reaction": reaction(chg, rvol, r.activity_type),
+                "source": r.source,
+            }
+            (inc if r.activity_type.endswith("increase") else dec).append(rec)
+        return {
+            "available": True, "institution": who, "date": d.isoformat(),
+            "is_latest_available": fell_back,
+            "asked_for": asked_for.isoformat(),
+            "increased": inc, "decreased": dec,
+            "source": rows[0].source,
+            "data_type": f"{who.lower()}_shareholding_change",
+            "caveat": (f"These lists report a change in {who} shareholding, not a day's buying. "
+                       "The price and volume beside each name are today's, from your broker — "
+                       "they say whether the tape agreed, which is the only part that can be "
+                       "verified here."),
+        }
 
     def conflict(self, agg: Optional[dict] = None) -> dict:
         """FII and DII pulling against each other, stated from the aggregate only."""
