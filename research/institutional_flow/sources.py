@@ -16,6 +16,8 @@ both are refused in code rather than in a comment.
 """
 from __future__ import annotations
 
+import html
+import re
 import threading
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -233,3 +235,382 @@ def nifty50_symbols(force: bool = False) -> dict:
                 "source": "NSE — NIFTY 50 constituent list", "source_url": NIFTY50_CSV,
                 "retrieved_at": now_ist().isoformat(timespec="seconds"),
                 "error": str(exc)[:160]}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Moneycontrol — the aggregate, and the only multi-session history available free
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Two different pages, and they are not interchangeable:
+#
+#   marketstats/index.php   the provisional NSE+BSE combined figures for the latest session,
+#                           with gross purchase and gross sales. The same three numbers NSE
+#                           publishes, so it cross-checks NSE and stands in when NSE blocks us.
+#
+#   markets/fii-dii-data/   a Next.js page carrying ~30 sessions as JSON: cash *net* for FII and
+#                           DII, FII's four derivative books, and the index close for each day.
+#                           No gross buy/sell — so history rows carry a net and say nothing about
+#                           gross rather than inventing it.
+
+MC_MARKETSTATS = "https://www.moneycontrol.com/stocks/marketstats/index.php"
+MC_FII_DII = "https://www.moneycontrol.com/markets/fii-dii-data/"
+
+ET_BASE = "https://economictimes.indiatimes.com/stocks/marketstats-technicals/"
+ET_BOUGHT_BY_FII = ET_BASE + "bought-by-fii"
+ET_SOLD_BY_FII = ET_BASE + "sold-by-fii"
+ET_BOUGHT_BY_MF = ET_BASE + "bought-by-mf"
+ET_SOLD_BY_MF = ET_BASE + "sold-by-mf"
+
+# The same page shape is published for two institutions and no more. ET serves a bought-by-dii
+# URL, but it comes back with no table in it — there is no DII stock list to read, which is why
+# the DII panel explains itself instead of showing one.
+ET_HOLDERS = {
+    "FII": {"label": "FII", "column": "fii holding %",
+            "bought": ET_BOUGHT_BY_FII, "sold": ET_SOLD_BY_FII},
+    "MF": {"label": "mutual fund", "column": "mf holding %",
+           "bought": ET_BOUGHT_BY_MF, "sold": ET_SOLD_BY_MF},
+}
+
+HISTORY_TTL_S = 900.0
+ET_TTL_S = 1800.0
+
+_SPACE_RE = re.compile(r"\s+")
+_TAG_RE = re.compile(r"<[^>]+>")
+_TABLE_RE = re.compile(r"<table[^>]*>(.*?)</table>", re.S | re.I)
+_TR_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S | re.I)
+_CELL_RE = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.S | re.I)
+_NEXT_DATA_RE = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
+_ET_LINK_RE = re.compile(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.S | re.I)
+
+
+def _plain(fragment: str) -> str:
+    """Visible text of an HTML fragment, whitespace collapsed."""
+    return _SPACE_RE.sub(" ", html.unescape(_TAG_RE.sub(" ", fragment))).strip()
+
+
+def _row_cells(tr: str) -> list[str]:
+    return [_plain(c) for c in _CELL_RE.findall(tr)]
+
+
+def _table_rows(table_html: str) -> list[list[str]]:
+    rows = [_row_cells(tr) for tr in _TR_RE.findall(table_html)]
+    return [r for r in rows if any(x for x in r)]
+
+
+def _web_session(referer: Optional[str] = None):
+    """A plain browser-looking session. Moneycontrol and ET serve HTML, not an API."""
+    import requests
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+    })
+    if referer:
+        s.headers["Referer"] = referer
+    return s
+
+
+def _pct(v) -> Optional[float]:
+    """'9.60%' -> 9.6 ; '-' -> None. A dash means not reported, which is not zero."""
+    s = str(v or "").replace("%", "").replace(",", "").strip()
+    if not s or s in {"-", "--", "NA", "N.A.", "nan", "None"}:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _mc_block(page: str, div_id: str) -> Optional[dict]:
+    """The one-row figures table inside a named Moneycontrol div.
+
+    Keyed on the div id — ``instprovfii`` / ``instprovdii`` — rather than on table position,
+    because the page carries four identically shaped tables and two of them are the lagged
+    SEBI series, which must not be mistaken for the provisional one.
+    """
+    at = page.find("id='%s'" % div_id)
+    if at < 0:
+        at = page.find('id="%s"' % div_id)
+    if at < 0:
+        return None
+    m = _TABLE_RE.search(page, at)
+    if not m:
+        return None
+    rows = _table_rows(m.group(1))
+    if len(rows) < 2 or "Gross Purchase" not in " ".join(rows[0]):
+        return None
+    head, data = rows[0], rows[1]
+    rec: dict = {"buy": None, "sell": None, "net": None, "data_date": None}
+    for label, value in zip(head, data):
+        low = label.lower()
+        if low == "date":
+            d = _as_date(value)
+            rec["data_date"] = d.isoformat() if d else None
+        elif "purchase" in low and "net" not in low:
+            rec["buy"] = _num(value)
+        elif "sales" in low and "net" not in low:
+            rec["sell"] = _num(value)
+        elif "net" in low:
+            rec["net"] = _num(value)
+    if rec["net"] is None and rec["buy"] is not None and rec["sell"] is not None:
+        rec["net"] = round(rec["buy"] - rec["sell"], 2)
+    return rec if (rec["buy"] is not None or rec["net"] is not None) else None
+
+
+def fetch_fii_dii_moneycontrol(force: bool = False) -> dict:
+    """Provisional NSE+BSE combined FII/DII cash activity for the latest session.
+
+    Gross purchase, gross sales and net, in Rs crore — the same three numbers NSE publishes.
+    """
+    with _lock:
+        c = _cache.get("mc_agg")
+        if c and not force:
+            age = time.time() - c["_at"]
+            if (c.get("available") and age < FRESH_TTL_S) or (not c.get("available") and age < FAIL_RETRY_S):
+                return {**c, "cached": True, "age_seconds": round(age, 1)}
+
+    base = {"data_type": "aggregate_cash_flow",
+            "source": "Moneycontrol — institutional trading activity (provisional, NSE+BSE)",
+            "source_url": MC_MARKETSTATS}
+    try:
+        page = _web_session().get(MC_MARKETSTATS, timeout=20).text
+        fii = _mc_block(page, "instprovfii")
+        dii = _mc_block(page, "instprovdii")
+        if not fii and not dii:
+            raise ValueError("the provisional FII/DII blocks were not found on the page")
+        data_date = (fii or {}).get("data_date") or (dii or {}).get("data_date")
+        out = {
+            **base, "available": True,
+            "fii": {k: v for k, v in (fii or {}).items() if k != "data_date"} if fii else None,
+            "dii": {k: v for k, v in (dii or {}).items() if k != "data_date"} if dii else None,
+            "data_date": data_date,
+            "is_final": False,            # provisional, by the page's own label
+            "retrieved_at": now_ist().isoformat(timespec="seconds"),
+            "stale": False, "error": None, "_at": time.time(),
+        }
+    except Exception as exc:
+        logger.debug("Moneycontrol aggregate failed: %s", exc)
+        with _lock:
+            prev = _cache.get("mc_agg")
+        if prev and prev.get("available"):
+            return {**prev, "stale": True, "cached": True, "error": str(exc)[:160],
+                    "age_seconds": round(time.time() - prev["_at"], 1)}
+        out = {**base, "available": False, "fii": None, "dii": None, "data_date": None,
+               "is_final": False, "retrieved_at": now_ist().isoformat(timespec="seconds"),
+               "stale": False, "error": str(exc)[:160], "_at": time.time()}
+    with _lock:
+        _cache["mc_agg"] = out
+    return {**out, "cached": False, "age_seconds": 0.0}
+
+
+def fetch_fii_dii_history(force: bool = False) -> dict:
+    """~30 sessions of FII/DII cash net, FII's derivative books, and the index close per day.
+
+    This is what makes a by-date table possible on a fresh install: without it the screen can
+    only ever show the sessions the app happened to be running for.
+
+    Cash *gross* is not on this page, so buy and sell are absent from these rows and the table
+    fills them only for a session we read gross figures for ourselves.
+    """
+    with _lock:
+        c = _cache.get("mc_hist")
+        if c and not force:
+            age = time.time() - c["_at"]
+            if (c.get("available") and age < HISTORY_TTL_S) or (not c.get("available") and age < FAIL_RETRY_S):
+                return {**c, "cached": True, "age_seconds": round(age, 1)}
+
+    base = {"data_type": "aggregate_cash_flow",
+            "source": "Moneycontrol — FII/DII activity history",
+            "source_url": MC_FII_DII}
+    try:
+        import json as _json
+        page = _web_session().get(MC_FII_DII, timeout=25).text
+        m = _NEXT_DATA_RE.search(page)
+        if not m:
+            raise ValueError("the page's data block was not found")
+        blob = _json.loads(m.group(1))
+        raw = (((blob.get("props") or {}).get("pageProps") or {})
+               .get("FiiDiiData") or {}).get("fiiDiiData") or []
+        if not raw:
+            raise ValueError("the history series was empty")
+        rows = []
+        for r in raw:
+            d = _as_date(r.get("date"))
+            if not d:
+                continue
+            rows.append({
+                "trading_date": d.isoformat(),
+                "label": (r.get("fDate") or "").strip() or None,
+                "fii_net": _num(r.get("fiiCM")),
+                "dii_net": _num(r.get("diiCM")),
+                "fii_index_futures": _num(r.get("fiiIdxFut")),
+                "fii_index_options": _num(r.get("fiiIdxOpt")),
+                "fii_stock_futures": _num(r.get("fiiStkFut")),
+                "fii_stock_options": _num(r.get("fiiStkOpt")),
+                "nifty_close": _num(r.get("niftyClose")),
+                "nifty_change_pct": _num(r.get("niftyChangePer")),
+                "sensex_close": _num(r.get("sensexClose")),
+                "sensex_change_pct": _num(r.get("sensexChangePer")),
+            })
+        rows.sort(key=lambda x: x["trading_date"], reverse=True)
+        out = {**base, "available": True, "rows": rows, "count": len(rows),
+               "covers": ({"from": rows[-1]["trading_date"], "to": rows[0]["trading_date"]}
+                          if rows else None),
+               "has_gross": False,
+               "retrieved_at": now_ist().isoformat(timespec="seconds"),
+               "stale": False, "error": None, "_at": time.time()}
+    except Exception as exc:
+        logger.debug("Moneycontrol history failed: %s", exc)
+        with _lock:
+            prev = _cache.get("mc_hist")
+        if prev and prev.get("available"):
+            return {**prev, "stale": True, "cached": True, "error": str(exc)[:160],
+                    "age_seconds": round(time.time() - prev["_at"], 1)}
+        out = {**base, "available": False, "rows": [], "count": 0, "covers": None,
+               "has_gross": False, "retrieved_at": now_ist().isoformat(timespec="seconds"),
+               "stale": False, "error": str(exc)[:160], "_at": time.time()}
+    with _lock:
+        _cache["mc_hist"] = out
+    return {**out, "cached": False, "age_seconds": 0.0}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Economic Times — which stocks FIIs raised or cut their holding in
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Read what this page actually says before using it. The columns are FII Holding %, the four
+# previous quarters, and the quarter-on-quarter and year-on-year change in that percentage.
+# That is a SHAREHOLDING change, reported on a quarterly clock. It is not a day's buying, and
+# a percentage of equity cannot be turned into rupees here — so nothing downstream is allowed
+# to render these as "FII bought Rs X crore".
+#
+# The page splits each row across two tables: the first holds the pinned company column with
+# its current price and absolute change, the second holds the percentage columns. They are
+# emitted in the same order, one header row each, so they zip by index — and the parser
+# refuses the pairing outright if the two row counts disagree, rather than silently sliding
+# one company's name onto another company's holding.
+
+_ET_PRICE_HEAD = "company name"
+
+
+def _et_name_and_slug(tr: str) -> tuple[Optional[str], Optional[str]]:
+    """The company name, and the URL slug ET uses for it — a stable-ish identity hint."""
+    m = _ET_LINK_RE.search(tr)
+    if not m:
+        cells = _row_cells(tr)
+        return ((cells[0] or None) if cells else None), None
+    href, inner = m.group(1), _plain(m.group(2))
+    slug = href.strip("/").split("/")[0] or None
+    return (inner or None), slug
+
+
+def fetch_et_holder_stocks(institution: str, side: str, force: bool = False) -> dict:
+    """The ET list of stocks where an institution's shareholding rose or fell.
+
+    ``institution`` is FII or MF — the only two ET publishes a populated table for. Returns one
+    row per company with its name, ET's price and absolute change, and the shareholding columns.
+    Every row is labelled with the data type so that no caller can mistake a holding change for
+    a transaction value.
+    """
+    who = str(institution).upper()
+    spec = ET_HOLDERS.get(who)
+    if spec is None:
+        raise ValueError("no published stock list exists for %s" % who)
+    want = "sold" if str(side).lower().startswith("s") else "bought"
+    url = spec[want]
+    key = "et_%s_%s" % (who.lower(), want)
+    direction = "decrease" if want == "sold" else "increase"
+    kind = "%s_shareholding_change" % who.lower()
+
+    with _lock:
+        c = _cache.get(key)
+        if c and not force:
+            age = time.time() - c["_at"]
+            if (c.get("available") and age < ET_TTL_S) or (not c.get("available") and age < FAIL_RETRY_S):
+                return {**c, "cached": True, "age_seconds": round(age, 1)}
+
+    base = {"institution": who, "side": want, "direction": direction, "data_type": kind,
+            "source": "Economic Times — %s by %s (%s shareholding %s)"
+                      % (want, who, spec["label"], direction),
+            "source_url": url,
+            "measure": ("Change in %s shareholding as a percentage of equity, reported "
+                        "quarterly. Not a transaction value and not a day's buying."
+                        % spec["label"])}
+    try:
+        page = _web_session("https://economictimes.indiatimes.com/markets").get(url, timeout=30).text
+        tables = _TABLE_RE.findall(page)
+        if len(tables) < 2:
+            raise ValueError("expected two tables on the page, found %d" % len(tables))
+
+        left_trs = [tr for tr in _TR_RE.findall(tables[0]) if _row_cells(tr)]
+        right_rows = _table_rows(tables[1])
+        if not left_trs or not right_rows:
+            raise ValueError("the page's tables were empty")
+        if _ET_PRICE_HEAD not in " ".join(_row_cells(left_trs[0])).lower():
+            raise ValueError("the first table is not the company column any more")
+
+        head = [h.strip() for h in right_rows[0]]
+        left_data, right_data = left_trs[1:], right_rows[1:]
+        if len(left_data) != len(right_data):
+            raise ValueError("the two tables disagree on row count (%d vs %d), so rows cannot "
+                             "be paired safely" % (len(left_data), len(right_data)))
+
+        def col(values: list, *names: str) -> Optional[float]:
+            for i, h in enumerate(head):
+                hl = h.lower()
+                if any(n in hl for n in names) and i < len(values):
+                    return _pct(values[i])
+            return None
+
+        rows = []
+        for tr, vals in zip(left_data, right_data):
+            name, slug = _et_name_and_slug(tr)
+            if not name:
+                continue
+            cells = _row_cells(tr)
+            rows.append({
+                "company": name, "slug": slug,
+                "et_price": _num(cells[1]) if len(cells) > 1 else None,
+                "et_price_change": _num(cells[2]) if len(cells) > 2 else None,
+                "et_change_pct": col(vals, "% change"),
+                # the current-quarter column precedes its "1Q"/"2Q" siblings in the header and
+                # the first index match wins, so this lands on the latest reported quarter
+                "holding_pct": col(vals, spec["column"]),
+                "holding_qoq_change_pct": col(vals, "qoq"),
+                "holding_yoy_change_pct": col(vals, "yoy"),
+                "dii_holding_pct": col(vals, "dii holding"),
+                "institution": who,
+                "data_type": kind,
+                "direction": direction,
+            })
+        if not rows:
+            raise ValueError("no company rows could be read")
+        out = {**base, "available": True, "rows": rows, "count": len(rows), "columns": head,
+               "retrieved_at": now_ist().isoformat(timespec="seconds"),
+               "stale": False, "error": None, "_at": time.time()}
+    except Exception as exc:
+        logger.debug("ET %s-by-%s failed: %s", want, who, exc)
+        with _lock:
+            prev = _cache.get(key)
+        if prev and prev.get("available"):
+            return {**prev, "stale": True, "cached": True, "error": str(exc)[:200],
+                    "age_seconds": round(time.time() - prev["_at"], 1)}
+        out = {**base, "available": False, "rows": [], "count": 0, "columns": [],
+               "retrieved_at": now_ist().isoformat(timespec="seconds"),
+               "stale": False, "error": str(exc)[:200], "_at": time.time()}
+    with _lock:
+        _cache[key] = out
+    return {**out, "cached": False, "age_seconds": 0.0}
+
+
+def fetch_et_fii_stocks(side: str, force: bool = False) -> dict:
+    """The FII lists, with the holding columns named as this module's callers expect them."""
+    out = fetch_et_holder_stocks("FII", side, force=force)
+    rows = [{**r,
+             "fii_holding_pct": r["holding_pct"],
+             "fii_holding_qoq_change_pct": r["holding_qoq_change_pct"],
+             "fii_holding_yoy_change_pct": r["holding_yoy_change_pct"]}
+            for r in out.get("rows") or []]
+    return {**out, "rows": rows}

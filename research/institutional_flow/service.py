@@ -103,7 +103,44 @@ class InstitutionalFlowService:
 
     # ── the aggregate ────────────────────────────────────────────────
     def fetch_fii_dii_daily(self, force: bool = False) -> dict:
+        """The session's aggregate cash flow, from NSE where possible and Moneycontrol where not.
+
+        Two independent publishers of the same three numbers, so when both answer they are
+        reconciled and any disagreement is reported rather than averaged away. When NSE blocks
+        us — which it does — Moneycontrol carries the screen instead of the screen going blank.
+        """
         raw = SRC.fetch_fii_dii_daily(force=force)
+        alt = SRC.fetch_fii_dii_moneycontrol(force=force)
+        cross = None
+        if raw.get("available") and alt.get("available"):
+            if raw.get("data_date") == alt.get("data_date"):
+                diffs = {}
+                for who in ("fii", "dii"):
+                    a, b = raw.get(who) or {}, alt.get(who) or {}
+                    for field in ("buy", "sell", "net"):
+                        if a.get(field) is not None and b.get(field) is not None:
+                            d = round(abs(a[field] - b[field]), 2)
+                            if d >= 1.0:
+                                diffs["%s_%s" % (who, field)] = d
+                cross = {"checked": True, "agrees": not diffs, "differences": diffs,
+                         "against": alt.get("source"),
+                         "message": ("NSE and Moneycontrol agree on this session."
+                                     if not diffs else
+                                     "NSE and Moneycontrol disagree on this session — treat the "
+                                     "figures as provisional.")}
+            else:
+                cross = {"checked": False, "agrees": None, "differences": {},
+                         "against": alt.get("source"),
+                         "message": ("The two sources are reporting different sessions "
+                                     "(NSE %s, Moneycontrol %s), so they were not compared."
+                                     % (raw.get("data_date"), alt.get("data_date")))}
+        elif alt.get("available") and not raw.get("available"):
+            # NSE refused us; Moneycontrol publishes the same figures, so use them and say so
+            raw = {**alt, "fallback_from": "NSE — FII/DII trading activity (cash market)",
+                   "fallback_reason": raw.get("error") or "NSE did not answer"}
+            cross = {"checked": False, "agrees": None, "differences": {},
+                     "against": None,
+                     "message": "NSE did not answer, so these figures are Moneycontrol's."}
         fii, dii = raw.get("fii") or {}, raw.get("dii") or {}
         fii_net = fii.get("net") if fii.get("net") is not None else calculate_net_flow(fii.get("buy"), fii.get("sell"))
         dii_net = dii.get("net") if dii.get("net") is not None else calculate_net_flow(dii.get("buy"), dii.get("sell"))
@@ -115,6 +152,7 @@ class InstitutionalFlowService:
             "fii": {**fii, "net": fii_net} if fii else None,
             "dii": {**dii, "net": dii_net} if dii else None,
             "balance": balance,
+            "cross_check": cross,
             "balance_label": ("Combined net cash-market flow of FIIs and DIIs. It is not a "
                               "market-wide total — every buy has a seller, and the other side "
                               "here is retail, proprietary and corporate activity."),
@@ -122,10 +160,11 @@ class InstitutionalFlowService:
         }
 
     def fetch_fii_stock_activity(self) -> dict:
+        """Superseded by ``fii_stock_lists``, which reads the published lists for real."""
         return SRC.fetch_stock_activity("FII")
 
     def fetch_dii_stock_activity(self) -> dict:
-        return SRC.fetch_stock_activity("DII")
+        return self.dii_stock_note()
 
     def fetch_intraday(self) -> dict:
         return SRC.fetch_intraday_cash_flow()
@@ -233,8 +272,9 @@ class InstitutionalFlowService:
             "market": status,
             "aggregate": agg,
             "intraday": self.fetch_intraday(),
-            "fii_stocks": self.fetch_fii_stock_activity(),
-            "dii_stocks": self.fetch_dii_stock_activity(),
+            "fii_stocks": self.fii_stock_lists(refresh=False),
+            "dii_stocks": self.dii_stock_note(),
+            "derivatives": self.derivatives_history(days=15),
             "universe": {k: v for k, v in uni.items() if k != "meta"},
             "stocks": stocks,
             "connected": self.broker is not None,
@@ -293,6 +333,48 @@ class InstitutionalFlowService:
         """
         hist = self.history(db, days=days)
         rows = {r["trading_date"]: r for r in hist.get("rows", [])}
+        # Three readings can cover the same date, and they are not equally good. Gross buy and
+        # sell is the fuller record, so a row that has it is never replaced by one that does not.
+        #
+        #   stored row        what we captured ourselves — gross when we read it live
+        #   live aggregate    today's reading, which has gross
+        #   published series  ~30 sessions, net only
+        #
+        # Taking them in that order of richness keeps a backfill from erasing detail.
+        def better(existing: Optional[dict], candidate: dict) -> bool:
+            if existing is None:
+                return True
+            if candidate.get("fii_buy") is not None and existing.get("fii_buy") is None:
+                return True
+            if existing.get("fii_net") is None and candidate.get("fii_net") is not None:
+                return True
+            return False
+
+        agg = self.fetch_fii_dii_daily()
+        if agg.get("available") and agg.get("data_date"):
+            fii, dii = agg.get("fii") or {}, agg.get("dii") or {}
+            live = {"trading_date": agg["data_date"],
+                    "fii_buy": fii.get("buy"), "fii_sell": fii.get("sell"), "fii_net": fii.get("net"),
+                    "dii_buy": dii.get("buy"), "dii_sell": dii.get("sell"), "dii_net": dii.get("net"),
+                    "is_final": bool(agg.get("is_final")), "source": agg.get("source"),
+                    "backfilled": False, "retrieved_at": agg.get("retrieved_at")}
+            if better(rows.get(agg["data_date"]), live):
+                rows[agg["data_date"]] = live
+
+        series = SRC.fetch_fii_dii_history()
+        for r in (series.get("rows") or []):
+            d = r["trading_date"]
+            cand = {"trading_date": d,
+                    "fii_buy": None, "fii_sell": None, "fii_net": r["fii_net"],
+                    "dii_buy": None, "dii_sell": None, "dii_net": r["dii_net"],
+                    "is_final": True, "source": series.get("source"),
+                    "backfilled": True, "retrieved_at": series.get("retrieved_at")}
+            if better(rows.get(d), cand):
+                rows[d] = cand
+
+        for r in rows.values():
+            r.setdefault("backfilled", False)
+            r["gross_available"] = r.get("fii_buy") is not None
         status = SESS.market_status()
         cursor = date.fromisoformat(status["session_date"])
         # walk back over real trading days so weekends never appear as missing sessions
@@ -325,11 +407,16 @@ class InstitutionalFlowService:
         return {"available": True, "rows": out, "count": len(out),
                 "pending": pending, "not_captured": missed,
                 "earliest_recorded": earliest,
-                "note": ("NSE publishes FII/DII cash-market activity once, after the close, and "
-                         "serves only the latest session — so a day before this module started "
-                         "recording cannot be backfilled. Pending means awaiting publication; "
-                         "not captured means it was published before recording began. Neither "
-                         "is shown as zero.")}
+                "backfilled": sum(1 for r in out if r.get("backfilled")),
+                "sources": [x for x in ["NSE — FII/DII trading activity (cash market)",
+                                        series.get("source") if series.get("available") else None]
+                            if x],
+                "note": ("Figures are published once, after the close. Today's session is read "
+                         "from NSE with Moneycontrol as a cross-check; earlier sessions come "
+                         "from Moneycontrol's history, which carries net figures only — so buy "
+                         "and sell are blank on those rows rather than derived. Pending means "
+                         "awaiting publication; not captured means the session predates every "
+                         "source we have. Neither is ever shown as zero.")}
 
     def history(self, db, days: int = 10) -> dict:
         """Completed sessions, newest first, straight from storage."""
@@ -465,6 +552,343 @@ class InstitutionalFlowService:
                        "they say whether the tape agreed, which is the only part that can be "
                        "verified here."),
         }
+
+
+    # ── the published stock-level lists, joined to the tape ──────────
+    def _price_row(self, symbol: Optional[str], quotes: dict) -> dict:
+        """Today's price, volume and relative volume for one symbol, or honest blanks."""
+        q = (quotes.get("NSE:%s" % symbol) or {}) if symbol else {}
+        ohlc = q.get("ohlc") or {}
+        ltp = float(q.get("last_price") or 0) or None
+        prev = float(ohlc.get("close") or 0) or None
+        vol = q.get("volume") or q.get("volume_traded")
+        avg = self._average_volume(symbol) if symbol else None
+        return {
+            "price": ltp,
+            "previous_close": prev,
+            "price_move": round(ltp - prev, 2) if (ltp and prev) else None,
+            "price_change_pct": round((ltp - prev) / prev * 100, 2) if (ltp and prev) else None,
+            "day_open": float(ohlc.get("open") or 0) or None,
+            "day_high": float(ohlc.get("high") or 0) or None,
+            "day_low": float(ohlc.get("low") or 0) or None,
+            "volume": int(vol) if vol else None,
+            "average_volume": int(avg) if avg else None,
+            "relative_volume": calculate_relative_volume(vol, avg),
+        }
+
+    def fii_stock_lists(self, refresh: bool = False) -> dict:
+        """The FII lists — see ``holder_stock_lists``."""
+        return self.holder_stock_lists("FII", refresh=refresh)
+
+    def holder_stock_lists(self, institution: str = "FII", refresh: bool = False) -> dict:
+        """Both published lists for one institution, resolved to NSE symbols and priced.
+
+        Ranked by the size of the *percentage* change in holding, because that is the number the
+        source actually publishes. Ranking these by a rupee figure would mean inventing one.
+        """
+        from research.institutional_flow import symbols as SYM
+
+        who = str(institution).upper()
+        out: dict = {"available": False, "institution": who, "sides": {},
+                     "resolved": 0, "unresolved": 0,
+                     "data_type": "%s_shareholding_change" % who.lower(),
+                     "retrieved_at": SRC.now_ist().isoformat(timespec="seconds")}
+        fetched, every_symbol = {}, []
+        for side in ("bought", "sold"):
+            raw = SRC.fetch_et_holder_stocks(who, side, force=refresh)
+            fetched[side] = raw
+            if raw.get("available"):
+                for r in raw["rows"]:
+                    hit = SYM.resolve(r.get("company"), r.get("slug"))
+                    r["_symbol"] = hit["symbol"]
+                    r["_via"] = hit["via"]
+                    r["_listed_as"] = hit["company"]
+                    if hit["symbol"]:
+                        every_symbol.append(hit["symbol"])
+
+        quotes = self.fetch_live_market_data(sorted(set(every_symbol)))
+        for side, raw in fetched.items():
+            if not raw.get("available"):
+                out["sides"][side] = {"available": False, "rows": [], "count": 0,
+                                      "institution": who, "data_type": raw.get("data_type"),
+                                      "direction": raw.get("direction"),
+                                      "error": raw.get("error"), "source": raw.get("source"),
+                                      "source_url": raw.get("source_url")}
+                continue
+            rows = []
+            for r in raw["rows"]:
+                sym = r.get("_symbol")
+                live = self._price_row(sym, quotes)
+                qoq = r.get("holding_qoq_change_pct")
+                rows.append({
+                    "company": r["company"], "symbol": sym,
+                    "listed_as": r.get("_listed_as"), "resolved_via": r.get("_via"),
+                    "institution": who,
+                    "holding_pct": r.get("holding_pct"),
+                    "holding_qoq_change_pct": qoq,
+                    "holding_yoy_change_pct": r.get("holding_yoy_change_pct"),
+                    # kept under their old names so an FII caller written against the
+                    # original shape keeps working
+                    "fii_holding_pct": r.get("holding_pct") if who == "FII" else None,
+                    "fii_holding_qoq_change_pct": qoq if who == "FII" else None,
+                    "fii_holding_yoy_change_pct": (r.get("holding_yoy_change_pct")
+                                                   if who == "FII" else None),
+                    "dii_holding_pct": r.get("dii_holding_pct"),
+                    # ET's own price, kept separately from the broker's — two readings of the
+                    # same thing taken at different moments should not be merged into one column
+                    "et_price": r.get("et_price"), "et_change_pct": r.get("et_change_pct"),
+                    **live,
+                    "activity_type": "%s_shareholding_%s" % (who.lower(), raw["direction"]),
+                    "confirmation": confirmation(
+                        "%s_shareholding_%s" % (who.lower(), raw["direction"]),
+                        live["price_change_pct"], live["relative_volume"]),
+                    "reaction": reaction(live["price_change_pct"], live["relative_volume"],
+                                         "%s_shareholding_%s" % (who.lower(), raw["direction"])),
+                    "price_source": "Zerodha quote" if live["price"] else (
+                        "Economic Times (broker not connected)" if r.get("et_price") else "unavailable"),
+                })
+            rows.sort(key=lambda x: abs(x["holding_qoq_change_pct"] or 0), reverse=True)
+            out["sides"][side] = {
+                "available": True, "rows": rows, "count": len(rows),
+                "institution": who, "data_type": raw["data_type"],
+                "direction": raw["direction"], "source": raw["source"],
+                "source_url": raw["source_url"], "measure": raw["measure"],
+                "columns": raw.get("columns") or [],
+                "stale": bool(raw.get("stale")), "error": raw.get("error"),
+                "retrieved_at": raw.get("retrieved_at"),
+            }
+            out["resolved"] += sum(1 for r in rows if r["symbol"])
+            out["unresolved"] += sum(1 for r in rows if not r["symbol"])
+        out["available"] = any(v.get("available") for v in out["sides"].values())
+        out["connected"] = self.broker is not None
+        label = "FII" if who == "FII" else "mutual fund"
+        out["ranked_by"] = ("Ranked by the quarter-on-quarter change in %s shareholding, "
+                            "largest first." % label)
+        out["caveat"] = ("These are %s *shareholding* changes, reported quarterly. The price "
+                         "and volume beside each name are today's, so the right question is "
+                         "whether the tape agrees — not whether %s traded it today."
+                         % (label, "FIIs" if who == "FII" else "funds"))
+        return out
+
+    def sync_fii_stock_lists(self, db, trading_date: Optional[str] = None,
+                             refresh: bool = True, institution: str = "FII") -> dict:
+        """Store today's reading of both ET lists, so tomorrow can look back at it.
+
+        One snapshot per date per institution, replaced on a re-read of the same day. Rows carry
+        the holding percentage and its change; ``activity_value`` stays NULL, because no rupee
+        figure exists for a shareholding change and a NULL is the honest way to say that.
+        """
+        from core.models import InstitutionalStockActivity
+        who = str(institution).upper()
+        lists = self.holder_stock_lists(who, refresh=refresh)
+        if not lists.get("available"):
+            return {"saved": False, "institution": who, "reason": "neither list could be read",
+                    "errors": {k: v.get("error") for k, v in lists["sides"].items()}}
+        d = (date.fromisoformat(str(trading_date)[:10]) if trading_date
+             else date.fromisoformat(SESS.market_status()["session_date"]))
+        try:
+            db.query(InstitutionalStockActivity).filter(
+                InstitutionalStockActivity.trading_date == d,
+                InstitutionalStockActivity.institution == who).delete(synchronize_session=False)
+            now = datetime.utcnow()
+            written = 0
+            for side, block in lists["sides"].items():
+                if not block.get("available"):
+                    continue
+                for r in block["rows"]:
+                    db.add(InstitutionalStockActivity(
+                        trading_date=d,
+                        symbol=r["symbol"] or (r["company"] or "")[:32].upper(),
+                        company=r["company"], institution=who,
+                        activity_type=r["activity_type"],
+                        activity_value=None,                  # no rupee figure exists
+                        activity_percentage=r["holding_qoq_change_pct"],
+                        holding_pct=r["holding_pct"],
+                        price=r["price"], price_change_pct=r["price_change_pct"],
+                        volume=r["volume"], average_volume=r["average_volume"],
+                        relative_volume=r["relative_volume"],
+                        confirmation=(r["confirmation"] or "")[:32],
+                        source=(block["source"] or "")[:160], retrieved_at=now))
+                    written += 1
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.warning("could not store the FII stock lists: %s", exc)
+            return {"saved": False, "reason": str(exc)[:200]}
+        self.invalidate()
+        return {"saved": True, "institution": who, "trading_date": d.isoformat(),
+                "rows": written, "resolved": lists["resolved"],
+                "unresolved": lists["unresolved"]}
+
+    def dii_stock_note(self, refresh: bool = False) -> dict:
+        """What can honestly be shown on the domestic side, by stock.
+
+        There is no DII stock list. The published series stops at the aggregate, and inferring
+        names from it is exactly the fabrication this screen refuses.
+
+        What does exist is *mutual fund* shareholding, published the same way FII shareholding
+        is. Mutual funds are the largest component of DII but they are not all of it, so it is
+        offered under its own name with that stated — adjacent evidence, clearly labelled, not a
+        stand-in for the DII figure.
+        """
+        mf = self.holder_stock_lists("MF", refresh=refresh)
+        return {
+            "available": False, "institution": "DII",
+            "data_type": "dii_shareholding_change",
+            "rows": [],
+            "message": ("DII aggregate data is available. Security-level DII activity requires "
+                        "a stock-level institutional-data provider — no free source publishes "
+                        "which stocks DIIs bought or sold, and this screen will not infer a "
+                        "list of names from an aggregate figure."),
+            "mutual_funds": mf,
+            "mutual_funds_caveat": ("Mutual fund shareholding is published by stock, and funds "
+                                    "are the largest part of DII — but DII also covers banks, "
+                                    "insurers and other domestic institutions, whose holdings "
+                                    "are not in this list. Read it as fund shareholding, not as "
+                                    "the DII cash figure broken down."),
+            "retrieved_at": SRC.now_ist().isoformat(timespec="seconds"),
+        }
+
+    # ── yesterday's list, measured against today's tape ──────────────
+    def yesterday_tracker(self, db, limit: int = 15) -> dict:
+        """Yesterday's stored list, priced with today's session.
+
+        The point of keeping snapshots: a name that FIIs raised their holding in, which then
+        fell on heavy volume today, is worth seeing. Without yesterday's row there is nothing
+        to compare today against, so this reads from storage and never re-derives the list.
+        """
+        from core.models import InstitutionalStockActivity
+        status = SESS.market_status()
+        today = date.fromisoformat(status["session_date"])
+        prev = SESS.previous_trading_day(today)
+
+        rows = (db.query(InstitutionalStockActivity)
+                  .filter(InstitutionalStockActivity.trading_date == prev,
+                          InstitutionalStockActivity.institution == "FII").all())
+        asked, fell_back = prev, False
+        if not rows:
+            latest = (db.query(InstitutionalStockActivity.trading_date)
+                        .filter(InstitutionalStockActivity.trading_date < today,
+                                InstitutionalStockActivity.institution == "FII")
+                        .order_by(InstitutionalStockActivity.trading_date.desc()).first())
+            if latest and latest[0]:
+                prev, fell_back = latest[0], True
+                rows = (db.query(InstitutionalStockActivity)
+                          .filter(InstitutionalStockActivity.trading_date == prev,
+                                  InstitutionalStockActivity.institution == "FII").all())
+        if not rows:
+            return {"available": False, "previous_session": asked.isoformat(), "rows": [],
+                    "message": ("Nothing was recorded for %s yet. The lists are stored each "
+                                "time this screen reads them, so a comparison becomes possible "
+                                "from the next session onward."
+                                % asked.strftime("%d %b %Y"))}
+
+        ranked = sorted(rows, key=lambda r: abs(float(r.activity_percentage or 0)), reverse=True)
+        top = ranked[:max(1, min(int(limit), 100)) * 2]
+        quotes = self.fetch_live_market_data(sorted({r.symbol for r in top}))
+        inc, dec = [], []
+        for r in top:
+            live = self._price_row(r.symbol, quotes)
+            rec = {
+                "symbol": r.symbol, "company": r.company,
+                "activity_type": r.activity_type,
+                "recorded_on": prev.isoformat(),
+                "holding_pct": float(r.holding_pct) if r.holding_pct is not None else None,
+                "holding_change_pct": (float(r.activity_percentage)
+                                       if r.activity_percentage is not None else None),
+                "price_then": float(r.price) if r.price is not None else None,
+                **live,
+                "moved_since": (round(live["price"] - float(r.price), 2)
+                                if (live["price"] and r.price is not None) else None),
+                "confirmation": confirmation(r.activity_type, live["price_change_pct"],
+                                             live["relative_volume"]),
+                "reaction": reaction(live["price_change_pct"], live["relative_volume"],
+                                     r.activity_type),
+                "source": r.source,
+            }
+            (inc if str(r.activity_type).endswith("increase") else dec).append(rec)
+        cut = max(1, min(int(limit), 100))
+        return {
+            "available": True, "previous_session": prev.isoformat(),
+            "asked_for": asked.isoformat(), "is_latest_available": fell_back,
+            "increased": inc[:cut], "decreased": dec[:cut],
+            "counts": {"increased": len(inc), "decreased": len(dec)},
+            "source": rows[0].source,
+            "data_type": "fii_shareholding_change",
+            "note": ("Recorded on %s, priced with today's session. 'Moved since' compares "
+                     "today's price with the price stored alongside the list."
+                     % prev.strftime("%d %b %Y")),
+        }
+
+    # ── backfilling the by-date table ────────────────────────────────
+    def backfill_history(self, db, force: bool = False) -> dict:
+        """Fill the by-date table from Moneycontrol's multi-session series.
+
+        NSE serves only the latest day, so without this a fresh install can show nothing but
+        "not captured" for every session before the one it was first switched on for.
+
+        That series carries net figures only. Buy and sell are left NULL on a backfilled row
+        rather than derived, and a row we already hold gross figures for is never overwritten by
+        one that has none.
+        """
+        from core.models import InstitutionalDailySummary
+        hist = SRC.fetch_fii_dii_history(force=force)
+        if not hist.get("available"):
+            return {"saved": False, "reason": hist.get("error") or "history unavailable"}
+        added = updated = skipped = 0
+        try:
+            existing = {r.trading_date: r for r in db.query(InstitutionalDailySummary).all()}
+            for r in hist["rows"]:
+                d = date.fromisoformat(r["trading_date"])
+                row = existing.get(d)
+                if row is None:
+                    db.add(InstitutionalDailySummary(
+                        trading_date=d, fii_net=r["fii_net"], dii_net=r["dii_net"],
+                        market_status="CLOSED", data_type="aggregate_cash_flow",
+                        source=hist["source"], source_url=hist["source_url"],
+                        is_final=True, retrieved_at=datetime.utcnow()))
+                    added += 1
+                    continue
+                # a stored row with gross figures is the better record — leave it alone
+                if row.fii_buy is not None or row.dii_buy is not None:
+                    skipped += 1
+                    continue
+                if row.fii_net is None or row.dii_net is None or force:
+                    row.fii_net, row.dii_net = r["fii_net"], r["dii_net"]
+                    row.source = row.source or hist["source"]
+                    row.source_url = row.source_url or hist["source_url"]
+                    row.is_final = True
+                    row.retrieved_at = datetime.utcnow()
+                    updated += 1
+                else:
+                    skipped += 1
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.warning("history backfill failed: %s", exc)
+            return {"saved": False, "reason": str(exc)[:200]}
+        return {"saved": True, "added": added, "updated": updated, "skipped": skipped,
+                "covers": hist.get("covers"), "source": hist["source"],
+                "note": ("Backfilled rows carry net figures only — the series has no gross buy "
+                         "or sell, so those stay blank rather than being derived.")}
+
+    def derivatives_history(self, days: int = 15) -> dict:
+        """FII's four derivative books per session, beside the index close.
+
+        Cash net alone says what FIIs did in equities; the index-options line often says the
+        opposite, and a screen about institutional positioning that hides it is misleading.
+        """
+        hist = SRC.fetch_fii_dii_history()
+        if not hist.get("available"):
+            return {"available": False, "rows": [], "error": hist.get("error"),
+                    "source": hist.get("source")}
+        n = max(1, min(int(days), 60))
+        return {"available": True, "rows": hist["rows"][:n], "count": min(n, hist["count"]),
+                "source": hist["source"], "source_url": hist["source_url"],
+                "stale": bool(hist.get("stale")), "retrieved_at": hist.get("retrieved_at"),
+                "note": ("Cash figures are net ₹ crore in the equity market. The four FII "
+                         "derivative columns are net ₹ crore in index futures, index options, "
+                         "stock futures and stock options.")}
 
     def conflict(self, agg: Optional[dict] = None) -> dict:
         """FII and DII pulling against each other, stated from the aggregate only."""

@@ -26,6 +26,7 @@ from core.database import get_db
 from core.logger import get_logger
 from research.institutional_flow import session as SESS
 from research.institutional_flow import sources as SRC
+from research.institutional_flow import symbols as SYM
 from research.institutional_flow.service import InstitutionalFlowService
 
 router = APIRouter()
@@ -102,15 +103,42 @@ def meta(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
             {"key": "WATCHLIST", "label": "Watchlist"},
         ],
         "data_types": ["aggregate_cash_flow", "intraday_cash_flow", "fii_shareholding_change",
-                       "dii_shareholding_change", "stock_price", "stock_volume"],
+                       "mf_shareholding_change", "dii_shareholding_change",
+                       "stock_price", "stock_volume"],
         "sources": [
             {"name": "NSE — FII/DII trading activity (cash market)", "url": SRC.NSE_FII_DII,
-             "provides": "aggregate_cash_flow", "cadence": "once, after the close"},
+             "provides": "aggregate_cash_flow (buy, sell, net)",
+             "cadence": "once, after the close"},
+            {"name": "Moneycontrol — institutional trading activity (provisional)",
+             "url": SRC.MC_MARKETSTATS,
+             "provides": "aggregate_cash_flow (buy, sell, net) — cross-check and fallback",
+             "cadence": "once, after the close"},
+            {"name": "Moneycontrol — FII/DII activity history", "url": SRC.MC_FII_DII,
+             "provides": "aggregate_cash_flow (net only) for ~30 sessions, plus FII derivatives",
+             "cadence": "daily"},
+            {"name": "Economic Times — bought by FII", "url": SRC.ET_BOUGHT_BY_FII,
+             "provides": "fii_shareholding_change (increase) — a percentage, never a rupee value",
+             "cadence": "as shareholdings are filed, quarterly"},
+            {"name": "Economic Times — sold by FII", "url": SRC.ET_SOLD_BY_FII,
+             "provides": "fii_shareholding_change (decrease) — a percentage, never a rupee value",
+             "cadence": "as shareholdings are filed, quarterly"},
+            {"name": "Economic Times — bought by MF", "url": SRC.ET_BOUGHT_BY_MF,
+             "provides": "mf_shareholding_change (increase) — a percentage, never a rupee value",
+             "cadence": "as shareholdings are filed, quarterly"},
+            {"name": "Economic Times — sold by MF", "url": SRC.ET_SOLD_BY_MF,
+             "provides": "mf_shareholding_change (decrease) — a percentage, never a rupee value",
+             "cadence": "as shareholdings are filed, quarterly"},
+            {"name": "NSE — list of equities available for trading", "url": SYM.EQUITY_LIST_CSV,
+             "provides": "company name to trading symbol", "cadence": "as revised"},
             {"name": "NSE — NIFTY 50 constituent list", "url": SRC.NIFTY50_CSV,
              "provides": "index membership", "cadence": "as revised"},
             {"name": "Zerodha (your connection)", "url": None,
-             "provides": "stock_price, stock_volume", "cadence": "live while the market is open"},
+             "provides": "stock_price, stock_volume — price and volume only, never institutional "
+                         "attribution",
+             "cadence": "live while the market is open"},
         ],
+        "symbol_index": {"count": SYM.index().get("count"),
+                         "source": SYM.index().get("source")},
     }
 
 
@@ -176,47 +204,70 @@ def history(days: int = 10, user_id: int = Depends(login_required), db: Session 
 
 @router.get("/yesterday")
 @safe("yesterday")
-def yesterday(universe: str = "NIFTY50", limit: int = 50,
-              user_id: int = Depends(login_required), db: Session = Depends(get_db)):
-    """What was recorded yesterday, and how those names behaved today.
+def yesterday(limit: int = 15, user_id: int = Depends(login_required),
+              db: Session = Depends(get_db)):
+    """Yesterday's stored FII list, measured against today's price and volume.
 
-    Stock-level institutional attribution is not published daily, so the "yesterday activity"
-    column is populated only where a stored row actually carries it. Rows without it say so
-    rather than borrowing a reason from somewhere else.
+    This reads the snapshot written for the previous session rather than re-deriving a list, so
+    "yesterday" means the list as it stood yesterday — which is the only way the comparison says
+    anything. When no snapshot exists yet, it says so instead of showing today's list twice.
     """
-    from core.models import InstitutionalStockActivity
+    return {"status": "ok", **_service(db, user_id).yesterday_tracker(db, limit=limit)}
+
+
+@router.get("/fii-stocks")
+@safe("fii_stocks")
+def fii_stocks(refresh: int = 0, user_id: int = Depends(login_required),
+               db: Session = Depends(get_db)):
+    """The two published FII lists, resolved to NSE symbols and priced with today's tape.
+
+    What these lists report is a change in FII *shareholding*, as a percentage of equity. The
+    payload says so on every row, and carries no rupee figure, because none is published.
+    """
+    return {"status": "ok", **_service(db, user_id).fii_stock_lists(refresh=bool(refresh))}
+
+
+@router.get("/dii-stocks")
+@safe("dii_stocks")
+def dii_stocks(refresh: int = 0, user_id: int = Depends(login_required),
+               db: Session = Depends(get_db)):
+    """Why there is no security-level DII list — and the mutual fund lists that do exist.
+
+    The DII aggregate is published; a DII stock list is not. Mutual fund shareholding is, and
+    funds are the largest part of DII, so it is offered under its own name with that stated
+    rather than presented as the DII figure broken down.
+    """
+    return {"status": "ok", **_service(db, user_id).dii_stock_note(refresh=bool(refresh))}
+
+
+@router.get("/derivatives")
+@safe("derivatives")
+def derivatives(days: int = 15, user_id: int = Depends(login_required),
+                db: Session = Depends(get_db)):
+    """FII's four derivative books per session, beside the index close."""
+    return {"status": "ok", **_service(db, user_id).derivatives_history(days=days)}
+
+
+@router.post("/backfill")
+@safe("backfill")
+def backfill(force: int = 0, user_id: int = Depends(login_required),
+             db: Session = Depends(get_db)):
+    """Fill the by-date table from the published multi-session series."""
     svc = _service(db, user_id)
-    status = SESS.market_status()
-    today = date.fromisoformat(status["session_date"])
-    prev = SESS.previous_trading_day(today)
+    out = svc.backfill_history(db, force=bool(force))
+    svc.invalidate()
+    return {"status": "ok", **out}
 
-    rows = (db.query(InstitutionalStockActivity)
-              .filter(InstitutionalStockActivity.trading_date == prev)
-              .filter(InstitutionalStockActivity.institution.in_(["FII", "DII"]))
-              .all())
-    if not rows:
-        return {"status": "ok", "available": False, "previous_session": prev.isoformat(),
-                "rows": [],
-                "message": ("No stock-level institutional activity was recorded for "
-                            f"{prev.strftime('%d %b %Y')}. Daily per-stock FII/DII attribution "
-                            "is not published by the current source, so there is nothing to "
-                            "carry forward.")}
 
-    snap = svc.build_daily_snapshot(db=db, universe=universe, limit=limit)
-    by_sym = {s["symbol"]: s for s in snap.get("stocks", [])}
-    out = []
-    for r in rows:
-        t = by_sym.get(r.symbol) or {}
-        from research.institutional_flow.service import reaction
-        out.append({
-            "symbol": r.symbol, "institution": r.institution,
-            "yesterday_activity": r.activity_type, "yesterday_date": prev.isoformat(),
-            "price": t.get("price"), "price_change_pct": t.get("price_change_pct"),
-            "volume": t.get("volume"), "relative_volume": t.get("relative_volume"),
-            "reaction": reaction(t.get("price_change_pct"), t.get("relative_volume"),
-                                 r.activity_type),
-        })
-    return {"status": "ok", "available": True, "previous_session": prev.isoformat(), "rows": out}
+@router.post("/fii-stocks/capture")
+@safe("capture_fii_stocks")
+def capture_fii_stocks(trading_date: str | None = None, institution: str = "FII",
+                       user_id: int = Depends(login_required),
+                       db: Session = Depends(get_db)):
+    """Store today's reading of both lists, so tomorrow has something to compare against."""
+    return {"status": "ok",
+            **_service(db, user_id).sync_fii_stock_lists(
+                db, trading_date, refresh=True, institution=institution)}
 
 
 @router.post("/sync")
@@ -226,4 +277,8 @@ def sync(user_id: int = Depends(login_required), db: Session = Depends(get_db)):
     svc = _service(db, user_id)
     svc.invalidate()
     agg = svc.fetch_fii_dii_daily(force=True)
-    return {"status": "ok", "aggregate": agg, "persisted": svc.persist_session(db, agg)}
+    return {"status": "ok", "aggregate": agg,
+            "persisted": svc.persist_session(db, agg),
+            "backfilled": svc.backfill_history(db),
+            "stock_lists": svc.sync_fii_stock_lists(db, refresh=True, institution="FII"),
+            "mf_lists": svc.sync_fii_stock_lists(db, refresh=True, institution="MF")}

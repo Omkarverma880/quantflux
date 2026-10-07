@@ -672,6 +672,12 @@ export const api = {
   instImport: (body) => request('/equity-strategy/institutional-flow/stock-activity/import', { method: 'POST', body: JSON.stringify(body) }),
   instHistory: (days = 10) => request(`/equity-strategy/institutional-flow/history?days=${days}`),
   instYesterday: (universe = 'NIFTY50') => request(`/equity-strategy/institutional-flow/yesterday?universe=${encodeURIComponent(universe)}`),
+  instYesterdayTracker: (limit = 15) => request(`/equity-strategy/institutional-flow/yesterday?limit=${limit}`),
+  instFiiStocks: (refresh = 0) => request(`/equity-strategy/institutional-flow/fii-stocks?refresh=${refresh}`),
+  instDiiStocks: () => request('/equity-strategy/institutional-flow/dii-stocks'),
+  instDerivatives: (days = 15) => request(`/equity-strategy/institutional-flow/derivatives?days=${days}`),
+  instBackfill: () => request('/equity-strategy/institutional-flow/backfill', { method: 'POST' }),
+  instCaptureFii: () => request('/equity-strategy/institutional-flow/fii-stocks/capture', { method: 'POST' }),
   instSync: () => request('/equity-strategy/institutional-flow/sync', { method: 'POST' }),
 
   meMeta: () => request('/equity-strategy/my-workspace/meta'),

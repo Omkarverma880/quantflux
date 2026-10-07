@@ -169,8 +169,10 @@ class InstitutionalStockActivity(Base):
     symbol = Column(String(32), nullable=False, index=True)
     institution = Column(String(8))                    # FII | DII | NONE
     activity_type = Column(String(32))                 # shareholding_increase | ... | price_volume_only
-    activity_value = Column(Numeric(16, 2))
-    activity_percentage = Column(Numeric(10, 4))
+    company = Column(String(120))                      # as the source names it
+    activity_value = Column(Numeric(16, 2))            # rupees — NULL for a shareholding change
+    activity_percentage = Column(Numeric(10, 4))       # the change, in percentage points
+    holding_pct = Column(Numeric(10, 4))               # holding after the change, if reported
     price = Column(Numeric(14, 2))
     price_change_pct = Column(Numeric(10, 4))
     volume = Column(BigInteger)

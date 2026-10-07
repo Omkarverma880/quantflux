@@ -448,6 +448,10 @@ async def lifespan(app: FastAPI):
             "alert_state": "JSONB DEFAULT '{}'::jsonb",
             "auto_fno": "BOOLEAN DEFAULT FALSE",
         })
+        _ensure_columns(engine, "institutional_stock_activity", {
+            "company": "VARCHAR(120)",
+            "holding_pct": "NUMERIC(10,4)",
+        })
     except Exception as e:
         print(f"[LIFESPAN] DB init error (non-fatal): {e}", flush=True)
 
