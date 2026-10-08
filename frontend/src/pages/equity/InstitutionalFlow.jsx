@@ -340,47 +340,6 @@ export default function InstitutionalFlow() {
         </Note>
       )}
 
-      {/* ── live: the named stocks, as they trade ─────────────────── */}
-      <Card title="Live tracker — the named stocks as they trade"
-        right={
-          <div className="flex flex-wrap items-center gap-2">
-            {movers?.available && snap?.market?.live && (
-              <span className="flex items-center gap-1.5 text-[10.5px] text-emerald-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                every 20s
-              </span>
-            )}
-            <select value={moverSrc} onChange={(e) => setMoverSrc(e.target.value)} className={SEL}>
-              {MOVER_SOURCES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </select>
-          </div>
-        }>
-        {!movers ? <Loading /> : movers.available ? (
-          <>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 mb-2">
-              <Chip tone="good">{movers.counts.up} up</Chip>
-              <Chip tone="bad">{movers.counts.down} down</Chip>
-              {movers.counts.flat ? <Chip>{movers.counts.flat} unchanged</Chip> : null}
-              <span>of {movers.quoted} names on the list</span>
-              {!movers.market?.live && <Chip tone="warn">market closed — last traded prices</Chip>}
-              {movers.volume_rate_ready === 0 && (
-                <Chip tone="warn">volume rate appears on the next refresh</Chip>
-              )}
-              {movers.retrieved_at && (
-                <span className="mono">· {String(movers.retrieved_at).slice(11, 19)} IST</span>
-              )}
-            </div>
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              <MoverList title="Top 10 rising" rows={movers.risers} up />
-              <MoverList title="Top 10 falling" rows={movers.fallers} />
-            </div>
-            <p className="text-[11px] text-gray-600 mt-2">{movers.note}</p>
-          </>
-        ) : (
-          <Note tone={movers.connected === false ? 'warn' : 'info'}>{movers.message}</Note>
-        )}
-      </Card>
-
       {/* ── the session ledger: one table, not two ────────────────── */}
       <Card title="Session ledger — FII / DII cash flow by date"
         right={
@@ -477,6 +436,47 @@ export default function InstitutionalFlow() {
         <p className="text-[11px] text-gray-600 mt-2">
           {ledgerView === 'cash' ? flow?.note : deriv?.note}
         </p>
+      </Card>
+
+      {/* ── live: the named stocks, as they trade ─────────────────── */}
+      <Card title="Live tracker — the named stocks as they trade"
+        right={
+          <div className="flex flex-wrap items-center gap-2">
+            {movers?.available && snap?.market?.live && (
+              <span className="flex items-center gap-1.5 text-[10.5px] text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                every 20s
+              </span>
+            )}
+            <select value={moverSrc} onChange={(e) => setMoverSrc(e.target.value)} className={SEL}>
+              {MOVER_SOURCES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+        }>
+        {!movers ? <Loading /> : movers.available ? (
+          <>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 mb-2">
+              <Chip tone="good">{movers.counts.up} up</Chip>
+              <Chip tone="bad">{movers.counts.down} down</Chip>
+              {movers.counts.flat ? <Chip>{movers.counts.flat} unchanged</Chip> : null}
+              <span>of {movers.quoted} names on the list</span>
+              {!movers.market?.live && <Chip tone="warn">market closed — last traded prices</Chip>}
+              {movers.volume_rate_ready === 0 && (
+                <Chip tone="warn">volume rate appears on the next refresh</Chip>
+              )}
+              {movers.retrieved_at && (
+                <span className="mono">· {String(movers.retrieved_at).slice(11, 19)} IST</span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <MoverList title="Top 10 rising" rows={movers.risers} up />
+              <MoverList title="Top 10 falling" rows={movers.fallers} />
+            </div>
+            <p className="text-[11px] text-gray-600 mt-2">{movers.note}</p>
+          </>
+        ) : (
+          <Note tone={movers.connected === false ? 'warn' : 'info'}>{movers.message}</Note>
+        )}
       </Card>
 
       {/* ── which stocks the published lists name ─────────────────── */}
