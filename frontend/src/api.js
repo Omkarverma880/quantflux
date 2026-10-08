@@ -676,6 +676,7 @@ export const api = {
   instFiiStocks: (refresh = 0) => request(`/equity-strategy/institutional-flow/fii-stocks?refresh=${refresh}`),
   instDiiStocks: () => request('/equity-strategy/institutional-flow/dii-stocks'),
   instDerivatives: (days = 15) => request(`/equity-strategy/institutional-flow/derivatives?days=${days}`),
+  instLiveMovers: (p) => request(`/equity-strategy/institutional-flow/live-movers?${new URLSearchParams(p || {})}`),
   instDeliveryScreen: (p) => request(`/equity-strategy/institutional-flow/delivery-screen?${new URLSearchParams(p || {})}`),
   instBackfill: () => request('/equity-strategy/institutional-flow/backfill', { method: 'POST' }),
   instCaptureFii: () => request('/equity-strategy/institutional-flow/fii-stocks/capture', { method: 'POST' }),

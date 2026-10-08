@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Landmark, RefreshCw, Loader2, AlertTriangle, Info, CheckCircle2, Download,
-  TrendingUp, TrendingDown, ExternalLink,
+  TrendingUp, TrendingDown, ExternalLink, ArrowUp, ArrowDown, ArrowUpDown, Activity,
 } from 'lucide-react';
 import { api } from '../../api';
 import { ImportList } from '../../components/institutional/StockActivity';
@@ -49,6 +49,13 @@ const TONE_TEXT = { live: 'text-emerald-400', closed: 'text-red-400', delayed: '
 const LEDGER_SPANS = [['10', '10 sessions'], ['22', '1 month'], ['30', '30 sessions'],
   ['66', '3 months'], ['132', '6 months'], ['260', '1 year']];
 
+const MOVER_SOURCES = [
+  ['FII_BOUGHT', 'FII raised holding'],
+  ['FII_SOLD', 'FII cut holding'],
+  ['MF_BOUGHT', 'Funds raised holding'],
+  ['MF_SOLD', 'Funds cut holding'],
+];
+
 const DELIV_UNIVERSES = [
   ['ALL', 'All equities'],
   ['NIFTY50', 'NIFTY 50'],
@@ -88,6 +95,9 @@ export default function InstitutionalFlow() {
   const [deliv, setDeliv] = useState(null);
   const [delivOpts, setDelivOpts] = useState({ universe: 'ALL', rank: 'surge', min_turnover_cr: 25 });
   const [delivBusy, setDelivBusy] = useState(false);
+  const [movers, setMovers] = useState(null);
+  const [moverSrc, setMoverSrc] = useState('FII_BOUGHT');
+  const moverTimer = useRef(null);
   const [ledgerView, setLedgerView] = useState('cash');
   const [showImport, setShowImport] = useState(false);
   const [universe, setUniverse] = useState('NIFTY50');
@@ -128,6 +138,22 @@ export default function InstitutionalFlow() {
     return () => { dead = true; };
   }, [delivOpts]);
 
+  // The live card is the one panel that genuinely wants a fast cadence: a per-minute volume
+  // rate only exists between two readings, so the first refresh after opening it is always
+  // blank and the second is the first useful one. Out of hours it is read once and left alone.
+  const loadMovers = useCallback(() => {
+    api.instLiveMovers({ source: moverSrc, limit: 10 })
+      .then(setMovers).catch(() => {});
+  }, [moverSrc]);
+
+  useEffect(() => { loadMovers(); }, [loadMovers]);
+  useEffect(() => {
+    clearInterval(moverTimer.current);
+    if (!snap?.market?.should_poll) return undefined;
+    moverTimer.current = setInterval(loadMovers, 20000);
+    return () => clearInterval(moverTimer.current);
+  }, [snap?.market?.should_poll, loadMovers]);
+
   // poll only while the market is actually open — never out of hours, which is where most
   // dashboards quietly burn their rate limit
   useEffect(() => {
@@ -164,6 +190,10 @@ export default function InstitutionalFlow() {
   );
 
   const block = fiiStocks?.sides?.[side];
+  const ledger = useSort(flow?.rows, 'trading_date', 'desc');
+  const derivRows = useSort((deriv?.rows || []).slice(0, Number(span)), 'trading_date', 'desc');
+  const screen = useSort(deliv?.rows, null, 'desc');
+  const watch = useSort(snap?.stocks, null, 'desc');
   const mf = diiNote?.mutual_funds;
   const mfBlock = mf?.sides?.[mfSide];
 
@@ -310,6 +340,47 @@ export default function InstitutionalFlow() {
         </Note>
       )}
 
+      {/* ── live: the named stocks, as they trade ─────────────────── */}
+      <Card title="Live tracker — the named stocks as they trade"
+        right={
+          <div className="flex flex-wrap items-center gap-2">
+            {movers?.available && snap?.market?.live && (
+              <span className="flex items-center gap-1.5 text-[10.5px] text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                every 20s
+              </span>
+            )}
+            <select value={moverSrc} onChange={(e) => setMoverSrc(e.target.value)} className={SEL}>
+              {MOVER_SOURCES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+        }>
+        {!movers ? <Loading /> : movers.available ? (
+          <>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 mb-2">
+              <Chip tone="good">{movers.counts.up} up</Chip>
+              <Chip tone="bad">{movers.counts.down} down</Chip>
+              {movers.counts.flat ? <Chip>{movers.counts.flat} unchanged</Chip> : null}
+              <span>of {movers.quoted} names on the list</span>
+              {!movers.market?.live && <Chip tone="warn">market closed — last traded prices</Chip>}
+              {movers.volume_rate_ready === 0 && (
+                <Chip tone="warn">volume rate appears on the next refresh</Chip>
+              )}
+              {movers.retrieved_at && (
+                <span className="mono">· {String(movers.retrieved_at).slice(11, 19)} IST</span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <MoverList title="Top 10 rising" rows={movers.risers} up />
+              <MoverList title="Top 10 falling" rows={movers.fallers} />
+            </div>
+            <p className="text-[11px] text-gray-600 mt-2">{movers.note}</p>
+          </>
+        ) : (
+          <Note tone={movers.connected === false ? 'warn' : 'info'}>{movers.message}</Note>
+        )}
+      </Card>
+
       {/* ── the session ledger: one table, not two ────────────────── */}
       <Card title="Session ledger — FII / DII cash flow by date"
         right={
@@ -336,8 +407,11 @@ export default function InstitutionalFlow() {
 
         {ledgerView === 'cash' ? (
           <Table cols={['Date', 'FII buy', 'FII sell', 'FII net', 'DII buy', 'DII sell', 'DII net', 'NIFTY']}
-            align={['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right']}>
-            {(flow?.rows || []).map((r) => (
+            align={['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right']}
+            sortKeys={['trading_date', 'fii_buy', 'fii_sell', 'fii_net',
+              'dii_buy', 'dii_sell', 'dii_net', 'nifty_change_pct']}
+            sortKey={ledger.sortKey} sortDir={ledger.sortDir} onSort={ledger.toggle}>
+            {ledger.sorted.map((r) => (
                 <tr key={r.trading_date}
                   className={`border-b border-surface-3/40 hover:bg-surface-2/40 ${r.published ? '' : 'opacity-75'}`}>
                   <td className="px-2 py-1.5 whitespace-nowrap">
@@ -372,8 +446,11 @@ export default function InstitutionalFlow() {
           </Table>
         ) : deriv?.available ? (
           <Table cols={['Date', 'FII cash', 'Index futures', 'Index options', 'Stock futures', 'Stock options', 'NIFTY', 'SENSEX']}
-            align={['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right']}>
-            {(deriv.rows || []).slice(0, Number(span)).map((r) => (
+            align={['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right']}
+            sortKeys={['trading_date', 'fii_net', 'fii_index_futures', 'fii_index_options',
+              'fii_stock_futures', 'fii_stock_options', 'nifty_change_pct', 'sensex_change_pct']}
+            sortKey={derivRows.sortKey} sortDir={derivRows.sortDir} onSort={derivRows.toggle}>
+            {derivRows.sorted.map((r) => (
               <tr key={r.trading_date} className="border-b border-surface-3/40 hover:bg-surface-2/40">
                 <td className="px-2 py-1.5 whitespace-nowrap mono text-gray-200">{DAY(r.trading_date)}
                   <span className="mono text-gray-600 text-[10.5px] ml-1">{String(r.trading_date).slice(0, 4)}</span>
@@ -567,8 +644,12 @@ export default function InstitutionalFlow() {
             <div className="mt-2">
               <Table cols={['Stock', 'Close', 'Chg %', 'Delivery %', 'Its norm', 'Surge',
                 'Delivered', 'Turnover', 'Reading']}
-                align={['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'left']}>
-                {deliv.rows.map((r) => (
+                align={['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'left']}
+                sortKeys={['symbol', 'close', 'change_pct', 'delivery_pct',
+                  'delivery_baseline_pct', 'delivery_surge', 'delivery_value_cr',
+                  'turnover_cr', 'reading']}
+                sortKey={screen.sortKey} sortDir={screen.sortDir} onSort={screen.toggle}>
+                {screen.sorted.map((r) => (
                   <tr key={r.symbol} className="border-b border-surface-3/40 hover:bg-surface-2/40">
                     <td className="px-2 py-1.5 whitespace-nowrap">
                       <span className="font-semibold text-gray-100">{r.symbol}</span>
@@ -680,8 +761,11 @@ export default function InstitutionalFlow() {
             </div>
             <Table
               cols={['Stock', 'Price', '% change', 'Volume', 'vs 20d avg', 'Institutional activity', 'Confirmation']}
-              align={['left', 'right', 'right', 'right', 'right', 'left', 'left']}>
-              {stocks.map((s) => (
+              align={['left', 'right', 'right', 'right', 'right', 'left', 'left']}
+              sortKeys={['symbol', 'price', 'price_change_pct', 'volume', 'relative_volume',
+                null, 'confirmation']}
+              sortKey={watch.sortKey} sortDir={watch.sortDir} onSort={watch.toggle}>
+              {(watch.sortKey ? watch.sorted : stocks).map((s) => (
                 <tr key={s.symbol} className="border-b border-surface-3/40 hover:bg-surface-2/40">
                   <td className="px-2 py-1.5">
                     <span className="font-semibold text-gray-100">{s.symbol}</span>
@@ -847,17 +931,78 @@ function Note({ tone: t = 'info', children }) {
   );
 }
 
-function Table({ cols, align = [], children }) {
+/**
+ * Sort a list of rows by a named field, with a stable idea of where blanks go.
+ *
+ * A missing value always sorts last, in both directions. Ranking "no data" above a real figure
+ * because null happens to compare low would put the least informative rows at the top of a table
+ * someone is scanning for the most informative ones.
+ */
+function useSort(rows, initialKey = null, initialDir = 'desc') {
+  const [sortKey, setSortKey] = useState(initialKey);
+  const [sortDir, setSortDir] = useState(initialDir);
+  const toggle = useCallback((key) => {
+    if (!key) return;
+    setSortKey((prev) => {
+      if (prev === key) {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+        return key;
+      }
+      // numbers are most useful largest-first; names read better A to Z
+      setSortDir(typeof (rows || []).find((r) => r?.[key] != null)?.[key] === 'string'
+        ? 'asc' : 'desc');
+      return key;
+    });
+  }, [rows]);
+
+  const sorted = useMemo(() => {
+    if (!sortKey) return rows || [];
+    const sign = sortDir === 'asc' ? 1 : -1;
+    return [...(rows || [])].sort((a, b) => {
+      const x = a?.[sortKey]; const y = b?.[sortKey];
+      const xb = x == null || x === ''; const yb = y == null || y === '';
+      if (xb && yb) return 0;
+      if (xb) return 1;            // blanks last, whichever way we are sorting
+      if (yb) return -1;
+      if (typeof x === 'string' || typeof y === 'string') {
+        return sign * String(x).localeCompare(String(y));
+      }
+      return sign * (Number(x) - Number(y));
+    });
+  }, [rows, sortKey, sortDir]);
+
+  return { sorted, sortKey, sortDir, toggle };
+}
+
+function Table({ cols, align = [], children, sortKeys, sortKey, sortDir, onSort }) {
   return (
     <div className="overflow-x-auto max-h-[480px]">
       <table className="w-full text-[12px]">
         <thead className="sticky top-0 z-10">
           <tr className="bg-surface-3/90 backdrop-blur-sm text-[10px] uppercase tracking-[0.12em]
                          text-gray-300 border-b-2 border-surface-4">
-            {cols.map((c, i) => (
-              <th key={c} className={`px-2 py-1.5 font-semibold whitespace-nowrap
-                ${align[i] === 'right' ? 'text-right' : 'text-left'}`}>{c}</th>
-            ))}
+            {cols.map((c, i) => {
+              const key = sortKeys?.[i];
+              const on = key && key === sortKey;
+              const right = align[i] === 'right';
+              return (
+                <th key={c}
+                  onClick={key ? () => onSort?.(key) : undefined}
+                  title={key ? `Sort by ${c}` : undefined}
+                  className={`px-2 py-1.5 font-semibold whitespace-nowrap
+                    ${right ? 'text-right' : 'text-left'}
+                    ${key ? 'cursor-pointer select-none hover:text-white' : ''}
+                    ${on ? 'text-brand-300' : ''}`}>
+                  <span className={`inline-flex items-center gap-1 ${right ? 'flex-row-reverse' : ''}`}>
+                    {c}
+                    {key && (on
+                      ? (sortDir === 'asc' ? <ArrowUp className="w-2.5 h-2.5" />
+                        : <ArrowDown className="w-2.5 h-2.5" />)
+                      : <ArrowUpDown className="w-2.5 h-2.5 opacity-25" />)}
+                  </span>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>{children}</tbody>
@@ -884,9 +1029,23 @@ function HoldingTable({ rows, heldLabel }) {
   const align = ['left', 'left', 'right', 'right', 'right',
     ...(showDii ? ['right'] : []),
     'right', 'right', 'right', 'right', 'left'];
+  const keys = ['company', 'symbol', 'holding_pct', 'holding_qoq_change_pct',
+    'holding_yoy_change_pct',
+    ...(showDii ? ['dii_holding_pct'] : []),
+    'shown_price', 'shown_change_pct', 'volume', 'relative_volume', 'reaction'];
+  // The price columns fall back to the source's own figures when no broker is connected, so
+  // the sort has to key on the value actually on screen. Sorting by the broker field alone
+  // would silently do nothing in exactly the case where the fallback is being displayed.
+  const priced = useMemo(() => (rows || []).map((r) => ({
+    ...r,
+    shown_price: r.price ?? r.et_price ?? null,
+    shown_change_pct: r.price_change_pct ?? r.et_change_pct ?? null,
+  })), [rows]);
+  const { sorted, sortKey, sortDir, toggle } = useSort(priced, 'holding_qoq_change_pct', 'desc');
   return (
-    <Table cols={cols} align={align}>
-      {(rows || []).map((r) => (
+    <Table cols={cols} align={align} sortKeys={keys}
+      sortKey={sortKey} sortDir={sortDir} onSort={toggle}>
+      {sorted.map((r) => (
         <tr key={`${r.company}-${r.symbol}`} className="border-b border-surface-3/40 hover:bg-surface-2/40">
           <td className="px-2 py-1.5 text-gray-100 font-medium whitespace-nowrap">{r.company}</td>
           <td className="px-2 py-1.5 mono text-[11.5px]">
@@ -912,9 +1071,9 @@ function HoldingTable({ rows, heldLabel }) {
               {r.dii_holding_pct == null ? '—' : `${N(r.dii_holding_pct)}%`}
             </td>
           )}
-          <td className="px-2 py-1.5 text-right mono text-gray-200">{N(r.price ?? r.et_price)}</td>
-          <td className={`px-2 py-1.5 text-right mono ${tone(r.price_change_pct ?? r.et_change_pct)}`}>
-            {PCT(r.price_change_pct ?? r.et_change_pct)}
+          <td className="px-2 py-1.5 text-right mono text-gray-200">{N(r.shown_price)}</td>
+          <td className={`px-2 py-1.5 text-right mono ${tone(r.shown_change_pct)}`}>
+            {PCT(r.shown_change_pct)}
           </td>
           <td className="px-2 py-1.5 text-right mono text-gray-400">{N0(r.volume)}</td>
           <td className={`px-2 py-1.5 text-right mono ${r.relative_volume > 1 ? 'text-amber-300' : 'text-gray-400'}`}>
@@ -940,6 +1099,7 @@ function HoldingTable({ rows, heldLabel }) {
  */
 function MoveList({ title, sub, rows, up, since }) {
   const agreeing = (rows || []).filter((r) => r.agrees).length;
+  const { sorted, sortKey, sortDir, toggle } = useSort(rows, null, 'desc');
   // "Since" only means something once a previous session's prices are on file, which takes a
   // day to become true. Until then the column is dropped rather than shown full of dashes.
   const showSince = (rows || []).some((r) => since?.[r.symbol] != null && r.price != null);
@@ -947,6 +1107,8 @@ function MoveList({ title, sub, rows, up, since }) {
     ...(showSince ? ['Since'] : []), 'vs 20d', 'Agrees'];
   const align = ['left', 'right', 'right',
     ...(showSince ? ['right'] : []), 'right', 'left'];
+  const keys = ['company', 'today_abs', 'today_pct',
+    ...(showSince ? [null] : []), 'relative_volume', 'agrees'];
   return (
     <div>
       <div className="flex flex-wrap items-baseline gap-2 mb-1.5">
@@ -962,8 +1124,9 @@ function MoveList({ title, sub, rows, up, since }) {
         ) : null}
       </div>
       {rows?.length ? (
-        <Table cols={cols} align={align}>
-          {rows.map((r) => {
+        <Table cols={cols} align={align} sortKeys={keys}
+          sortKey={sortKey} sortDir={sortDir} onSort={toggle}>
+          {sorted.map((r) => {
             const then = since?.[r.symbol];
             const drift = (then != null && r.price != null) ? r.price - then : null;
             return (
@@ -1004,6 +1167,103 @@ function MoveList({ title, sub, rows, up, since }) {
           })}
         </Table>
       ) : <div className="text-[12px] text-gray-500">No prices available for these names yet.</div>}
+    </div>
+  );
+}
+
+
+/**
+ * One side of the live tracker: the named stocks moving hardest, with the book behind them.
+ *
+ * Three numbers per row answer three different questions. The change says where it has gone.
+ * Volume per minute says whether anyone is still trading it — a big move on a trickle is a
+ * different thing from the same move on a flood. And the bid/ask split says which side is
+ * currently carrying more size.
+ *
+ * The last of those is the easiest to over-read, so the bar is drawn without a verdict attached:
+ * pending orders can be pulled, and a heavy side is the book at one instant, not a forecast.
+ */
+function MoverList({ title, rows, up }) {
+  return (
+    <div>
+      <div className="flex flex-wrap items-baseline gap-2 mb-1.5">
+        <span className={`text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1.5
+          ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+          <Activity className="w-3 h-3" />{title}
+        </span>
+        <span className="text-[10.5px] text-gray-500">{(rows || []).length} shown</span>
+      </div>
+      {(rows || []).length ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="bg-surface-3/90 text-[10px] uppercase tracking-[0.12em]
+                             text-gray-300 border-b-2 border-surface-4">
+                {['Stock', 'Price', 'Change', 'Vol / min', 'vs 20d', 'Book (bid vs ask)'].map((c, i) => (
+                  <th key={c} className={`px-2 py-1.5 font-semibold whitespace-nowrap
+                    ${i >= 1 && i <= 4 ? 'text-right' : 'text-left'}`}>{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.symbol} className="border-b border-surface-3/40 hover:bg-surface-2/40">
+                  <td className="px-2 py-1.5 whitespace-nowrap">
+                    <span className="font-semibold text-gray-100">{r.symbol}</span>
+                    {r.holding_qoq_change_pct != null && (
+                      <span className={`text-[10px] mono ml-1.5 ${tone(r.holding_qoq_change_pct)}`}
+                        title="Quarter-on-quarter change in holding — why this name is on the list">
+                        {PP(r.holding_qoq_change_pct)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 text-right mono text-gray-200">{N(r.price)}</td>
+                  <td className={`px-2 py-1.5 text-right mono font-semibold ${tone(r.change_pct)}`}>
+                    {PCT(r.change_pct)}
+                    <span className="block text-[10px] opacity-70">
+                      {r.change < 0 ? '−' : '+'}₹{N(Math.abs(r.change))}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1.5 text-right mono text-gray-300">
+                    {r.volume_per_min == null
+                      ? <span className="text-gray-600" title="Measured between two readings — appears on the next refresh">—</span>
+                      : N0(r.volume_per_min)}
+                  </td>
+                  <td className={`px-2 py-1.5 text-right mono ${r.relative_volume > 1 ? 'text-amber-300' : 'text-gray-400'}`}>
+                    {r.relative_volume == null ? '—' : `${N(r.relative_volume, 2)}x`}
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <BookBar share={r.demand_share} bid={r.bid_quantity} ask={r.ask_quantity}
+                      label={r.book} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="text-[12px] text-gray-500">
+          None on this list {up ? 'is up' : 'is down'} right now.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BookBar({ share, bid, ask, label }) {
+  if (share == null) return <span className="text-[11px] text-gray-600">no book</span>;
+  const pct = Math.max(2, Math.min(98, share * 100));
+  return (
+    <div className="min-w-[132px]" title={`${N0(bid)} pending to buy · ${N0(ask)} pending to sell`}>
+      <div className="h-1.5 rounded-full overflow-hidden bg-red-500/30 flex">
+        <div className="bg-emerald-500/70" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="text-[10px] text-gray-500 mt-0.5 flex justify-between gap-2">
+        <span className={share >= 0.55 ? 'text-emerald-400' : share <= 0.45 ? 'text-red-400' : ''}>
+          {label}
+        </span>
+        <span className="mono">{Math.round(share * 100)}%</span>
+      </div>
     </div>
   );
 }

@@ -92,6 +92,31 @@ def reaction(change_pct: Optional[float], rvol: Optional[float],
     return "Negative confirmation"
 
 
+def book_pressure(bid_qty, ask_qty) -> str:
+    """Which side of the order book is carrying more size, right now.
+
+    Pending quantity is intent, not trades: it can be cancelled, and large resting orders are
+    sometimes placed to be seen. So this names the imbalance and claims nothing beyond it.
+    """
+    try:
+        b, a = float(bid_qty or 0), float(ask_qty or 0)
+    except (TypeError, ValueError):
+        return "No book"
+    if b <= 0 and a <= 0:
+        return "No book"
+    total = b + a
+    share = b / total
+    if share >= 0.65:
+        return "Bids much heavier"
+    if share >= 0.55:
+        return "Bids heavier"
+    if share <= 0.35:
+        return "Offers much heavier"
+    if share <= 0.45:
+        return "Offers heavier"
+    return "Balanced"
+
+
 DII_STOCK_MESSAGE = (
     "DII aggregate data is available. Security-level DII activity requires a stock-level "
     "institutional-data provider — no free source publishes which stocks DIIs bought or sold, "
@@ -145,6 +170,9 @@ class InstitutionalFlowService:
         self.user_id = user_id
         self._lock = threading.Lock()
         self._rows_cache: dict = {}
+        # symbol -> (read at, cumulative volume), so a per-minute rate can be measured
+        # between two readings rather than guessed from the day's total
+        self._vol_marks: dict = {}
 
     # ── the aggregate ────────────────────────────────────────────────
     def fetch_fii_dii_daily(self, force: bool = False) -> dict:
@@ -1104,6 +1132,126 @@ class InstitutionalFlowService:
                         syms.add(r["symbol"])
             return syms or None
         return None
+
+
+    # ── live intraday tracking of the named stocks ───────────────────
+    def _volume_rate(self, symbol: str, volume: Optional[float]) -> Optional[float]:
+        """Shares traded per minute, measured between two readings of the same counter.
+
+        The exchange publishes a cumulative day volume, not a rate, so a rate only exists once
+        the same stock has been read twice. The first reading of a session returns None rather
+        than dividing the day's total by the minutes elapsed — that would describe the morning,
+        not the minute, and would be most wrong exactly when it was most interesting.
+        """
+        if volume is None:
+            return None
+        now = time.time()
+        with self._lock:
+            prev = self._vol_marks.get(symbol)
+            self._vol_marks[symbol] = (now, float(volume))
+        if not prev:
+            return None
+        then, before = prev
+        gap = now - then
+        if gap < 15 or volume < before:        # too soon to be meaningful, or a new session
+            return None
+        return round((float(volume) - before) / (gap / 60.0), 0)
+
+    def live_movers(self, db=None, source: str = "FII_BOUGHT", limit: int = 10) -> dict:
+        """The named stocks that are actually moving right now, with the order book behind it.
+
+        A shareholding list says which stocks institutions have been building. It says nothing
+        about today. This pairs that list with the live tape — last price, how fast volume is
+        arriving, and which side of the book is heavier — so the list becomes something that can
+        be watched during a session rather than read once a quarter.
+
+        Nothing here is a recommendation. Pending quantities are orders that can be pulled, and
+        a heavy side is a description of the book at one instant, not a forecast.
+        """
+        status = SESS.market_status()
+        src = str(source or "FII_BOUGHT").upper()
+        which = {"FII_BOUGHT": ("FII", "bought"), "FII_SOLD": ("FII", "sold"),
+                 "MF_BOUGHT": ("MF", "bought"), "MF_SOLD": ("MF", "sold")}.get(
+                     src, ("FII", "bought"))
+        who, side = which
+        lists = self.holder_stock_lists(who, refresh=False)
+        block = (lists.get("sides") or {}).get(side) or {}
+        named = [r for r in (block.get("rows") or []) if r.get("symbol")]
+        if not named:
+            return {"available": False, "rows": [], "risers": [], "fallers": [],
+                    "market": status, "source": src,
+                    "message": ("The %s list could not be read, so there is nothing to track."
+                                % who)}
+        if self.broker is None:
+            return {"available": False, "risers": [], "fallers": [], "market": status,
+                    "source": src, "connected": False,
+                    "universe_size": len(named),
+                    "message": ("Connect Zerodha to track these %d names live. The list itself "
+                                "comes from the Economic Times and needs no broker; last price, "
+                                "volume rate and the order book do." % len(named))}
+
+        by_symbol = {r["symbol"]: r for r in named}
+        quotes = self.fetch_live_market_data(sorted(by_symbol))
+        rows = []
+        for sym, meta in by_symbol.items():
+            q = quotes.get("NSE:%s" % sym) or {}
+            if not q:
+                continue
+            ohlc = q.get("ohlc") or {}
+            ltp = float(q.get("last_price") or 0) or None
+            prev = float(ohlc.get("close") or 0) or None
+            if ltp is None or prev is None:
+                continue
+            vol = q.get("volume") or q.get("volume_traded")
+            bid_qty = q.get("buy_quantity")
+            ask_qty = q.get("sell_quantity")
+            depth = q.get("depth") or {}
+            best_bid = (depth.get("buy") or [{}])[0] or {}
+            best_ask = (depth.get("sell") or [{}])[0] or {}
+            total = (float(bid_qty or 0) + float(ask_qty or 0)) or None
+            rows.append({
+                "symbol": sym, "company": meta.get("company"),
+                "holding_pct": meta.get("holding_pct"),
+                "holding_qoq_change_pct": meta.get("holding_qoq_change_pct"),
+                "price": ltp, "previous_close": prev,
+                "change": round(ltp - prev, 2),
+                "change_pct": round((ltp - prev) / prev * 100, 2),
+                "day_open": float(ohlc.get("open") or 0) or None,
+                "day_high": float(ohlc.get("high") or 0) or None,
+                "day_low": float(ohlc.get("low") or 0) or None,
+                "volume": int(vol) if vol else None,
+                "volume_per_min": self._volume_rate(sym, vol),
+                "relative_volume": calculate_relative_volume(vol, self._average_volume(sym)),
+                "bid_quantity": int(bid_qty) if bid_qty else None,
+                "ask_quantity": int(ask_qty) if ask_qty else None,
+                # the share of pending quantity sitting on the bid: above a half is more size
+                # wanting in than out, at this instant and no longer
+                "demand_share": (round(float(bid_qty or 0) / total, 3) if total else None),
+                "book": book_pressure(bid_qty, ask_qty),
+                "best_bid": best_bid.get("price"), "best_ask": best_ask.get("price"),
+                "spread": (round(float(best_ask.get("price") or 0) - float(best_bid.get("price") or 0), 2)
+                           if (best_bid.get("price") and best_ask.get("price")) else None),
+            })
+        ups = sorted([r for r in rows if r["change_pct"] > 0],
+                     key=lambda r: r["change_pct"], reverse=True)
+        downs = sorted([r for r in rows if r["change_pct"] < 0],
+                       key=lambda r: r["change_pct"])
+        cut = max(1, min(int(limit), 50))
+        rated = sum(1 for r in rows if r["volume_per_min"] is not None)
+        return {
+            "available": True, "connected": True, "market": status, "source": src,
+            "institution": who, "side": side,
+            "list_source": block.get("source"), "list_url": block.get("source_url"),
+            "universe_size": len(named), "quoted": len(rows),
+            "risers": ups[:cut], "fallers": downs[:cut],
+            "counts": {"up": len(ups), "down": len(downs),
+                       "flat": len(rows) - len(ups) - len(downs)},
+            "volume_rate_ready": rated,
+            "retrieved_at": SRC.now_ist().isoformat(timespec="seconds"),
+            "note": ("Volume per minute is measured between two readings, so it appears from "
+                     "the second refresh onward. Bid and ask quantities are pending orders, "
+                     "which can be withdrawn — they describe the book now, not what will happen."),
+        }
 
     def conflict(self, agg: Optional[dict] = None) -> dict:
         """FII and DII pulling against each other, stated from the aggregate only."""

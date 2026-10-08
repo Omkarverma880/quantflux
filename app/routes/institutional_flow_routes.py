@@ -252,6 +252,20 @@ def derivatives(days: int = 15, user_id: int = Depends(login_required),
     return {"status": "ok", **_service(db, user_id).derivatives_history(days=days)}
 
 
+@router.get("/live-movers")
+@safe("live_movers")
+def live_movers(source: str = "FII_BOUGHT", limit: int = 10,
+                user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """The named stocks that are moving right now, with the order book behind each.
+
+    Polled during the session, so it is kept deliberately cheap: one quote call for the list,
+    and a per-minute volume rate measured between successive readings rather than recomputed
+    from history.
+    """
+    return {"status": "ok", **_service(db, user_id).live_movers(
+        db=db, source=source, limit=limit)}
+
+
 @router.get("/delivery-screen")
 @safe("delivery_screen")
 def delivery_screen(lookback: int = 11, min_turnover_cr: float = 25.0, universe: str = "ALL",
