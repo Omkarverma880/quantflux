@@ -18,6 +18,7 @@ export default function Setup({ cfg, setCfg, meta, onRun, busy, progress, error 
   const setP = (k, v) => setCfg({ ...cfg, params: { ...p, [k]: v } });
   const setE = (k, v) => setCfg({ ...cfg, execution: { ...e, [k]: v } });
   const num = (v) => (v === '' ? '' : Number(v));
+  const short = String(e.action || 'BUY').toUpperCase() === 'SELL';
   const cov = meta?.coverage?.options || {};
 
   return (
@@ -110,16 +111,51 @@ export default function Setup({ cfg, setCfg, meta, onRun, busy, progress, error 
       </div>
 
       <Section title="The trade">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-3 mb-3">
+          <Field label="Side" hint="Buy the signal, or sell the opposite option">
+            <select value={e.action || 'BUY'} onChange={(ev) => setE('action', ev.target.value)} className={input}>
+              <option value="BUY">Buy the option</option>
+              <option value="SELL">Sell the opposite option</option>
+            </select>
+          </Field>
+          <Field label="Hedge (strikes)" hint={short ? 'Width of the protective wing · 0 = naked' : 'Selling only'}>
+            <input type="number" min={0} max={10} disabled={!short}
+              value={e.hedge_offset ?? 0}
+              onChange={(ev) => setE('hedge_offset', num(ev.target.value))}
+              className={`${input} ${short ? '' : 'opacity-40'}`} />
+          </Field>
+          <Field label="Min days to expiry" hint="1 skips expiry day">
+            <input type="number" min={0} max={10} value={e.min_dte ?? 0}
+              onChange={(ev) => setE('min_dte', num(ev.target.value))} className={input} />
+          </Field>
+          <Field label="Max days to expiry" hint="0 = no limit">
+            <input type="number" min={0} max={30} value={e.max_dte ?? 0}
+              onChange={(ev) => setE('max_dte', num(ev.target.value))} className={input} />
+          </Field>
+        </div>
+        {short && (
+          <div className="mb-3">
+            <Note>
+              Selling flips every rule with the position. A bullish hammer sells <b>puts</b> and a bearish
+              star sells <b>calls</b> — the bet is that the move fails to arrive rather than that it does.
+              Target is the credit decaying by that percentage; stop is the credit expanding by it. With a
+              hedge width the loss stops at the strikes instead of running with the index, and both legs
+              are measured together, because managing the short leg alone would unwind the protection at
+              the worst moment. A hedge of 0 is naked: the loss has no defined limit.
+            </Note>
+          </div>
+        )}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-          <Field label="Target (%)" hint="Of the option's premium"><input type="number" value={e.target_pct} onChange={(ev) => setE('target_pct', num(ev.target.value))} className={input} /></Field>
-          <Field label="Stop (%)" hint="Of the option's premium"><input type="number" value={e.stop_pct} onChange={(ev) => setE('stop_pct', num(ev.target.value))} className={input} /></Field>
+          <Field label="Target (%)" hint={short ? 'Credit decays this far' : "Of the option's premium"}><input type="number" value={e.target_pct} onChange={(ev) => setE('target_pct', num(ev.target.value))} className={input} /></Field>
+          <Field label="Stop (%)" hint={short ? 'Credit expands this far · 0 = none' : "Of the option's premium"}><input type="number" value={e.stop_pct} onChange={(ev) => setE('stop_pct', num(ev.target.value))} className={input} /></Field>
           <Field label="Max hold (min)" hint="0 = hold to square-off"><input type="number" value={e.max_hold_min} onChange={(ev) => setE('max_hold_min', num(ev.target.value))} className={input} /></Field>
           <Field label="Trades a day"><input type="number" min={1} max={10} value={e.max_trades_per_day} onChange={(ev) => setE('max_trades_per_day', num(ev.target.value))} className={input} /></Field>
-          <Field label="Strike" hint="0 = at the money, 1 = one strike out">
+          <Field label="Strike" hint={short ? 'Steps out of the money, on the side sold' : '0 = at the money, 1 = one strike out'}>
             <select value={e.moneyness} onChange={(ev) => setE('moneyness', Number(ev.target.value))} className={input}>
               <option value={0}>At the money</option>
               <option value={1}>1 strike out</option>
               <option value={2}>2 strikes out</option>
+              <option value={3}>3 strikes out</option>
               <option value={-1}>1 strike in</option>
             </select>
           </Field>
@@ -131,6 +167,8 @@ export default function Setup({ cfg, setCfg, meta, onRun, busy, progress, error 
             The decision is taken on the candle's last minute and filled at the next minute's real option open —
             never inside the candle. Exits are decided on one-minute closes and filled the same way, with
             Zerodha's charges on every trade.
+            {short && ' Slippage is charged on four legs here, not two, and a credit spread is '
+              + 'unusually sensitive to it — worth raising to see what the edge survives.'}
           </Note>
         </div>
       </Section>

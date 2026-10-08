@@ -6,10 +6,15 @@ import { Note, Section } from './ui';
  * The information panel: what each indicator looks for, what the two say together, how a signal
  * becomes a trade, and what the numbers on the results page do and do not mean.
  */
-export default function Rules({ meta, params }) {
+export default function Rules({ meta, params, execution }) {
   const e = meta?.explain || {};
   const p = params || meta?.defaults?.params || {};
-  const ex = meta?.defaults?.execution || {};
+  const ex = execution || meta?.defaults?.execution || {};
+  const short = String(ex?.action || 'BUY').toUpperCase() === 'SELL';
+  // the wing is quoted in index points so it reads like the thing you would actually place
+  const wing = ex?.hedge_offset
+    ? <> {ex.moneyness ? `${ex.moneyness} strike${ex.moneyness > 1 ? 's' : ''} out` : 'at the money'}, hedged {ex.hedge_offset * 50} points further out</>
+    : null;
 
   return (
     <div className="space-y-4">
@@ -70,16 +75,44 @@ export default function Rules({ meta, params }) {
           <div className="space-y-2 text-[12.5px] text-gray-300">
             <div className="flex items-start gap-1.5">
               <TrendingUp className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-              <span>A hammer buys the at-the-money <b>call</b> of the nearest expiry.</span>
+              <span>
+                A hammer {short
+                  ? <>sells the <b>put</b>{wing}, and wins if the index simply does not fall.</>
+                  : <>buys the <b>call</b> of the nearest expiry.</>}
+              </span>
             </div>
             <div className="flex items-start gap-1.5">
               <TrendingDown className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
-              <span>An inverted hammer or shooting star buys the at-the-money <b>put</b>.</span>
+              <span>
+                An inverted hammer or shooting star {short
+                  ? <>sells the <b>call</b>{wing}, and wins if the index simply does not rally.</>
+                  : <>buys the at-the-money <b>put</b>.</>}
+              </span>
             </div>
             <div className="text-[12px] text-gray-400">
-              Exit at {ex.target_pct}% of the premium gained, {ex.stop_pct}% lost, after {ex.max_hold_min} minutes,
-              or at square-off — whichever comes first. At most {ex.max_trades_per_day} trades a day, one at a time.
+              {short ? (
+                <>
+                  Close once the credit has decayed {ex.target_pct}%
+                  {ex.stop_pct ? <>, or if it expands {ex.stop_pct}%</>
+                    : <>; there is no stop, so the hedge is the only thing limiting the loss</>}
+                  {ex.max_hold_min ? <>, after {ex.max_hold_min} minutes</> : null}
+                  , or at square-off — whichever comes first.
+                </>
+              ) : (
+                <>
+                  Exit at {ex.target_pct}% of the premium gained, {ex.stop_pct}% lost,
+                  after {ex.max_hold_min} minutes, or at square-off — whichever comes first.
+                </>
+              )}
+              {' '}At most {ex.max_trades_per_day} trades a day, one at a time.
+              {ex.min_dte ? ` Nothing closer than ${ex.min_dte} day${ex.min_dte > 1 ? 's' : ''} to expiry.` : ''}
             </div>
+            {short && !ex.hedge_offset && (
+              <div className="text-[12px] text-amber-300">
+                With no hedge this is a naked short: the credit is the most it can make, and the
+                loss has no defined limit.
+              </div>
+            )}
           </div>
         </Section>
 

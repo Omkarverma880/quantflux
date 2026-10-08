@@ -148,7 +148,7 @@ export default function FluxLab() {
       )}
       {tab === 'results' && (run ? <Results run={run} trades={trades} onExport={exportCsv} />
         : <Note>Run a backtest from the Setup tab, or open one from Saved runs.</Note>)}
-      {tab === 'rules' && <Rules meta={meta} params={cfg.params} />}
+      {tab === 'rules' && <Rules meta={meta} params={cfg.params} execution={cfg.execution} />}
       {tab === 'runs' && (
         <Section title={`Saved runs · ${runs.length}`}>
           {!runs.length ? <Note>No runs stored yet.</Note> : (
