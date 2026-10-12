@@ -670,6 +670,7 @@ export const api = {
   fvbBacktest: (body) => request('/index-strategy/fvb/backtest', { method: 'POST', body: JSON.stringify(body) }),
   fvbJob: (id) => request(`/index-strategy/fvb/job/${id}`),
   fvbModes: () => request('/index-strategy/fvb/modes'),
+  fvbToday: (p) => request(`/index-strategy/fvb/today?${new URLSearchParams(p || {})}`),
   fvbDesk: () => request('/index-strategy/fvb/desk'),
   fvbDeskUpdate: (body) => request('/index-strategy/fvb/desk', { method: 'POST', body: JSON.stringify(body) }),
   fvbDeskFlatten: () => request('/index-strategy/fvb/desk/flatten', { method: 'POST' }),

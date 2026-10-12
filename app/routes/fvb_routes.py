@@ -365,3 +365,25 @@ def ingest_futures_job(job_id: str, user_id: int = Depends(login_required)):
     return {"status": "ok", "job": {k: j.get(k) for k in
                                     ("id", "status", "progress", "error", "seconds")},
             "futures": D.inventory()["futures"]}
+
+@router.get("/today")
+@safe("today")
+def today_levels(variant: str = "B", participation: str | None = None,
+                 user_id: int = Depends(login_required), db: Session = Depends(get_db)):
+    """Today's levels and triggers, read from the broker rather than the stored history.
+
+    The store is a snapshot and today is never in it, which is why a backtest dated today
+    returns nothing. This asks the broker for the live session's own candles and runs the same
+    levels, buffers, participation and firewall over them.
+    """
+    from core.auth import UserZerodhaAuth
+    from core.broker import get_user_broker
+    from research.fvb import today as TD
+    if not UserZerodhaAuth.is_authenticated(db, user_id):
+        return {"status": "ok", "available": False,
+                "message": "Connect Zerodha — today's candles come from the broker, not from "
+                           "the stored history, which ends at the last ingest."}
+    broker = get_user_broker(db, user_id)
+    p, ep = BT.variant_params(variant or "B", ST.P, SG.EP,
+                              participation or D.OPTIONS)
+    return {"status": "ok", **TD.levels_now(broker, p=p, ep=ep)}

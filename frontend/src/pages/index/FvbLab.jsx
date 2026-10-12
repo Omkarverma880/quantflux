@@ -36,11 +36,12 @@ const STATE_TONE = {
 export default function FvbLab() {
   const [meta, setMeta] = useState(null);
   const [cfg, setCfg] = useState(null);
-  const [tab, setTab] = useState('setup');
+  const [tab, setTab] = useState('today');
   const [job, setJob] = useState(null);
   const [result, setResult] = useState(null);
   const [compare, setCompare] = useState(null);
   const [desk, setDesk] = useState(null);
+  const [today, setToday] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
@@ -58,6 +59,16 @@ export default function FvbLab() {
     api.fvbDesk().then(setDesk).catch(() => {});
   }, []);
   useEffect(() => { loadDesk(); }, [loadDesk]);
+
+  // Today is never in the stored history, so this asks the broker for the live session instead
+  // of the store. It is the answer to "where are the levels right now", which a backtest dated
+  // today can never give.
+  const loadToday = useCallback(() => {
+    setToday(null);
+    api.fvbToday({ variant: cfg?.variant || 'B', participation: cfg?.participation || 'options' })
+      .then(setToday).catch((e) => setErr(String(e.message || e)));
+  }, [cfg?.variant, cfg?.participation]);
+  useEffect(() => { if (cfg) loadToday(); }, [cfg?.variant, cfg?.participation]);  // eslint-disable-line
   useEffect(() => {
     clearInterval(deskTimer.current);
     if (tab !== 'live' || !desk?.running) return undefined;
@@ -110,6 +121,14 @@ export default function FvbLab() {
 
   const inv = meta?.inventory;
   const futuresOut = inv && !inv.futures?.available;
+  // the single most confusing failure this lab can produce is a silent zero-trade run on a
+  // range the store does not cover, so it is caught before the button is pressed
+  const outOfRange = !!(inv?.spot?.last && cfg?.start && cfg?.end
+    && (cfg.end < inv.spot.first || cfg.start > inv.spot.last));
+  const staleDays = inv?.spot?.last
+    ? Math.round((Date.now() - new Date(`${inv.spot.last}T00:00:00`).getTime()) / 86400000)
+    : 0;
+  const staleData = staleDays > 7;
 
   if (!meta || !cfg) {
     return <div className="text-[13px] text-gray-500 flex items-center gap-2">
@@ -129,13 +148,14 @@ export default function FvbLab() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {['setup', 'results', 'variants', 'firewall', 'live', 'data'].map((t) => (
+          {['today', 'setup', 'results', 'variants', 'firewall', 'live', 'data'].map((t) => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-2.5 py-1 text-[12px] rounded-lg border ${tab === t
                 ? 'bg-brand-500 text-white border-brand-500'
                 : 'border-surface-3 text-gray-400 hover:text-white'}`}>
-              {{ setup: 'Setup', results: 'Results', variants: 'Variants',
-                 firewall: 'Firewall', live: 'Live desk', data: 'Data' }[t]}
+              {{ today: 'Today', setup: 'Setup', results: 'Results',
+                 variants: 'Variants', firewall: 'Firewall', live: 'Live desk',
+                 data: 'Data' }[t]}
             </button>
           ))}
         </div>
@@ -143,6 +163,27 @@ export default function FvbLab() {
 
       {err && <Note tone="bad"><AlertTriangle className="w-3.5 h-3.5 inline mr-1.5 -mt-0.5" />{err}</Note>}
       {msg && <Note tone="ok"><CheckCircle2 className="w-3.5 h-3.5 inline mr-1.5 -mt-0.5" />{msg}</Note>}
+
+      {outOfRange && (
+        <Note tone="bad">
+          <AlertTriangle className="w-3.5 h-3.5 inline mr-1.5 -mt-0.5" />
+          <b>There is no data for {cfg.start} to {cfg.end}.</b> The store holds{' '}
+          <span className="mono">{inv?.spot?.first}</span> to{' '}
+          <span className="mono">{inv?.spot?.last}</span>. A backtest over this range returns
+          nothing because nothing was loaded — that is a data gap, not a result. Pull fresh
+          candles in the Data Ingestion Lab, or
+          <button onClick={() => { set('start', inv.spot.first); set('end', inv.spot.last); }}
+            className="ml-1 underline hover:text-white">use the full stored range</button>.
+        </Note>
+      )}
+
+      {staleData && !outOfRange && (
+        <Note tone="warn">
+          The newest stored session is <span className="mono">{inv?.spot?.last}</span>, which is
+          {' '}{staleDays} days old. Anything after that cannot be tested until the store is
+          refreshed.
+        </Note>
+      )}
 
       {futuresOut && (
         <Note tone="warn">
@@ -157,8 +198,10 @@ export default function FvbLab() {
         </Note>
       )}
 
+      {tab === 'today' && <TodayView t={today} onReload={loadToday} />}
       {tab === 'setup' && (
-        <Setup cfg={cfg} set={set} setIn={setIn} meta={meta} onRun={run} busy={busy} job={job} />
+        <Setup cfg={cfg} set={set} setIn={setIn} meta={meta} onRun={run} busy={busy}
+          job={job} outOfRange={outOfRange} />
       )}
       {tab === 'results' && <Results res={result} />}
       {tab === 'variants' && <Variants cmp={compare} onRun={() => run(true)} busy={busy} job={job} />}
@@ -170,16 +213,20 @@ export default function FvbLab() {
 }
 
 /* ── setup ─────────────────────────────────────────────────────────────── */
-function Setup({ cfg, set, setIn, meta, onRun, busy, job }) {
+function Setup({ cfg, set, setIn, meta, onRun, busy, job, outOfRange }) {
   const p = cfg.params || {}, e = cfg.entry || {}, x = cfg.execution || {}, f = cfg.firewall_params || {};
   return (
     <div className="space-y-4">
       <Card title="What to run">
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <Field label="From"><input type="date" value={cfg.start || ''} className={SEL}
-            onChange={(ev) => set('start', ev.target.value)} /></Field>
-          <Field label="To"><input type="date" value={cfg.end || ''} className={SEL}
-            onChange={(ev) => set('end', ev.target.value)} /></Field>
+          <Field label="From" hint={meta.inventory?.spot?.first ? `data starts ${meta.inventory.spot.first}` : undefined}>
+            <input type="date" value={cfg.start || ''} className={SEL}
+              min={meta.inventory?.spot?.first} max={meta.inventory?.spot?.last}
+              onChange={(ev) => set('start', ev.target.value)} /></Field>
+          <Field label="To" hint={meta.inventory?.spot?.last ? `data ends ${meta.inventory.spot.last}` : undefined}>
+            <input type="date" value={cfg.end || ''} className={SEL}
+              min={meta.inventory?.spot?.first} max={meta.inventory?.spot?.last}
+              onChange={(ev) => set('end', ev.target.value)} /></Field>
           <Field label="Candle" hint="minutes">
             <select value={cfg.timeframe} className={SEL}
               onChange={(ev) => set('timeframe', Number(ev.target.value))}>
@@ -339,12 +386,12 @@ function Setup({ cfg, set, setIn, meta, onRun, busy, job }) {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <button onClick={() => onRun(false)} disabled={busy}
+        <button onClick={() => onRun(false)} disabled={busy || outOfRange}
           className="btn-primary !py-2 !px-4 text-[13px] font-semibold flex items-center gap-2 disabled:opacity-50">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
           Run backtest
         </button>
-        <button onClick={() => onRun(true)} disabled={busy}
+        <button onClick={() => onRun(true)} disabled={busy || outOfRange}
           className="btn-secondary !py-2 !px-4 text-[13px] flex items-center gap-2 disabled:opacity-50">
           Compare variants A–E, firewall on and off
         </button>
@@ -822,5 +869,134 @@ function CsvButton({ rows, name }) {
     <button onClick={download} className="btn-secondary !py-1 !px-2 text-[11.5px] flex items-center gap-1">
       <Download className="w-3 h-3" />CSV
     </button>
+  );
+}
+
+/* -- today's levels, straight from the broker -------------------------- */
+function TodayView({ t, onReload }) {
+  if (!t) {
+    return (
+      <div className="text-[13px] text-gray-500 flex items-center gap-2">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Reading the live session from your broker&hellip;
+      </div>
+    );
+  }
+  if (!t.available) {
+    return (
+      <Card title="Today">
+        <Note tone="warn">{t.message}</Note>
+        <p className="text-[11.5px] text-gray-500 mt-2">
+          Today is never in the stored history &mdash; the store is a snapshot refreshed by the
+          Data Ingestion Lab. This view asks the broker for the live session instead, so it
+          needs a connection rather than an ingest.
+        </p>
+      </Card>
+    );
+  }
+  const Row = ({ one, bullish }) => (
+    <tr className="border-b border-surface-3/40">
+      <td className="px-2 py-1.5">
+        <span className={bullish ? 'text-emerald-400' : 'text-red-400'}>{bullish ? '\u25B2' : '\u25BC'}</span>
+        <span className="ml-1.5 text-gray-200">{one.name}</span>
+      </td>
+      <td className="px-2 py-1.5 text-right mono text-gray-100">{N(one.price, 2)}</td>
+      <td className="px-2 py-1.5 text-right mono font-semibold text-brand-300">
+        {N(one.trigger.close_beyond, 2)}
+      </td>
+      <td className={`px-2 py-1.5 text-right mono ${one.trigger.already_beyond
+        ? 'text-emerald-400' : 'text-gray-400'}`}>
+        {one.trigger.already_beyond
+          ? 'already beyond'
+          : `${N(Math.abs(one.trigger.distance), 1)} away`}
+      </td>
+    </tr>
+  );
+  return (
+    <div className="space-y-4">
+      <Card title={`Session ${t.session}${t.is_today ? '' : ' (last completed)'}`}
+        right={(
+          <div className="flex items-center gap-2">
+            <span className="text-[10.5px] text-gray-500 mono">
+              as of {t.as_of} &middot; {t.bars} bars
+            </span>
+            <button onClick={onReload}
+              className="btn-secondary !py-1 !px-2 text-[11.5px] flex items-center gap-1">
+              <RefreshCw className="w-3 h-3" />Refresh
+            </button>
+          </div>
+        )}>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Stat label="NIFTY" value={N(t.spot, 2)} />
+          <Stat label="ATR" value={N(t.atr, 1)} />
+          <Stat label="Breakout buffer" value={`${N(t.buffer, 1)} pts`} />
+          <Stat label="Relative volume"
+            value={t.relative_volume?.rvol != null
+              ? `${N(t.relative_volume.rvol, 2)}x`
+              : (t.relative_volume?.state || '\u2014')}
+            tone={t.relative_volume?.state === 'CONFIRMED' ? 'text-emerald-400'
+              : t.relative_volume?.state === 'UNAVAILABLE' ? 'text-amber-300' : 'text-gray-300'} />
+        </div>
+        {t.relative_volume?.reason && (
+          <div className="text-[11px] text-amber-300 mt-2">{t.relative_volume.reason}</div>
+        )}
+      </Card>
+
+      <Card title="Levels, and what would trigger them">
+        <Table cols={['Level', 'Price', 'A close beyond', 'Distance']}
+          align={['left', 'right', 'right', 'right']}>
+          {(t.resistance || []).map((o, i) => <Row key={`r${i}`} one={o} bullish />)}
+          {(t.support || []).map((o, i) => <Row key={`s${i}`} one={o} bullish={false} />)}
+        </Table>
+        <p className="text-[11px] text-gray-600 mt-2">{t.note}</p>
+      </Card>
+
+      <Card title="Can a trade trigger right now?">
+        {t.tradeable_now ? (
+          <Note tone="ok">
+            <CheckCircle2 className="w-3.5 h-3.5 inline mr-1.5 -mt-0.5" />
+            Nothing is blocking an entry. A completed candle closing beyond one of the trigger
+            prices above would qualify, subject to the firewall&apos;s verdict on that candle.
+          </Note>
+        ) : (
+          <>
+            <Note tone="warn">No entry can trigger at this moment:</Note>
+            <ul className="mt-2 space-y-1 text-[12.5px] text-gray-300 list-disc list-inside">
+              {(t.blockers || []).map((b, i) => <li key={i}>{b}</li>)}
+            </ul>
+          </>
+        )}
+      </Card>
+
+      <Card title="Breakout attempts this session"
+        right={(
+          <span className="text-[10.5px] text-gray-500">
+            {t.firewall?.attempts || 0} seen &middot; {t.firewall?.blocked || 0} blocked
+          </span>
+        )}>
+        {(t.attempts || []).length ? (
+          <Table cols={['Time', 'Direction', 'Level', 'State', 'Why']}
+            align={['left', 'left', 'right', 'left', 'left']}>
+            {t.attempts.slice().reverse().map((a, i) => (
+              <tr key={i} className="border-b border-surface-3/40">
+                <td className="px-2 py-1.5 mono text-gray-400">
+                  {String(a.transitions?.[0]?.time || '')}
+                </td>
+                <td className="px-2 py-1.5 text-[11.5px]">
+                  {a.direction === 'BULL' ? 'upside' : 'downside'}
+                </td>
+                <td className="px-2 py-1.5 text-right mono">{N(a.level, 2)}</td>
+                <td className={`px-2 py-1.5 text-[11.5px] ${STATE_TONE[a.state] || 'text-gray-400'}`}>
+                  {String(a.state).replace(/_/g, ' ').toLowerCase()}
+                </td>
+                <td className="px-2 py-1.5 text-[11.5px] text-gray-400">
+                  {a.block_reason || a.transitions?.[a.transitions.length - 1]?.why || ''}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        ) : <Note tone="info">No level has been broken yet this session.</Note>}
+      </Card>
+    </div>
   );
 }

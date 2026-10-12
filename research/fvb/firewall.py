@@ -265,7 +265,12 @@ class Firewall:
                 a.warnings.append({"what": f"closed at {shape['close_location']:.0%} of the "
                                            f"candle's range, a weak close",
                                    "measured": shape})
-        if f.warn_on_no_participation:
+        # Only complain about missing participation when a source was actually asked for.
+        # Warning that it "could not be measured" when the filter is deliberately off blocks
+        # every break on a configuration whose whole point is to ignore volume — which is what
+        # made variant A take zero trades.
+        wants_participation = str(getattr(self.p, "participation", "none")).lower() != "none"
+        if f.warn_on_no_participation and wants_participation:
             if vol.get("state") == VOL_UNAVAILABLE:
                 a.warnings.append({"what": "participation could not be measured: "
                                            + str(vol.get("reason") or "no volume series"),

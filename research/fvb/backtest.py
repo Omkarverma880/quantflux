@@ -126,6 +126,37 @@ class Config:
 def run(cfg: Config, progress: Optional[Callable[[str], None]] = None) -> dict:
     """Walk the range month by month, session by session, bar by bar."""
     say = progress or (lambda _m: None)
+
+    # A range outside the stored data must say so. Reporting "no trade passed every rule"
+    # when nothing was ever evaluated blames the strategy for a gap in the data, and sends
+    # whoever reads it hunting a bug that is not there.
+    inv = D.inventory()
+    have = inv.get("spot") or {}
+    if not have.get("available"):
+        return {"status": "error", "trades": [], "declines": [], "quality": [],
+                "firewall": [], "sessions": 0,
+                "summary": {"trades": 0, "sessions": 0, "declined": 0,
+                            "decline_reasons": {}, "net": 0.0,
+                            "message": "No NIFTY spot data is stored at all."},
+                "message": "No NIFTY spot data is stored at all.",
+                "coverage": have}
+    first, last = have.get("first"), have.get("last")
+    if cfg.end < first or cfg.start > last:
+        msg = (f"No data for {cfg.start} to {cfg.end}. The store holds "
+               f"{first} to {last}, so nothing in your range exists yet — this is a data "
+               f"gap, not a result. Pull fresh candles in the Data Ingestion Lab, or pick a "
+               f"range inside {first} to {last}.")
+        return {"status": "no_data", "trades": [], "declines": [], "quality": [],
+                "firewall": [], "sessions": 0,
+                "summary": {"trades": 0, "sessions": 0, "declined": 0,
+                            "decline_reasons": {}, "net": 0.0, "message": msg},
+                "message": msg, "coverage": {"first": first, "last": last},
+                "requested": {"start": cfg.start, "end": cfg.end}}
+    clipped = None
+    if cfg.start < first or cfg.end > last:
+        clipped = (f"Requested {cfg.start} to {cfg.end}; the store holds {first} to {last}, "
+                   f"so only the overlap was tested.")
+
     p, ep = variant_params(cfg.variant, cfg.params, cfg.entry, cfg.participation)
     fp = cfg.firewall_params if cfg.firewall else FirewallParams(enabled=False,
                                                                  block_on_warning=False)
@@ -238,10 +269,18 @@ def run(cfg: Config, progress: Optional[Callable[[str], None]] = None) -> dict:
             fw_summaries.append(fw.summary())
 
     say(f"done · {len(trades)} trades across {sessions} sessions")
+    summary = summarise(trades, declines, sessions, cfg)
+    if not trades and sessions == 0:
+        summary["message"] = (
+            f"No session in {cfg.start} to {cfg.end} could be loaded, so nothing was "
+            f"evaluated. The store holds {first} to {last}.")
+    if clipped:
+        summary["coverage_note"] = clipped
     return {"status": "ok", "config": cfg.as_dict(), "trades": trades,
             "declines": declines, "quality": quality, "firewall": fw_summaries,
             "sessions": sessions, "futures_note": futures_note,
-            "summary": summarise(trades, declines, sessions, cfg)}
+            "coverage": {"first": first, "last": last}, "coverage_note": clipped,
+            "summary": summary}
 
 
 def _htf_agrees(joined: pd.DataFrame, d: date, minute: int, direction: str,
@@ -272,7 +311,10 @@ def summarise(trades: list, declines: list, sessions: int, cfg: Config) -> dict:
                 "exits": {}, "by_direction": {}, "by_option_type": {}, "monthly": [],
                 "green_months": 0, "months": 0, "ambiguous_bars": 0, "by_hour": [],
                 "participation_source": cfg.participation,
-                "message": "no trade passed every rule in this configuration"}
+                "message": ("No trade passed every rule in this configuration."
+                            if sessions else
+                            "No session could be loaded for this range, so no rule was "
+                            "applied — this is a data gap, not a result.")}
     pnl = t["pnl"]
     w, l = pnl[pnl > 0], pnl[pnl <= 0]
     eq = pnl.cumsum()
