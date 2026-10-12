@@ -664,6 +664,16 @@ export const api = {
   flCompare: (runId) => request(`/index-strategy/flux-lab/paper/compare/${runId}`),
 
   // My Equity Workspace — personal research desk
+  fvbMeta: () => request('/index-strategy/fvb/meta'),
+  fvbInventory: () => request('/index-strategy/fvb/inventory'),
+  fvbExplain: (body) => request('/index-strategy/fvb/explain', { method: 'POST', body: JSON.stringify(body) }),
+  fvbBacktest: (body) => request('/index-strategy/fvb/backtest', { method: 'POST', body: JSON.stringify(body) }),
+  fvbJob: (id) => request(`/index-strategy/fvb/job/${id}`),
+  fvbModes: () => request('/index-strategy/fvb/modes'),
+  fvbDesk: () => request('/index-strategy/fvb/desk'),
+  fvbDeskUpdate: (body) => request('/index-strategy/fvb/desk', { method: 'POST', body: JSON.stringify(body) }),
+  fvbDeskFlatten: () => request('/index-strategy/fvb/desk/flatten', { method: 'POST' }),
+  fvbIngestFutures: (days = 5) => request(`/index-strategy/fvb/ingest-futures?days=${days}`, { method: 'POST' }),
   instMeta: () => request('/equity-strategy/institutional-flow/meta'),
   instSnapshot: (p) => request(`/equity-strategy/institutional-flow/snapshot?${new URLSearchParams(p || {})}`),
   instAggregate: (force = 0) => request(`/equity-strategy/institutional-flow/aggregate?force=${force}`),

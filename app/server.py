@@ -51,6 +51,7 @@ from app.routes.market_store_routes import router as market_store_router
 from app.routes.options_lab_routes import router as options_lab_router
 from app.routes.cas_game_routes import router as cas_game_router
 from app.routes.range_lab_routes import router as range_lab_router
+from app.routes.fvb_routes import router as fvb_router
 from app.routes.flux_lab_routes import router as flux_lab_router
 from app.routes.oi_lab_routes import router as oi_lab_router
 from app.routes.data_ingestion_routes import router as data_ingestion_router
@@ -354,6 +355,25 @@ def _run_strategies_for_user(uid: int):
             except Exception as exc:
                 print(f"[BG] Range lab error user {uid}: {exc}", flush=True)
 
+        # Short strangle desk: idle until you press Start. Real orders need its own live mode
+        # AND the app out of paper mode AND the risk fence down — the same three gates as the
+        # other desks, checked in its own _order and nowhere else.
+        if authenticated:
+            try:
+                from research.index_straddle.live import ENGINE as _strangle
+                _strangle.check(db, uid, broker)
+            except Exception as exc:
+                print(f"[BG] Strangle desk error user {uid}: {exc}", flush=True)
+
+        # Futures Volume Breakout desk: idle until started. Defaults to signals-only; real
+        # orders need its own LIVE_TRADING mode AND the app out of paper mode AND the fence down.
+        if authenticated:
+            try:
+                from research.fvb.live import ENGINE as _fvb
+                _fvb.check(db, uid, broker)
+            except Exception as exc:
+                print(f"[BG] FVB desk error user {uid}: {exc}", flush=True)
+
         # Hunter: one automatic scan of the NIFTY 500 after the close, so the stage board is
         # ready in the evening. Rate-limited inside (once a day) and a screener only — no orders.
         if authenticated:
@@ -566,6 +586,7 @@ app.include_router(oi_lab_router, prefix="/api/index-strategy/oi-lab", tags=["In
 app.include_router(flux_lab_router, prefix="/api/index-strategy/flux-lab", tags=["Index-FluxLab"])
 app.include_router(cas_game_router, prefix="/api/index-strategy/cas-game", tags=["Index-CASGame"])
 app.include_router(range_lab_router, prefix="/api/index-strategy/range-lab", tags=["Index-RangeLab"])
+app.include_router(fvb_router, prefix="/api/index-strategy/fvb", tags=["Index-FVBreakout"])
 app.include_router(data_ingestion_router, prefix="/api/data-ingestion", tags=["DataIngestion"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])
