@@ -81,7 +81,7 @@ const NAV = [
       { to: '/index-strategy/flux-lab', label: '6. Flux Strategy Test Lab' },
       { to: '/index-strategy/cas-game', label: '7. CAS Game Play' },
       { to: '/index-strategy/range-lab', label: '8. 5 & 60 Range' },
-      { to: '/index-strategy/fvb-lab', label: '9. Futures Volume Breakout' },
+      { to: '/index-strategy/price-action', label: '9. Price Action Signals' },
     ],
   },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },
