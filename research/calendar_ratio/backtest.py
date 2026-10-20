@@ -182,6 +182,10 @@ def _run_one(opts: pd.DataFrame, entry_day: date, trading_days: list[date],
         "monthly_expiry": str(built["expiries"]["monthly"]),
         "weekly_dte": built["expiries"]["weekly_dte"],
         "monthly_dte": built["expiries"]["monthly_dte"],
+        # how much longer-dated the far leg is than the near one. On historical dates the
+        # month's own monthly contract is usually delisted, so the far leg lands further out
+        # than the specification intends — reported per cycle rather than averaged away.
+        "gap_days": built["expiries"].get("gap_days"),
         "net_premium": built.get("net_premium"),
         "legs": legs,
         "gross_rs": round(gross, 0), "costs_rs": round(charges, 0),
@@ -330,9 +334,32 @@ def run(cfg: Config) -> dict:
     overall = _stats(pnl)
     span = {"start": str(days[0]), "end": str(days[-1]), "days": len(days)}
 
+    # How far the long leg sits beyond the short one. It matters because an expired month's
+    # own monthly contract cannot be fetched back from the broker, so cycles on past dates
+    # tend to reach further out than the live structure would. That is a different trade, and
+    # it deserves naming rather than disappearing into an average.
+    gaps = np.array([g for g in (t.get("gap_days") for t in taken) if g], dtype=float)
+    far_leg = None
+    if len(gaps):
+        med = float(np.median(gaps))
+        far_leg = {
+            "median_gap_days": round(med, 0),
+            "min_gap_days": round(float(gaps.min()), 0),
+            "max_gap_days": round(float(gaps.max()), 0),
+            "matches_spec": bool(med <= 40),
+            "note": (f"The long leg sits a median of {med:.0f} days past the short one — "
+                     f"longer than this structure intends. On past dates that month's own "
+                     f"monthly contract is delisted and cannot be fetched back, so the next "
+                     f"listed monthly is used instead. Read these as a longer calendar than "
+                     f"the one you would put on today." if med > 40 else
+                     f"The long leg sits a median of {med:.0f} days past the short one, which "
+                     f"is the spacing this structure is meant to have."),
+        }
+
     return {
         "status": "ok" if taken else "no_trades",
         "span": span,
+        "far_leg": far_leg,
         "index": p.index.upper(),
         "lot_size": cfg.lot_size,
         "rules": ST.describe(p),

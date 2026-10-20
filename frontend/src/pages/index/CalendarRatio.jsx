@@ -438,6 +438,11 @@ function Results({ r }) {
           Exit: {r.exit?.mode?.replace(/_/g, ' ')} at {r.exit?.time}. {r.exit?.note}{' '}
           {r.costs?.note}
         </div>
+        {r.far_leg && (
+          <div className="mt-3">
+            <Note tone={r.far_leg.matches_spec ? 'info' : 'warn'}>{r.far_leg.note}</Note>
+          </div>
+        )}
       </Section>
 
       {(r.skipped_reasons || []).length > 0 && (
@@ -466,6 +471,7 @@ function Results({ r }) {
                   <th className="text-right px-2 py-1.5">Held</th>
                   <th className="text-left px-2 py-1.5">Weekly</th>
                   <th className="text-left px-2 py-1.5">Monthly</th>
+                  <th className="text-right px-2 py-1.5">Gap</th>
                   <th className="text-right px-2 py-1.5">Gross</th>
                   <th className="text-right px-2 py-1.5">Costs</th>
                   <th className="text-right px-2 py-1.5">Net</th>
@@ -479,6 +485,8 @@ function Results({ r }) {
                     <td className="px-2 py-1 text-right mono text-gray-500">{t.held_days}d</td>
                     <td className="px-2 py-1 mono text-gray-500">{t.weekly_expiry}</td>
                     <td className="px-2 py-1 mono text-gray-500">{t.monthly_expiry}</td>
+                    <td className={`px-2 py-1 text-right mono ${t.gap_days > 40
+                      ? 'text-amber-400' : 'text-gray-500'}`}>{t.gap_days ?? '—'}d</td>
                     <td className={`px-2 py-1 text-right mono ${tone(t.gross_rs)}`}>{RS(t.gross_rs)}</td>
                     <td className="px-2 py-1 text-right mono text-gray-500">{RSA(t.costs_rs)}</td>
                     <td className={`px-2 py-1 text-right mono ${tone(t.pnl_rs)}`}>{RS(t.pnl_rs)}</td>
