@@ -86,10 +86,12 @@ class Params:
     tolerance_pct: float = 25.0
     tolerance_abs: float = 20.0
 
-    # What to do in the week where the weekly expiry and the monthly expiry are the same
-    # contract. "skip" takes no trade; "next_month" buys the following month instead, which
-    # keeps a real calendar but is a different trade from the one specified.
-    same_expiry_policy: str = "skip"   # skip | next_month
+    # What to do when the near expiry is also the month's last one. "next_month" rolls the
+    # long leg into the following month's contract, which is what keeps a real calendar and
+    # is what a trader does in that week; "skip" is the literal reading of the specification
+    # and takes no trade. Rolling is the default because the literal reading throws away one
+    # week in four and, on a chain with gaps, far more than that.
+    same_expiry_policy: str = "next_month"   # next_month | skip
 
     # Exit. The specification gives an entry and no exit, so this is a choice, not a rule from
     # the source, and it is surfaced rather than buried.
@@ -122,45 +124,72 @@ def tolerance_for(p: Params, target: float) -> float:
 
 
 # ── expiries ────────────────────────────────────────────────────────────────
-def resolve_expiries(available: list[date], today: date,
-                     policy: str = "skip") -> dict:
-    """Pick the current-week and current-month expiry out of what is listed.
+def monthly_expiries(ex: list[date]) -> list[date]:
+    """The last expiry in each calendar month of a set — i.e. the monthly contracts.
 
-    "Current month" is the LAST expiry falling in this calendar month — which is what the
-    monthly contract is — and it rolls to next month's once this month's has passed. When that
-    turns out to be the very same contract as the weekly, the calendar has collapsed and the
-    result says so instead of pretending the structure is intact.
+    Derived from what is actually listed rather than from "last Thursday", because exchange
+    holidays move expiries and a calendar rule would silently name a date that never traded.
+    """
+    last: dict[tuple[int, int], date] = {}
+    for e in ex:
+        k = (e.year, e.month)
+        if k not in last or e > last[k]:
+            last[k] = e
+    return sorted(last.values())
+
+
+def resolve_expiries(available: list[date], today: date,
+                     policy: str = "next_month") -> dict:
+    """Pick the near expiry and the far one out of what is listed.
+
+    The far leg is the next MONTHLY contract strictly after the near expiry. Anchoring it to
+    "the last expiry in the current calendar month" was wrong on a sparse chain: if the data
+    holds one September weekly plus the still-listed October contracts, that rule names the
+    September weekly as the monthly and declares the calendar collapsed, while a perfectly
+    good October monthly sits unused. Stepping to the next monthly after the near expiry is
+    both what a trader does in the last week of a month and what survives a chain with gaps.
+
+    Two different failures are reported separately, because they call for different fixes:
+
+        only one expiry present   a gap in the captured chain — nothing can be built
+        weekly IS the monthly     a real month-end collapse, only when ``policy="skip"``
+                                  forbids rolling to the following month
     """
     ex = sorted({e for e in available if e >= today})
     if not ex:
         return {"ok": False, "reason": "no expiry on or after this date is listed",
-                "weekly": None, "monthly": None, "collapsed": False}
+                "weekly": None, "monthly": None, "collapsed": False, "only_one": False}
 
     weekly = ex[0]
-    this_month = [e for e in ex if (e.year, e.month) == (today.year, today.month)]
-    if this_month:
-        monthly = this_month[-1]
+    later = [e for e in ex if e > weekly]
+    base = {"weekly": weekly, "listed": [str(e) for e in ex[:8]],
+            "listed_count": len(ex), "weekly_dte": (weekly - today).days}
+
+    if not later:
+        return {**base, "ok": False, "monthly": weekly, "monthly_dte": base["weekly_dte"],
+                "collapsed": True, "only_one": True, "gap_days": 0,
+                "reason": (f"only one expiry ({weekly}) is present in the data for this day, "
+                           f"so there is no second expiry to form the long leg. That is a gap "
+                           f"in the captured chain, not something about the market — a chain "
+                           f"captured with expiries=1 can never support a calendar.")}
+
+    if policy == "skip":
+        # the literal reading: the far leg must sit in the current calendar month
+        this_month = [e for e in ex if (e.year, e.month) == (today.year, today.month)]
+        monthly = this_month[-1] if this_month else later[-1]
     else:
-        monthly = ex[-1]
+        after = [m for m in monthly_expiries(ex) if m > weekly]
+        monthly = after[0] if after else later[-1]
 
     collapsed = (monthly == weekly)
-    if collapsed and policy == "next_month":
-        later = [e for e in ex if (e.year, e.month) != (weekly.year, weekly.month)]
-        if later:
-            nxt = [e for e in later if (e.year, e.month) == (later[0].year, later[0].month)]
-            monthly = nxt[-1] if nxt else later[-1]
-            collapsed = (monthly == weekly)
-
-    out = {"ok": True, "weekly": weekly, "monthly": monthly, "collapsed": collapsed,
-           "listed": [str(e) for e in ex[:8]],
-           "weekly_dte": (weekly - today).days, "monthly_dte": (monthly - today).days}
+    out = {**base, "ok": not collapsed, "monthly": monthly,
+           "monthly_dte": (monthly - today).days, "collapsed": collapsed,
+           "only_one": False, "gap_days": (monthly - weekly).days}
     if collapsed:
-        out.update({
-            "ok": policy != "skip",
-            "reason": ("this week's expiry IS this month's expiry, so both sides of the "
-                       "calendar would be the same contract — there is no time differential "
-                       "left to decay"),
-        })
+        out["reason"] = ("this week's expiry IS this month's expiry, so both sides of the "
+                         "calendar would be the same contract — there is no time differential "
+                         "left to decay. Switch the last-week policy to roll into the "
+                         "following month to keep a real calendar on these days.")
     return out
 
 
@@ -208,11 +237,10 @@ def build(chain: pd.DataFrame, today: date, p: Params) -> dict:
     exp = resolve_expiries(avail, today, p.same_expiry_policy)
     out = {"date": str(today), "index": p.index, "expiries": exp, "legs": [],
            "tradable": False, "blockers": []}
-    if not exp["weekly"]:
-        out["blockers"].append(exp.get("reason") or "no expiry available")
-        return out
-    if exp["collapsed"] and p.same_expiry_policy == "skip":
-        out["blockers"].append(exp["reason"])
+    # resolve_expiries decides this now: it already knows whether the policy allows a roll,
+    # and whether the chain simply has nothing to roll to.
+    if not exp.get("ok"):
+        out["blockers"].append(exp.get("reason") or "no usable pair of expiries")
         return out
 
     by_kind = {WEEKLY: exp["weekly"], MONTHLY: exp["monthly"]}

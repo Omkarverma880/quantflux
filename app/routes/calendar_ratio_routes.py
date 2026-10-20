@@ -98,7 +98,7 @@ def _params(d: dict | None) -> ST.Params:
     if p.exit_mode not in ("intraday", "weekly_expiry", "fixed_days"):
         p.exit_mode = "weekly_expiry"
     if p.same_expiry_policy not in ("skip", "next_month"):
-        p.same_expiry_policy = "skip"
+        p.same_expiry_policy = "next_month"
     if not p.legs:
         raise ValueError("the structure needs at least one leg")
     if len(p.legs) > 12:

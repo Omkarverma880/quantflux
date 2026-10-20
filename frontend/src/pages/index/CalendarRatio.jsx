@@ -41,7 +41,7 @@ export default function CalendarRatio() {
 
   const [index, setIndex] = useState('NIFTY');
   const [legs, setLegs] = useState(null);
-  const [policy, setPolicy] = useState('skip');
+  const [policy, setPolicy] = useState('next_month');
   const [exitMode, setExitMode] = useState('weekly_expiry');
   const [holdDays, setHoldDays] = useState(1);
   const [tol, setTol] = useState({ pct: 25, abs: 20 });
@@ -184,10 +184,10 @@ function Setup({ meta, index, setIndex, legs, setLegs, policy, setPolicy, exitMo
           <input type="number" min={0} max={500} className={input} value={tol.abs}
                  onChange={(e) => setTol({ ...tol, abs: Number(e.target.value) })} />
         </Field>
-        <Field label="Last week of month" hint="when the weekly IS the monthly expiry">
+        <Field label="Far leg" hint="when the near expiry is also the month's last">
           <select className={input} value={policy} onChange={(e) => setPolicy(e.target.value)}>
+            <option value="next_month">Roll the far leg to next month</option>
             <option value="skip">Skip the day</option>
-            <option value="next_month">Buy next month instead</option>
           </select>
         </Field>
         {showExit && (
@@ -280,8 +280,10 @@ function LiveTab({ live, loading }) {
           {live.label} · {live.exchange} · {live.date} · {live.as_of}</span>}>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <Stat label="Spot" value={N(live.spot)} sub={live.label} />
-          <Stat label="This week" value={e.weekly || '—'} sub={`${e.weekly_dte ?? '—'} days out`} />
-          <Stat label="This month" value={e.monthly || '—'} sub={`${e.monthly_dte ?? '—'} days out`}
+          <Stat label="Near leg" value={e.weekly || '—'} sub={`${e.weekly_dte ?? '—'} days out`} />
+          <Stat label="Far leg" value={e.monthly || '—'}
+                sub={e.gap_days == null ? `${e.monthly_dte ?? '—'} days out`
+                  : `${e.gap_days}d past the near leg`}
                 tone={e.collapsed ? 'text-red-400' : 'text-gray-100'} />
           <Stat label="Lot size" value={N0(live.lot_size)} sub="from the broker" />
           <Stat label="Net premium" value={live.net_premium == null ? '—' : N(live.net_premium)}
@@ -295,8 +297,8 @@ function LiveTab({ live, loading }) {
           </Note>
           {e.collapsed && (
             <Note tone="warn">
-              <b>The calendar has collapsed.</b> {e.reason} Switch the last-week policy to
-              &ldquo;buy next month instead&rdquo; if you want a real calendar on these days.
+              <b>{e.only_one ? 'Only one expiry in the data.' : 'The calendar has collapsed.'}</b>
+              {' '}{e.reason}
             </Note>
           )}
           {(live.blockers || []).map((b, i) => <Note key={i} tone="warn">{b}</Note>)}
