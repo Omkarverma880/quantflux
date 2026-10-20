@@ -52,6 +52,7 @@ from app.routes.options_lab_routes import router as options_lab_router
 from app.routes.cas_game_routes import router as cas_game_router
 from app.routes.range_lab_routes import router as range_lab_router
 from app.routes.pas_routes import router as pas_router
+from app.routes.calendar_ratio_routes import router as calendar_ratio_router
 from app.routes.flux_lab_routes import router as flux_lab_router
 from app.routes.oi_lab_routes import router as oi_lab_router
 from app.routes.data_ingestion_routes import router as data_ingestion_router
@@ -579,6 +580,7 @@ app.include_router(flux_lab_router, prefix="/api/index-strategy/flux-lab", tags=
 app.include_router(cas_game_router, prefix="/api/index-strategy/cas-game", tags=["Index-CASGame"])
 app.include_router(range_lab_router, prefix="/api/index-strategy/range-lab", tags=["Index-RangeLab"])
 app.include_router(pas_router, prefix="/api/index-strategy/price-action", tags=["Index-PriceAction"])
+app.include_router(calendar_ratio_router, prefix="/api/index-strategy/calendar-ratio", tags=["Index-CalendarRatio"])
 app.include_router(data_ingestion_router, prefix="/api/data-ingestion", tags=["DataIngestion"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])

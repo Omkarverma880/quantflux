@@ -41,8 +41,8 @@ STATE_FILE = ".last_kite_pull.json"
 DEFAULTS = {
     "indices": ["NIFTY", "SENSEX"],
     "days": 5,
-    "strikes": 10,
-    "expiries": 1,
+    "strikes": 25,
+    "expiries": 4,
     "include_index": True,
     "include_vix": True,
     "include_futures": True,

@@ -10,12 +10,30 @@ import { api } from '../../api';
 
 const INDICES = ['NIFTY', 'SENSEX', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'BANKEX'];
 const KEY = 'qf.ingest.pull.cfg';
-const DEFAULT_CFG = { indices: ['NIFTY', 'SENSEX'], days: 5, strikes: 10, expiries: 1, include_index: true, include_vix: true, include_futures: true };
+// Bumped when the capture needs to get WIDER. Calendar structures need a weekly and a monthly
+// expiry on the same day, and strikes deep enough that a 450-premium option exists at all, so
+// a +/-10 strike single-expiry capture cannot price them. Stored separately from the config so
+// nothing extra ever rides along on the pull request.
+const CFG_WIDEN_KEY = 'qf.ingest.pull.widen';
+const CFG_WIDEN_VERSION = 2;
+const DEFAULT_CFG = { indices: ['NIFTY', 'SENSEX'], days: 5, strikes: 25, expiries: 4, include_index: true, include_vix: true, include_futures: true };
 
 const num = (n) => Number(n || 0).toLocaleString('en-IN');
 
 function readCfg() {
-  try { return { ...DEFAULT_CFG, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return { ...DEFAULT_CFG }; }
+  try {
+    const cfg = { ...DEFAULT_CFG, ...JSON.parse(localStorage.getItem(KEY) || '{}') };
+    // A saved config from before the widening would keep a narrow capture forever, since it
+    // overrides the defaults. Raise it once, and only upwards -- a deliberately wider setting
+    // of your own is never pulled back down, and no other preference is touched.
+    if (Number(localStorage.getItem(CFG_WIDEN_KEY) || 1) < CFG_WIDEN_VERSION) {
+      cfg.strikes = Math.max(Number(cfg.strikes) || 0, DEFAULT_CFG.strikes);
+      cfg.expiries = Math.max(Number(cfg.expiries) || 0, DEFAULT_CFG.expiries);
+      localStorage.setItem(KEY, JSON.stringify(cfg));
+      localStorage.setItem(CFG_WIDEN_KEY, String(CFG_WIDEN_VERSION));
+    }
+    return cfg;
+  } catch { return { ...DEFAULT_CFG }; }
 }
 
 function ago(iso) {

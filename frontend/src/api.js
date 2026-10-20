@@ -631,6 +631,11 @@ export const api = {
   casStop: () => request('/index-strategy/cas-game/stop', { method: 'POST' }),
   casHuntNow: () => request('/index-strategy/cas-game/hunt-now', { method: 'POST' }),
 
+  crMeta: () => request('/index-strategy/calendar-ratio/meta'),
+  crLive: (body) => request('/index-strategy/calendar-ratio/live', { method: 'POST', body: JSON.stringify(body || {}) }),
+  crDiagnose: (body) => request('/index-strategy/calendar-ratio/diagnose', { method: 'POST', body: JSON.stringify(body || {}) }),
+  crBacktest: (body) => request('/index-strategy/calendar-ratio/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
+
   pasMeta: () => request('/index-strategy/price-action/meta'),
   pasLive: (body) => request('/index-strategy/price-action/live', { method: 'POST', body: JSON.stringify(body || {}) }),
   pasBacktest: (body) => request('/index-strategy/price-action/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
