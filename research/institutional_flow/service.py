@@ -478,15 +478,36 @@ class InstitutionalFlowService:
         for _ in range(max(1, min(int(days), 400))):
             wanted.append(cursor.isoformat())
             cursor = SESS.previous_trading_day(cursor)
+
+        # A session a source has actually PUBLISHED must never be hidden because this
+        # calendar did not expect it to exist. That is not hypothetical: 2026-10-21 was
+        # wrongly listed as a holiday, so the walk above skipped it, and NSE's published
+        # figures for that very session were dropped on the floor — while the cards above the
+        # table were showing them. The holiday list is hand-maintained and can be wrong; a
+        # published figure is not a guess. Anything we hold inside the window is shown, and
+        # flagged where the calendar disagrees, so a bad entry surfaces instead of deleting
+        # data.
+        floor = min(wanted)
+        published_dates = {d for d, r in rows.items()
+                           if d >= floor and (r.get("fii_net") is not None
+                                              or r.get("fii_buy") is not None
+                                              or r.get("dii_net") is not None)}
+        wanted = sorted(set(wanted) | published_dates, reverse=True)
         # Two different kinds of blank, and conflating them would mislead. A session after the
         # earliest one on record is genuinely awaiting publication; one before it was published
         # long ago and simply never captured, because NSE only serves the latest day.
         earliest = min(rows) if rows else None
-        out, missed = [], 0
+        out, missed, conflicts = [], 0, []
         for d in wanted:
             r = rows.get(d)
             if r:
-                out.append({**r, "published": True, "state": "published"})
+                # the calendar says this day did not trade, yet a source published figures
+                # for it — the calendar is the thing that is wrong
+                odd = not SESS.is_trading_day(date.fromisoformat(d))
+                if odd:
+                    conflicts.append(d)
+                out.append({**r, "published": True, "state": "published",
+                            "calendar_conflict": odd})
                 continue
             if earliest and d < earliest:
                 # Published long before anything here was recording, and no source we have
@@ -504,6 +525,12 @@ class InstitutionalFlowService:
         pending = sum(1 for r in out if r["state"] == "pending")
         return {"available": True, "rows": out, "count": len(out),
                 "pending": pending, "not_captured": missed,
+                "calendar_conflicts": conflicts,
+                "calendar_warning": (
+                    ("%s published figures although the holiday calendar in this app expects "
+                     "no trading that day. The session is shown — a published figure beats a "
+                     "hand-maintained list — but the list needs correcting."
+                     % ", ".join(conflicts)) if conflicts else None),
                 "earliest_recorded": earliest,
                 "backfilled": sum(1 for r in out if r.get("backfilled")),
                 "index_source": idx.get("source") if idx.get("available") else None,

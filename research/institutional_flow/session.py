@@ -24,12 +24,22 @@ WEEKEND = "WEEKEND"
 HOLIDAY = "HOLIDAY"
 
 # NSE trading holidays. Kept here deliberately rather than guessed from a weekday rule, and
-# treated as "best known" — a date missing from this list only means the screen says CLOSED a
-# little later than it could, never that it invents data.
+# treated as "best known".
+#
+# A WRONG entry is far more damaging than a missing one, and this list has already proved it:
+# 2026-10-21 was listed here, the market traded that day, and NSE published figures for it —
+# but because the calendar called it shut, the session was skipped when walking back through
+# trading days and the published row was dropped from the ledger entirely. The screen showed
+# "Latest completed session: 20 Oct" with 20 Oct pending, while the figures above it were
+# 21 Oct's.
+#
+# So: a date goes in here only when it is known to be a holiday, never on a guess. Nothing
+# downstream may use this list to DISCARD data — see ``flow_table``, which now shows any
+# session a source has published whether or not this list expects it to exist.
 HOLIDAYS_2026 = {
     "2026-01-26", "2026-03-04", "2026-03-25", "2026-04-01", "2026-04-03",
     "2026-04-14", "2026-05-01", "2026-08-15", "2026-09-14", "2026-10-02",
-    "2026-10-21", "2026-11-09", "2026-12-25",
+    "2026-11-09", "2026-12-25",
 }
 
 

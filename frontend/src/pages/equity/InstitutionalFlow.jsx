@@ -355,6 +355,12 @@ export default function InstitutionalFlow() {
             </button>
           </div>
         }>
+        {flow?.calendar_warning && (
+          <div className="mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5
+                          text-[11.5px] text-amber-300">
+            {flow.calendar_warning}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 mb-2">
           {flow?.pending ? <Chip tone="warn">{flow.pending} awaiting publication</Chip> : null}
           {flow?.backfilled ? <Chip>{flow.backfilled} net only</Chip> : null}
@@ -382,6 +388,13 @@ export default function InstitutionalFlow() {
                           ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
                           : 'bg-surface-3 border-surface-4 text-gray-500'}`}>
                         {r.state === 'pending' ? 'pending' : 'not captured'}
+                      </span>
+                    )}
+                    {r.calendar_conflict && (
+                      <span className="ml-2 text-[10px] px-1 py-px rounded border
+                                       bg-amber-500/15 border-amber-500/40 text-amber-300"
+                        title="This session published figures although the app's holiday list expects no trading that day.">
+                        calendar says closed
                       </span>
                     )}
                   </td>
