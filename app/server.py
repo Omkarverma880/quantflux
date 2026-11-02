@@ -55,6 +55,7 @@ from app.routes.pas_routes import router as pas_router
 from app.routes.calendar_ratio_routes import router as calendar_ratio_router
 from app.routes.flux_lab_routes import router as flux_lab_router
 from app.routes.oi_lab_routes import router as oi_lab_router
+from app.routes.oi_bias_routes import router as oi_bias_router
 from app.routes.data_ingestion_routes import router as data_ingestion_router
 from app.routes.portfolio_routes import router as portfolio_router
 from app.routes.manual_trading_routes import router as manual_trading_router
@@ -329,6 +330,17 @@ def _run_strategies_for_user(uid: int):
             except Exception as exc:
                 print(f"[BG] OI Lab paper engine error user {uid}: {exc}", flush=True)
 
+        # OI Lab bias tape: stores the X-Ray's "who is in control" score once a minute so the
+        # session can be replayed later. Reads the OI Lab's own snapshot and writes its own
+        # table — it changes nothing in the OI Lab and places no orders.
+        if authenticated:
+            try:
+                from research.oi_lab.bias_tape import record as _bias_record
+                from research.oi_lab.live import SERVICE as _oi_service
+                _bias_record(db, broker, _oi_service)
+            except Exception as exc:
+                print(f"[BG] OI bias tape error user {uid}: {exc}", flush=True)
+
         # Flux Strategy Test Lab: live paper trading with the same engine the backtest uses.
         # Rate-limited inside (20s) and PAPER only — this module has no order path at all.
         if authenticated:
@@ -576,6 +588,7 @@ app.include_router(index_straddle_router, prefix="/api/index-strategy/straddle",
 app.include_router(market_store_router, prefix="/api/market-store", tags=["MarketStore"])
 app.include_router(options_lab_router, prefix="/api/index-strategy/options-lab", tags=["Index-OptionsLab"])
 app.include_router(oi_lab_router, prefix="/api/index-strategy/oi-lab", tags=["Index-OILab"])
+app.include_router(oi_bias_router, prefix="/api/index-strategy/oi-lab/bias-tape", tags=["Index-OIBiasTape"])
 app.include_router(flux_lab_router, prefix="/api/index-strategy/flux-lab", tags=["Index-FluxLab"])
 app.include_router(cas_game_router, prefix="/api/index-strategy/cas-game", tags=["Index-CASGame"])
 app.include_router(range_lab_router, prefix="/api/index-strategy/range-lab", tags=["Index-RangeLab"])

@@ -631,6 +631,12 @@ export const api = {
   casStop: () => request('/index-strategy/cas-game/stop', { method: 'POST' }),
   casHuntNow: () => request('/index-strategy/cas-game/hunt-now', { method: 'POST' }),
 
+  oiBiasMeta: () => request('/index-strategy/oi-lab/bias-tape/meta'),
+  oiBiasSessions: (index) => request(`/index-strategy/oi-lab/bias-tape/sessions?index=${encodeURIComponent(index || 'NIFTY')}`),
+  oiBiasSeries: (index, day, timeframe) => request(`/index-strategy/oi-lab/bias-tape/series?index=${encodeURIComponent(index || 'NIFTY')}`
+    + `${day ? `&day=${encodeURIComponent(day)}` : ''}&timeframe=${Number(timeframe) || 1}`),
+  oiBiasRecord: (index) => request(`/index-strategy/oi-lab/bias-tape/record?index=${encodeURIComponent(index || 'NIFTY')}`, { method: 'POST' }),
+
   crMeta: () => request('/index-strategy/calendar-ratio/meta'),
   crLive: (body) => request('/index-strategy/calendar-ratio/live', { method: 'POST', body: JSON.stringify(body || {}) }),
   crDiagnose: (body) => request('/index-strategy/calendar-ratio/diagnose', { method: 'POST', body: JSON.stringify(body || {}) }),

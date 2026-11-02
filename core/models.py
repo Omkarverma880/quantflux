@@ -1369,3 +1369,47 @@ class FluxLabSignal(Base):
     trade_id = Column(Integer, ForeignKey("flux_lab_trades.id", ondelete="SET NULL"))
 
     __table_args__ = (Index("idx_flux_signal_user_date", "user_id", "trade_date"),)
+
+
+class OIBiasTick(Base):
+    """One minute's reading of the OI Lab's "who is in control" score.
+
+    The score the X-Ray shows is computed from the live chain and then thrown away — refresh
+    and the previous reading is gone. This table keeps it, one row per index per minute, so
+    the day can be replayed afterwards and the score lined up against what price actually did.
+
+    Stored at one-minute resolution only. The 5, 15, 30 and 60-minute views the UI offers are
+    aggregated from these rows on read rather than written separately: a bucket is just a
+    bucket, and keeping one copy means the coarse views can never drift from the fine one.
+
+    ``(index_key, trading_date, minute)`` is unique, so the recorder is idempotent — writing
+    the same minute twice updates it instead of duplicating, which is what makes autosaving
+    safe to run from a loop that may tick more than once in a minute. Auto-created via
+    ``create_all``.
+    """
+    __tablename__ = "oi_bias_tick"
+
+    id = Column(Integer, primary_key=True, index=True)
+    index_key = Column(String(16), nullable=False)      # NIFTY | SENSEX | BANKNIFTY | …
+    trading_date = Column(Date, nullable=False)
+    minute = Column(Integer, nullable=False)            # minutes from midnight, IST
+    captured_at = Column(DateTime, default=datetime.utcnow)
+
+    score = Column(Float)                               # the bias score, -100..+100
+    label = Column(String(24))                          # Strong bullish … Strong bearish
+    spot = Column(Float)                                # the index at that minute
+    spot_change_pct = Column(Float)
+    pcr_oi = Column(Float)
+    max_pain = Column(Float)
+    straddle = Column(Float)
+    atm_iv = Column(Float)
+    expiry = Column(Date)
+    dte = Column(Integer)
+    # the weighted parts behind the score, so a past reading can be explained and not just
+    # plotted — without them a stored number is a claim with no working shown
+    components = Column(JSONB, default=list)
+
+    __table_args__ = (
+        UniqueConstraint("index_key", "trading_date", "minute", name="uq_oi_bias_tick_slot"),
+        Index("idx_oi_bias_tick_lookup", "index_key", "trading_date", "minute"),
+    )
