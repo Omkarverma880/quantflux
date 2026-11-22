@@ -57,6 +57,7 @@ import CasGame from './pages/index/CasGame';
 import RangeLab from './pages/index/RangeLab';
 import PriceActionSignals from './pages/index/PriceActionSignals';
 import CalendarRatio from './pages/index/CalendarRatio';
+import EmaBreakout from './pages/index/EmaBreakout';
 import DataIngestion from './pages/DataIngestion';
 import EquityPMVwapHolding from './pages/equity/PMVwapHolding';
 
@@ -113,6 +114,7 @@ export default function App() {
           <Route path="index-strategy/range-lab" element={<RangeLab />} />
           <Route path="index-strategy/price-action" element={<PriceActionSignals />} />
           <Route path="index-strategy/calendar-ratio" element={<CalendarRatio />} />
+          <Route path="index-strategy/ema-breakout" element={<EmaBreakout />} />
           <Route path="data-ingestion" element={<DataIngestion />} />
           <Route path="equity-strategy/pmvwap-holding" element={<EquityPMVwapHolding />} />
           <Route path="equity-strategy/fourth-candle" element={<FourthCandle />} />

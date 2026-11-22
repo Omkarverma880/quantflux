@@ -83,6 +83,7 @@ const NAV = [
       { to: '/index-strategy/range-lab', label: '8. 5 & 60 Range' },
       { to: '/index-strategy/price-action', label: '9. Price Action Signals' },
       { to: '/index-strategy/calendar-ratio', label: '10. Calendar Ratio Spread' },
+      { to: '/index-strategy/ema-breakout', label: '11. 20 EMA Breakout' },
     ],
   },
   { to: '/portfolio', icon: Briefcase, label: 'Portfolio' },

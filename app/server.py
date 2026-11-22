@@ -53,6 +53,7 @@ from app.routes.cas_game_routes import router as cas_game_router
 from app.routes.range_lab_routes import router as range_lab_router
 from app.routes.pas_routes import router as pas_router
 from app.routes.calendar_ratio_routes import router as calendar_ratio_router
+from app.routes.ema_breakout_routes import router as ema_breakout_router
 from app.routes.flux_lab_routes import router as flux_lab_router
 from app.routes.oi_lab_routes import router as oi_lab_router
 from app.routes.oi_bias_routes import router as oi_bias_router
@@ -359,6 +360,16 @@ def _run_strategies_for_user(uid: int):
             except Exception as exc:
                 print(f"[BG] CAS game error user {uid}: {exc}", flush=True)
 
+        # 20 EMA Single Candle Breakout: idle until you press Start. Real orders need its own
+        # live mode AND the app out of paper mode AND the risk fence down — the same three
+        # gates as every other desk, checked in its own _order and nowhere else.
+        if authenticated:
+            try:
+                from research.ema_breakout.live import ENGINE as _ema_breakout
+                _ema_breakout.check(db, uid, broker)
+            except Exception as exc:
+                print(f"[BG] EMA breakout error user {uid}: {exc}", flush=True)
+
         # 5 & 60 Minute Range: idle until you press Start. Real orders need its own live mode
         # AND the app out of paper mode AND the risk fence down.
         if authenticated:
@@ -594,6 +605,7 @@ app.include_router(cas_game_router, prefix="/api/index-strategy/cas-game", tags=
 app.include_router(range_lab_router, prefix="/api/index-strategy/range-lab", tags=["Index-RangeLab"])
 app.include_router(pas_router, prefix="/api/index-strategy/price-action", tags=["Index-PriceAction"])
 app.include_router(calendar_ratio_router, prefix="/api/index-strategy/calendar-ratio", tags=["Index-CalendarRatio"])
+app.include_router(ema_breakout_router, prefix="/api/index-strategy/ema-breakout", tags=["Index-EmaBreakout"])
 app.include_router(data_ingestion_router, prefix="/api/data-ingestion", tags=["DataIngestion"])
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["PortfolioAnalytics"])
 app.include_router(manual_trading_router, prefix="/api/manual", tags=["ManualTrading"])

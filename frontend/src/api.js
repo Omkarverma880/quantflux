@@ -637,6 +637,13 @@ export const api = {
     + `${day ? `&day=${encodeURIComponent(day)}` : ''}&timeframe=${Number(timeframe) || 1}`),
   oiBiasRecord: (index) => request(`/index-strategy/oi-lab/bias-tape/record?index=${encodeURIComponent(index || 'NIFTY')}`, { method: 'POST' }),
 
+  emaMeta: () => request('/index-strategy/ema-breakout/meta'),
+  emaDesk: () => request('/index-strategy/ema-breakout/desk'),
+  emaConfig: (body) => request('/index-strategy/ema-breakout/config', { method: 'POST', body: JSON.stringify(body || {}) }),
+  emaStart: () => request('/index-strategy/ema-breakout/start', { method: 'POST' }),
+  emaStop: () => request('/index-strategy/ema-breakout/stop', { method: 'POST' }),
+  emaBacktest: (body) => request('/index-strategy/ema-breakout/backtest', { method: 'POST', body: JSON.stringify(body || {}) }),
+
   crMeta: () => request('/index-strategy/calendar-ratio/meta'),
   crLive: (body) => request('/index-strategy/calendar-ratio/live', { method: 'POST', body: JSON.stringify(body || {}) }),
   crDiagnose: (body) => request('/index-strategy/calendar-ratio/diagnose', { method: 'POST', body: JSON.stringify(body || {}) }),
